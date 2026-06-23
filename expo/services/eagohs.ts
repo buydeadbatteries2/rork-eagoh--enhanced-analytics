@@ -1,0 +1,214 @@
+import { supabase } from "@/lib/supabase";
+import type { SubscriptionTier } from "@/services/profile";
+
+/**
+ * EAGOH persistence service.
+ *
+ * Tables (run `expo/supabase-schema.sql` to create):
+ *   - public.eagohs              -> identity + sport + cybernetics + pose + lab
+ *   - public.eagoh_customization -> appearance map (jsonb)
+ *   - public.eagoh_fanatic_teams -> team affinity rows
+ *   - public.eagoh_labs          -> selected lab affinity rows
+ *
+ * No AI / image generation is connected — `image_url` is a placeholder reference only.
+ */
+
+export type EagohRecord = {
+  id: string;
+  user_id: string;
+  name: string;
+  sport: string;
+  gender: string | null;
+  cybernetic_intensity: string | null;
+  pose: string | null;
+  lab: string | null;
+  dna: string[];
+  image_url: string | null;
+  image_thumb_url: string | null;
+  image_prompt: string | null;
+  image_generated_at: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type EagohCustomization = {
+  eagoh_id: string;
+  appearance: Record<string, string>;
+};
+
+export type EagohFanaticTeamRow = { eagoh_id: string; team_id: string };
+export type EagohLabRow = { eagoh_id: string; lab_id: string };
+
+export type EagohFull = EagohRecord & {
+  appearance: Record<string, string>;
+  teams: string[];
+  labs: string[];
+};
+
+export type EagohDraft = {
+  name: string;
+  sport: string;
+  gender: string;
+  dna: string[];
+  teams: string[];
+  appearance: Record<string, string>;
+  cyberneticIntensity: string;
+  pose: string;
+  lab: string;
+  imageUrl?: string | null;
+};
+
+export const TIER_EAGOH_LIMITS: Record<SubscriptionTier, number> = {
+  free: 1,
+  pro: 2,
+  oracle_elite: 3,
+  syndicate: 5,
+};
+
+export function getEagohLimit(tier: SubscriptionTier): number {
+  return TIER_EAGOH_LIMITS[tier] ?? 1;
+}
+
+/** Lightweight list — does NOT load customization/teams/labs (lazy loaded per item). */
+export async function listEagohs(userId: string): Promise<EagohRecord[]> {
+  const { data, error } = await supabase
+    .from("eagohs")
+    .select("id,user_id,name,sport,gender,cybernetic_intensity,pose,lab,dna,image_url,image_thumb_url,image_prompt,image_generated_at,created_at,updated_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as EagohRecord[];
+}
+
+export async function countEagohs(userId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from("eagohs")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+export async function getEagohFull(eagohId: string): Promise<EagohFull | null> {
+  const { data: base, error } = await supabase
+    .from("eagohs")
+    .select("*")
+    .eq("id", eagohId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!base) return null;
+
+  const [custom, teams, labs] = await Promise.all([
+    supabase.from("eagoh_customization").select("appearance").eq("eagoh_id", eagohId).maybeSingle(),
+    supabase.from("eagoh_fanatic_teams").select("team_id").eq("eagoh_id", eagohId),
+    supabase.from("eagoh_labs").select("lab_id").eq("eagoh_id", eagohId),
+  ]);
+
+  return {
+    ...(base as EagohRecord),
+    appearance: ((custom.data as { appearance?: Record<string, string> } | null)?.appearance) ?? {},
+    teams: ((teams.data as EagohFanaticTeamRow[] | null) ?? []).map((row) => row.team_id),
+    labs: ((labs.data as EagohLabRow[] | null) ?? []).map((row) => row.lab_id),
+  };
+}
+
+export type CreateEagohResult = { ok: true; eagoh: EagohRecord } | { ok: false; reason: "limit" | "error"; message: string };
+
+export async function createEagoh(
+  userId: string,
+  tier: SubscriptionTier,
+  draft: EagohDraft,
+): Promise<CreateEagohResult> {
+  const limit = getEagohLimit(tier);
+  const current = await countEagohs(userId);
+  if (current >= limit) {
+    return { ok: false, reason: "limit", message: `Your ${tier} tier allows ${limit} EAGOH${limit === 1 ? "" : "s"}. Upgrade to forge more.` };
+  }
+
+  const insertPayload = {
+    user_id: userId,
+    name: draft.name?.trim() || "Unnamed EAGOH",
+    sport: draft.sport,
+    gender: draft.gender,
+    cybernetic_intensity: draft.cyberneticIntensity,
+    pose: draft.pose,
+    lab: draft.lab,
+    dna: draft.dna,
+    image_url: draft.imageUrl ?? null,
+  };
+
+  const { data: created, error } = await supabase
+    .from("eagohs")
+    .insert(insertPayload)
+    .select("*")
+    .single();
+  if (error || !created) return { ok: false, reason: "error", message: error?.message ?? "Failed to create EAGOH" };
+
+  const eagoh = created as EagohRecord;
+
+  try {
+    await supabase.from("eagoh_customization").insert({ eagoh_id: eagoh.id, appearance: draft.appearance });
+    if (draft.teams.length > 0) {
+      await supabase
+        .from("eagoh_fanatic_teams")
+        .insert(draft.teams.map((team_id) => ({ eagoh_id: eagoh.id, team_id })));
+    }
+    if (draft.lab) {
+      await supabase.from("eagoh_labs").insert({ eagoh_id: eagoh.id, lab_id: draft.lab });
+    }
+  } catch (childError) {
+    console.warn("EAGOH child rows failed; base record exists.", childError);
+  }
+
+  return { ok: true, eagoh };
+}
+
+export async function deleteEagoh(eagohId: string): Promise<void> {
+  const { error } = await supabase.from("eagohs").delete().eq("id", eagohId);
+  if (error) throw error;
+}
+
+/**
+ * Persist a newly generated image reference onto an EAGOH row. Does not
+ * deduct Edge or call any image model — that orchestration lives in the
+ * ForgeProvider.
+ */
+export async function updateEagohImage(
+  eagohId: string,
+  payload: { imageUrl: string; thumbUrl?: string | null; prompt: string },
+): Promise<EagohRecord> {
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("eagohs")
+    .update({
+      image_url: payload.imageUrl,
+      image_thumb_url: payload.thumbUrl ?? null,
+      image_prompt: payload.prompt,
+      image_generated_at: now,
+      updated_at: now,
+    })
+    .eq("id", eagohId)
+    .select("*")
+    .single();
+  if (error || !data) throw error ?? new Error("Failed to update EAGOH image");
+  return data as EagohRecord;
+}
+
+/** Partial-reforge persistence — swap one appearance category in customization. */
+export async function updateEagohCustomizationField(
+  eagohId: string,
+  categoryId: string,
+  optionId: string,
+): Promise<void> {
+  const { data: row } = await supabase
+    .from("eagoh_customization")
+    .select("appearance")
+    .eq("eagoh_id", eagohId)
+    .maybeSingle();
+  const current = ((row as { appearance?: Record<string, string> } | null)?.appearance) ?? {};
+  const next = { ...current, [categoryId]: optionId };
+  const { error } = await supabase
+    .from("eagoh_customization")
+    .upsert({ eagoh_id: eagohId, appearance: next, updated_at: new Date().toISOString() });
+  if (error) throw error;
+}

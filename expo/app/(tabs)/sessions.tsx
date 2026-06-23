@@ -1,23 +1,16 @@
 /**
- * EAGOH Sessions — dedicated screen for running intelligence sessions with your EAGOHs.
+ * EAGOH Sessions — premium mobile intelligence platform screen.
+ * Compact session type cards with glass styling. Selected EAGOH card at top.
  *
  * Session types:
- *   - Quick Check: 1-3 Edge, connected to OpenAI via secure server
- *   - Quick Analysis: 10-15 Edge
- *   - Standard Analysis: 40-75 Edge
- *   - Oracle Deep Dive: 150-300 Edge
- *   - Premium Event Analysis: 75-150 Edge
- *
- * Setup flow when tapping a session:
- *   1. Select an EAGOH from your collection
- *   2. Enter a topic/prompt
- *   3. See domain reminder for the selected EAGOH
- *   4. View estimated Edge cost
- *   5. Confirm to run
+ *   Quick Check: 1-3 Edge (live OpenAI)
+ *   Quick Analysis: 10-15 Edge
+ *   Standard Analysis: 40-75 Edge
+ *   Oracle Deep Dive: 150-300 Edge
+ *   Premium Event Analysis: 75-150 Edge
  */
 
 import { palette } from "@/constants/colors";
-import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import {
   ArrowLeft,
@@ -29,18 +22,14 @@ import {
   Clock,
   Cpu,
   Flame,
-  MessageCircle,
   Orbit,
   Search,
-  Send,
   Sparkles,
-  Star,
   Zap,
 } from "lucide-react-native";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  FlatList,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -49,42 +38,53 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useAuth } from "@/providers/AuthProvider";
+import { LinearGradient } from "expo-linear-gradient";
+import { useProfile } from "@/providers/ProfileProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useEagohs } from "@/providers/EagohProvider";
 import { INTELLIGENCE_DOMAINS, isPromptInDomain, getDomainRejection } from "@/services/domains";
 import { getQuickCheckCost, runQuickCheck, type AnalystRequestKind } from "@/services/analyst";
 import type { EagohRecord } from "@/services/eagohs";
 
+type SessionTone = "cyan" | "gold" | "violet" | "ember" | "success";
+
 type SessionType = {
   id: string;
   name: string;
+  description: string;
   costRange: string;
   minCost: number;
   maxCost: number;
   model: string;
   duration: string;
-  mood: string;
-  tone: "cyan" | "gold" | "violet" | "ember" | "success";
+  tone: SessionTone;
   active: boolean;
 };
 
 const sessionTypes: SessionType[] = [
-  { id: "quick-check", name: "Quick Check", costRange: "1-3 Edge", minCost: 1, maxCost: 3, model: "Pulse-Lite", duration: "~2 min", mood: "Alert + concise", tone: "cyan", active: true },
-  { id: "quick-analysis", name: "Quick Analysis", costRange: "10-15 Edge", minCost: 10, maxCost: 15, model: "Tactic-Core", duration: "~5 min", mood: "Tactical + calm", tone: "gold", active: false },
-  { id: "standard", name: "Standard Analysis", costRange: "40-75 Edge", minCost: 40, maxCost: 75, model: "EAGOH Analyst", duration: "~8 min", mood: "Deep strategic", tone: "success", active: false },
-  { id: "oracle", name: "Oracle Deep Dive", costRange: "150-300 Edge", minCost: 150, maxCost: 300, model: "Oracle-Synapse", duration: "~15 min", mood: "Oracle class", tone: "violet", active: false },
-  { id: "premium-event", name: "Premium Event Analysis", costRange: "75-150 Edge", minCost: 75, maxCost: 150, model: "Event-Lens Pro", duration: "~10 min", mood: "Event-focused", tone: "ember", active: false },
+  { id: "quick-check", name: "Quick Check", description: "Rapid intelligence check", costRange: "1-3 Edge", minCost: 1, maxCost: 3, model: "Pulse-Lite", duration: "~2 min", tone: "cyan", active: true },
+  { id: "quick-analysis", name: "Quick Analysis", description: "Tactical strategic read", costRange: "10-15 Edge", minCost: 10, maxCost: 15, model: "Tactic-Core", duration: "~5 min", tone: "gold", active: false },
+  { id: "standard", name: "Standard Analysis", description: "Deep strategic assessment", costRange: "40-75 Edge", minCost: 40, maxCost: 75, model: "EAGOH Analyst", duration: "~8 min", tone: "success", active: false },
+  { id: "oracle", name: "Oracle Deep Dive", description: "Elite predictive modeling", costRange: "150-300 Edge", minCost: 150, maxCost: 300, model: "Oracle-Synapse", duration: "~15 min", tone: "violet", active: false },
+  { id: "premium-event", name: "Premium Event", description: "Event-focused intelligence", costRange: "75-150 Edge", minCost: 75, maxCost: 150, model: "Event-Lens Pro", duration: "~10 min", tone: "ember", active: false },
 ];
 
 type ChatMessage = { id: string; sender: "user" | "analyst"; text: string; confidence?: number; cost?: number };
 
-function toneColor(tone: SessionType["tone"]): string {
+function toneColor(tone: SessionTone): string {
   if (tone === "gold") return palette.gold;
   if (tone === "violet") return palette.violet;
   if (tone === "ember") return palette.ember;
   if (tone === "success") return palette.success;
   return palette.cyan;
+}
+
+function toneBg(tone: SessionTone): string {
+  if (tone === "gold") return "rgba(255,181,71,0.10)";
+  if (tone === "violet") return "rgba(138,92,255,0.10)";
+  if (tone === "ember") return "rgba(255,77,109,0.10)";
+  if (tone === "success") return "rgba(0,255,178,0.10)";
+  return "rgba(108,230,255,0.10)";
 }
 
 function detectQuickCheckKind(prompt: string): AnalystRequestKind {
@@ -95,20 +95,182 @@ function detectQuickCheckKind(prompt: string): AnalystRequestKind {
   return "general";
 }
 
-// ---- Session setup (EAGOH selection, topic, confirm) ----
-function SessionSetup({
+function sessionIcon(id: string, color: string, size: number): React.ReactNode {
+  if (id === "quick-check") return <Zap color={color} size={size} />;
+  if (id === "oracle") return <Orbit color={color} size={size} />;
+  if (id === "premium-event") return <Flame color={color} size={size} />;
+  return <BrainCircuit color={color} size={size} />;
+}
+
+// ── Compact session card (max 140px) ──
+function SessionCard({
   session,
-  onBack,
-  onStart,
+  onPress,
+  disabled,
 }: {
   session: SessionType;
+  onPress: () => void;
+  disabled: boolean;
+}): JSX.Element {
+  const accent = toneColor(session.tone);
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={({ pressed }) => [
+        styles.sessionCard,
+        { borderColor: session.active ? `${accent}44` : palette.line },
+        disabled && styles.cardDisabled,
+        pressed && styles.pressed,
+      ]}
+    >
+      {/* Left accent bar */}
+      <View style={[styles.cardAccent, { backgroundColor: accent }]} />
+      {/* Icon */}
+      <View style={[styles.cardIcon, { backgroundColor: toneBg(session.tone), borderColor: `${accent}33` }]}>
+        {sessionIcon(session.id, accent, 20)}
+      </View>
+      {/* Body */}
+      <View style={styles.cardBody}>
+        <View style={styles.cardTopRow}>
+          <Text style={styles.cardName}>{session.name}</Text>
+          {session.active ? (
+            <View style={styles.liveBadge}>
+              <Sparkles color={palette.success} size={8} />
+              <Text style={styles.liveBadgeText}>LIVE</Text>
+            </View>
+          ) : null}
+        </View>
+        <Text style={styles.cardDesc} numberOfLines={1}>{session.description}</Text>
+        <View style={styles.cardMeta}>
+          <Clock color={palette.muted} size={10} />
+          <Text style={styles.cardMetaText}>{session.duration}</Text>
+          <Cpu color={palette.muted} size={10} />
+          <Text style={styles.cardMetaText}>{session.model}</Text>
+        </View>
+      </View>
+      {/* Cost + arrow */}
+      <View style={styles.cardRight}>
+        <View style={styles.cardCostRow}>
+          <Zap color={accent} size={12} />
+          <Text style={[styles.cardCost, { color: accent }]}>{session.costRange}</Text>
+        </View>
+        <ChevronRight color={accent} size={16} />
+      </View>
+    </Pressable>
+  );
+}
+
+// ── Selected EAGOH card ──
+function SelectedEagohCard({
+  eagoh,
+  onPress,
+  hasMultiple,
+  userTier,
+}: {
+  eagoh: EagohRecord | null;
+  onPress: () => void;
+  hasMultiple: boolean;
+  userTier: string;
+}): JSX.Element {
+  const domain = eagoh ? INTELLIGENCE_DOMAINS.find((d) => d.id === eagoh.domain) : null;
+  const domainTone = domain ? toneColor(domain.tone) : palette.muted;
+
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.eagohCard, pressed && styles.pressed]}>
+      <View style={styles.eagohCardLeft}>
+        <View style={[styles.eagohCardAvatar, { borderColor: eagoh ? domainTone : palette.line }]}>
+          <BrainCircuit color={eagoh ? domainTone : palette.muted} size={22} />
+        </View>
+        <View style={styles.eagohCardInfo}>
+          <Text style={styles.eagohCardName} numberOfLines={1}>
+            {eagoh?.name || "No EAGOH selected"}
+          </Text>
+          <Text style={styles.eagohCardDomain}>
+            {eagoh ? (domain?.label ?? eagoh.domain ?? "No domain") : "Tap to select an EAGOH"}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.eagohCardRight}>
+        {eagoh ? (
+          <View style={[styles.eagohShellBadge, { backgroundColor: toneBg(domainTone as SessionTone), borderColor: `${domainTone}33` }]}>
+            <Text style={[styles.eagohShellText, { color: domainTone }]}>
+              {userTier === "free" ? "DORMANT" : "ACTIVE"}
+            </Text>
+          </View>
+        ) : null}
+        <Text style={styles.eagohCardChange}>{hasMultiple ? "Change" : "Select"}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+// ── EAGOH picker dropdown ──
+function EagohPicker({
+  eagohs,
+  selectedId,
+  onSelect,
+  onClose,
+}: {
+  eagohs: EagohRecord[];
+  selectedId: string;
+  onSelect: (id: string) => void;
+  onClose: () => void;
+}): JSX.Element {
+  return (
+    <View style={styles.pickerOverlay}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      <View style={styles.pickerSheet}>
+        <LinearGradient colors={["rgba(14,24,37,0.98)", "rgba(8,15,26,0.98)"]} style={StyleSheet.absoluteFill} />
+        <Text style={styles.pickerTitle}>Select EAGOH</Text>
+        {eagohs.length === 0 ? (
+          <Text style={styles.pickerEmpty}>No EAGOHs forged yet. Visit the Forge to create one.</Text>
+        ) : (
+          eagohs.map((eagoh) => {
+            const domain = INTELLIGENCE_DOMAINS.find((d) => d.id === eagoh.domain);
+            const dt = domain ? toneColor(domain.tone) : palette.muted;
+            const isSelected = selectedId === eagoh.id;
+            return (
+              <Pressable
+                key={eagoh.id}
+                onPress={() => { onSelect(eagoh.id); onClose(); }}
+                style={({ pressed }) => [
+                  styles.pickerItem,
+                  isSelected && { borderColor: palette.cyan, backgroundColor: "rgba(108,230,255,0.08)" },
+                  pressed && styles.pressed,
+                ]}
+              >
+                <View style={[styles.pickerDot, { backgroundColor: dt }]} />
+                <View style={styles.pickerItemInfo}>
+                  <Text style={styles.pickerItemName}>{eagoh.name || "Unnamed"}</Text>
+                  <Text style={styles.pickerItemDomain}>{domain?.label ?? eagoh.domain ?? "No domain"}</Text>
+                </View>
+                {isSelected ? <Check color={palette.cyan} size={16} /> : null}
+              </Pressable>
+            );
+          })
+        )}
+      </View>
+    </View>
+  );
+}
+
+// ── Session setup ──
+function SessionSetup({
+  session,
+  selectedEagohId,
+  onBack,
+  onStart,
+  onChangeEagoh,
+}: {
+  session: SessionType;
+  selectedEagohId: string;
   onBack: () => void;
   onStart: (eagohId: string, prompt: string) => void;
+  onChangeEagoh: () => void;
 }): JSX.Element {
   const { eagohs } = useEagohs();
-  const [selectedEagohId, setSelectedEagohId] = useState<string>("");
   const [prompt, setPrompt] = useState<string>("");
-  const [showEagohList, setShowEagohList] = useState<boolean>(false);
 
   const selectedEagoh = useMemo(() => eagohs.find((e) => e.id === selectedEagohId), [eagohs, selectedEagohId]);
   const domain = useMemo(() => INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh?.domain), [selectedEagoh]);
@@ -126,125 +288,89 @@ function SessionSetup({
 
   return (
     <View style={styles.setupWrap}>
-      {/* Back button */}
-      <Pressable onPress={onBack} style={styles.backButton}>
-        <ArrowLeft color={palette.muted} size={20} />
-        <Text style={styles.backText}>Back</Text>
+      {/* Back */}
+      <Pressable onPress={onBack} style={styles.backBtn}>
+        <ArrowLeft color={palette.muted} size={18} />
+        <Text style={styles.backText}>Sessions</Text>
       </Pressable>
 
       {/* Session header */}
       <View style={styles.setupHeader}>
-        <View style={[styles.setupIcon, { borderColor: toneColor(session.tone) }]}>
-          {session.id === "quick-check" ? <Zap color={toneColor(session.tone)} size={24} /> : session.id === "oracle" ? <Orbit color={toneColor(session.tone)} size={24} /> : <BrainCircuit color={toneColor(session.tone)} size={24} />}
+        <View style={[styles.setupIconRing, { borderColor: toneColor(session.tone) }]}>
+          {sessionIcon(session.id, toneColor(session.tone), 28)}
         </View>
         <Text style={styles.setupTitle}>{session.name}</Text>
-        <Text style={styles.setupMeta}>{session.model} · {session.mood}</Text>
+        <Text style={styles.setupSub}>{session.model} · {session.duration}</Text>
       </View>
 
-      {/* Select EAGOH */}
-      <View style={styles.setupSection}>
-        <Text style={styles.setupLabel}>Select EAGOH</Text>
-        <Pressable
-          onPress={() => setShowEagohList((v) => !v)}
-          style={({ pressed }) => [styles.eagohSelector, pressed && styles.pressed]}
-        >
+      {/* Selected EAGOH */}
+      <View style={styles.setupBlock}>
+        <Text style={styles.setupLabel}>EAGOH</Text>
+        <Pressable onPress={onChangeEagoh} style={({ pressed }) => [styles.setupEagohRow, pressed && styles.pressed]}>
           {selectedEagoh ? (
-            <View style={styles.eagohSelected}>
-              <View style={[styles.eagohDot, { backgroundColor: toneColor("cyan") }]} />
-              <View style={styles.eagohSelectedInfo}>
-                <Text style={styles.eagohSelectedName}>{selectedEagoh.name}</Text>
-                <Text style={styles.eagohSelectedDomain}>
-                  {domain?.label ?? selectedEagoh.domain ?? "No domain"}
-                </Text>
-              </View>
-            </View>
+            <>
+              <View style={[styles.setupEagohDot, { backgroundColor: domain ? toneColor(domain.tone) : palette.muted }]} />
+              <Text style={styles.setupEagohName}>{selectedEagoh.name}</Text>
+              <Text style={styles.setupEagohDomain}>{domain?.label ?? selectedEagoh.domain}</Text>
+            </>
           ) : (
-            <Text style={styles.eagohPlaceholder}>Choose an EAGOH…</Text>
+            <Text style={styles.setupEagohPlaceholder}>Select an EAGOH…</Text>
           )}
-          {showEagohList ? <ChevronUp color={palette.muted} size={16} /> : <ChevronDown color={palette.muted} size={16} />}
+          <ChevronDown color={palette.muted} size={16} />
         </Pressable>
-        {showEagohList ? (
-          <View style={styles.eagohList}>
-            {eagohs.length === 0 ? (
-              <Text style={styles.emptyText}>No EAGOHs forged yet. Visit the Forge to create one.</Text>
-            ) : (
-              eagohs.map((eagoh) => {
-                const eDomain = INTELLIGENCE_DOMAINS.find((d) => d.id === eagoh.domain);
-                return (
-                  <Pressable
-                    key={eagoh.id}
-                    onPress={() => { setSelectedEagohId(eagoh.id); setShowEagohList(false); }}
-                    style={({ pressed }) => [
-                      styles.eagohListItem,
-                      selectedEagohId === eagoh.id && { borderColor: palette.cyan, backgroundColor: "rgba(54,245,255,0.08)" },
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <View style={[styles.eagohDot, { backgroundColor: eDomain ? toneColor(eDomain.tone) : palette.muted }]} />
-                    <View style={styles.eagohItemInfo}>
-                      <Text style={styles.eagohItemName}>{eagoh.name || "Unnamed"}</Text>
-                      <Text style={styles.eagohItemDomain}>{eDomain?.label ?? eagoh.domain ?? "No domain"}</Text>
-                    </View>
-                    {selectedEagohId === eagoh.id ? <Check color={palette.cyan} size={16} /> : null}
-                  </Pressable>
-                );
-              })
-            )}
-          </View>
-        ) : null}
       </View>
 
-      {/* Topic / prompt */}
-      <View style={styles.setupSection}>
-        <Text style={styles.setupLabel}>Topic or Question</Text>
+      {/* Topic */}
+      <View style={styles.setupBlock}>
+        <Text style={styles.setupLabel}>Topic</Text>
         <TextInput
           value={prompt}
           onChangeText={setPrompt}
           placeholder="What intelligence do you need…"
           placeholderTextColor={palette.muted}
           multiline
-          style={styles.promptInput}
+          style={styles.setupInput}
         />
       </View>
 
-      {/* Domain reminder */}
+      {/* Domain check */}
       {selectedEagoh && domain ? (
-        <View style={[styles.domainReminder, { borderColor: `${toneColor(domain.tone)}44`, backgroundColor: `${toneColor(domain.tone)}0F` }]}>
-          <BrainCircuit color={toneColor(domain.tone)} size={16} />
-          <View style={styles.domainTextWrap}>
-            <Text style={[styles.domainTitle, { color: toneColor(domain.tone) }]}>{domain.label} Intelligence</Text>
-            <Text style={styles.domainDesc}>{isDomainMatch ? "Your question is within this domain." : getDomainRejection(selectedEagoh.domain ?? "")}</Text>
+        <View style={[styles.domainBanner, { borderColor: `${toneColor(domain.tone)}33`, backgroundColor: `${toneColor(domain.tone)}0A` }]}>
+          <BrainCircuit color={toneColor(domain.tone)} size={14} />
+          <View style={styles.domainBannerText}>
+            <Text style={[styles.domainBannerTitle, { color: toneColor(domain.tone) }]}>{domain.label}</Text>
+            <Text style={styles.domainBannerDesc}>
+              {isDomainMatch ? "Within domain." : getDomainRejection(selectedEagoh.domain ?? "")}
+            </Text>
           </View>
         </View>
       ) : null}
 
-      {/* Cost */}
-      <View style={styles.costRow}>
-        <Zap color={palette.gold} size={18} />
-        <Text style={styles.costLabel}>Estimated cost</Text>
-        <Text style={styles.costValue}>{cost} Edge</Text>
+      {/* Cost + Start */}
+      <View style={styles.setupFooter}>
+        <View style={styles.setupCostRow}>
+          <Zap color={palette.gold} size={16} />
+          <Text style={styles.setupCostLabel}>{cost} Edge</Text>
+        </View>
+        {!canAfford ? <Text style={styles.errorText}>Insufficient Edge.</Text> : null}
+        <Pressable
+          onPress={handleStart}
+          disabled={!selectedEagohId || !prompt.trim() || !canAfford || !isDomainMatch}
+          style={({ pressed }) => [
+            styles.setupStartBtn,
+            (!selectedEagohId || !prompt.trim() || !canAfford) && styles.disabledButton,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Sparkles color={palette.void} size={14} />
+          <Text style={styles.setupStartText}>Start Session</Text>
+        </Pressable>
       </View>
-
-      {!canAfford ? <Text style={styles.errorText}>Insufficient Edge balance.</Text> : null}
-
-      {/* Start button */}
-      <Pressable
-        onPress={handleStart}
-        disabled={!selectedEagohId || !prompt.trim() || !canAfford || !isDomainMatch}
-        style={({ pressed }) => [
-          styles.startButton,
-          (!selectedEagohId || !prompt.trim() || !canAfford) && styles.disabledButton,
-          pressed && styles.pressed,
-        ]}
-      >
-        <Sparkles color={palette.void} size={16} />
-        <Text style={styles.startButtonText}>Start Session</Text>
-      </Pressable>
     </View>
   );
 }
 
-// ---- Active chat ----
+// ── Active chat ──
 function ActiveChat({
   session,
   eagoh,
@@ -262,14 +388,12 @@ function ActiveChat({
   const [isTyping, setIsTyping] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const { deductQuickCheck, total: edgeTotal } = useEdge();
-
   const started = useRef(false);
 
   const runSession = useCallback(async (): Promise<void> => {
     if (started.current) return;
     started.current = true;
 
-    // Quick Check: live OpenAI
     if (session.id === "quick-check") {
       const cost = getQuickCheckCost(prompt);
       if (edgeTotal < cost) {
@@ -278,7 +402,6 @@ function ActiveChat({
         return;
       }
 
-      // Check domain match
       if (eagoh.domain && !isPromptInDomain(prompt, eagoh.domain)) {
         setMessages((prev) => [...prev, {
           id: `a-domain-${Date.now()}`,
@@ -291,9 +414,9 @@ function ActiveChat({
       }
 
       try {
-        await deductQuickCheck(prompt, `Quick Check session · ${cost} Edge`);
+        await deductQuickCheck(prompt, `Quick Check · ${cost} Edge`);
       } catch (err) {
-        setError("Edge deduction failed. Try again.");
+        setError("Edge deduction failed.");
         setIsTyping(false);
         return;
       }
@@ -319,61 +442,55 @@ function ActiveChat({
       return;
     }
 
-    // Other sessions: UI-ready fallback (not yet activated)
     setMessages((prev) => [...prev, {
       id: `a-fallback-${Date.now()}`,
       sender: "analyst",
-      text: `${session.name} is UI-ready but not yet fully activated. Quick Check is live. Use the Forge to create more EAGOHs across different domains.`,
+      text: `${session.name} is UI-ready but not yet activated. Quick Check is live. Forge more EAGOHs across different domains.`,
       confidence: 85,
     }]);
     setIsTyping(false);
   }, []);
 
-  // Trigger on mount
   React.useEffect(() => { runSession(); }, [runSession]);
 
   const scrollRef = useRef<ScrollView>(null);
 
   return (
     <View style={styles.chatWrap}>
-      <Pressable onPress={onDone} style={styles.backButton}>
-        <ArrowLeft color={palette.muted} size={20} />
+      <Pressable onPress={onDone} style={styles.backBtn}>
+        <ArrowLeft color={palette.muted} size={18} />
         <Text style={styles.backText}>Sessions</Text>
       </Pressable>
 
-      {/* Chat header */}
       <View style={styles.chatHeader}>
-        <View style={styles.chatEagohInfo}>
-          <BrainCircuit color={toneColor(session.tone)} size={22} />
-          <View>
-            <Text style={styles.chatEagohName}>{eagoh.name}</Text>
-            <Text style={styles.chatSessionType}>{session.name} · {session.model}</Text>
-          </View>
+        <BrainCircuit color={toneColor(session.tone)} size={20} />
+        <View>
+          <Text style={styles.chatName}>{eagoh.name}</Text>
+          <Text style={styles.chatType}>{session.name} · {session.model}</Text>
         </View>
       </View>
 
-      {/* Messages */}
       <ScrollView
         ref={scrollRef}
-        style={styles.chatMessages}
-        contentContainerStyle={styles.chatMessagesContent}
+        style={styles.chatMsgs}
+        contentContainerStyle={styles.chatMsgsContent}
         onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
       >
         {messages.map((msg) => (
-          <View key={msg.id} style={[styles.messageBubble, msg.sender === "analyst" ? styles.analystBubble : styles.userBubble]}>
-            <Text style={msg.sender === "analyst" ? styles.analystText : styles.userText}>{msg.text}</Text>
-            {msg.confidence ? <Text style={styles.messageConfidence}>Confidence {msg.confidence}%</Text> : null}
-            {msg.cost ? <Text style={styles.messageCost}>{msg.cost} Edge</Text> : null}
+          <View key={msg.id} style={[styles.msgBubble, msg.sender === "analyst" ? styles.msgAnalyst : styles.msgUser]}>
+            <Text style={msg.sender === "analyst" ? styles.msgAnalystText : styles.msgUserText}>{msg.text}</Text>
+            {msg.confidence ? <Text style={styles.msgMeta}>Confidence {msg.confidence}%</Text> : null}
+            {msg.cost ? <Text style={styles.msgCost}>{msg.cost} Edge</Text> : null}
           </View>
         ))}
         {isTyping ? (
-          <View style={styles.typingRow}>
+          <View style={styles.typing}>
             <View style={styles.typingDots}>
               <View style={[styles.dot, { backgroundColor: palette.cyan }]} />
               <View style={[styles.dot, styles.dotMid, { backgroundColor: palette.cyan }]} />
               <View style={[styles.dot, { backgroundColor: palette.cyan }]} />
             </View>
-            <Text style={styles.typingText}>Analyst is processing…</Text>
+            <Text style={styles.typingText}>Processing…</Text>
           </View>
         ) : null}
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -382,31 +499,39 @@ function ActiveChat({
   );
 }
 
-// ---- Main screen ----
+// ── Main screen ──
 export default function SessionsScreen(): JSX.Element {
-  const [activeSession, setActiveSession] = useState<SessionType | null>(null);
-  const [setupPrompt, setSetupPrompt] = useState<string>("");
   const { eagohs } = useEagohs();
+  const { profile } = useProfile();
+  const userTier = profile?.subscription_tier ?? "free";
+  const [selectedEagohId, setSelectedEagohId] = useState<string>(eagohs[0]?.id ?? "");
+  const [showPicker, setShowPicker] = useState<boolean>(false);
+  const [activeSession, setActiveSession] = useState<SessionType | null>(null);
 
-  const handleSessionSelect = useCallback((session: SessionType): void => {
+  // Chat state
+  const [activePrompt, setActivePrompt] = useState<string>("");
+  const [isChatActive, setIsChatActive] = useState<boolean>(false);
+
+  const selectedEagoh = useMemo(() => eagohs.find((e) => e.id === selectedEagohId), [eagohs, selectedEagohId]);
+
+  // Keep selected in sync when eagohs load
+  React.useEffect(() => {
+    if (!selectedEagohId && eagohs.length > 0) {
+      setSelectedEagohId(eagohs[0].id);
+    }
+  }, [eagohs, selectedEagohId]);
+
+  const handleSessionPress = useCallback((session: SessionType): void => {
     Haptics.selectionAsync().catch(() => undefined);
     if (eagohs.length === 0) return;
     setActiveSession(session);
-    setSetupPrompt("");
   }, [eagohs.length]);
 
   const handleBack = useCallback((): void => {
     setActiveSession(null);
-    setSetupPrompt("");
   }, []);
 
-  // When starting a session from setup
-  const [activeEagohId, setActiveEagohId] = useState<string>("");
-  const [activePrompt, setActivePrompt] = useState<string>("");
-  const [isChatActive, setIsChatActive] = useState<boolean>(false);
-
   const handleStart = useCallback((eagohId: string, prompt: string): void => {
-    setActiveEagohId(eagohId);
     setActivePrompt(prompt);
     setIsChatActive(true);
   }, []);
@@ -416,315 +541,362 @@ export default function SessionsScreen(): JSX.Element {
     setActiveSession(null);
   }, []);
 
-  const activeEagoh = useMemo(() => eagohs.find((e) => e.id === activeEagohId), [eagohs, activeEagohId]);
+  const handleChangeEagoh = useCallback((): void => {
+    setShowPicker(true);
+  }, []);
 
-  // Active chat view
-  if (isChatActive && activeSession && activeEagoh) {
+  const handleSelectEagoh = useCallback((id: string): void => {
+    setSelectedEagohId(id);
+  }, []);
+
+  // Chat view
+  if (isChatActive && activeSession && selectedEagoh) {
     return (
       <SafeAreaView style={styles.safe} edges={["top"]}>
-        <ActiveChat session={activeSession} eagoh={activeEagoh} prompt={activePrompt} onDone={handleDone} />
+        <ActiveChat session={activeSession} eagoh={selectedEagoh} prompt={activePrompt} onDone={handleDone} />
       </SafeAreaView>
     );
   }
 
-  // Session setup view
+  // Setup view
   if (activeSession) {
     return (
       <SafeAreaView style={styles.safe} edges={["top"]}>
-        <SessionSetup session={activeSession} onBack={handleBack} onStart={handleStart} />
+        <SessionSetup
+          session={activeSession}
+          selectedEagohId={selectedEagohId}
+          onBack={handleBack}
+          onStart={handleStart}
+          onChangeEagoh={handleChangeEagoh}
+        />
+        {showPicker ? (
+          <EagohPicker
+            eagohs={eagohs}
+            selectedId={selectedEagohId}
+            onSelect={handleSelectEagoh}
+            onClose={() => setShowPicker(false)}
+          />
+        ) : null}
       </SafeAreaView>
     );
   }
 
-  // Session type listing
+  // Main listing
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <LinearGradient colors={["#03060B", "#0A1420", "#03060B"]} style={styles.root}>
+      <View style={styles.root}>
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           {/* Header */}
           <View style={styles.hero}>
-            <View style={styles.heroGlow} />
             <Text style={styles.kicker}>INTELLIGENCE SESSIONS</Text>
-            <Text style={styles.title}>Run your EAGOH.</Text>
-            <Text style={styles.subtitle}>
-              Select a session type, choose an EAGOH from your collection, and let it analyze within its intelligence domain.
-            </Text>
+            <Text style={styles.title}>Run your EAGOH</Text>
             {eagohs.length === 0 ? (
-              <View style={styles.noEagohBanner}>
-                <Sparkles color={palette.gold} size={18} />
-                <Text style={styles.noEagohText}>Forge an EAGOH first to run sessions.</Text>
+              <View style={styles.emptyBanner}>
+                <Sparkles color={palette.gold} size={14} />
+                <Text style={styles.emptyText}>Forge an EAGOH first to run sessions.</Text>
               </View>
-            ) : (
-              <Text style={styles.eagohCount}>{eagohs.length} EAGOH{eagohs.length === 1 ? "" : "s"} available</Text>
-            )}
+            ) : null}
           </View>
+
+          {/* Selected EAGOH card */}
+          <SelectedEagohCard
+            eagoh={selectedEagoh ?? null}
+            onPress={() => setShowPicker(true)}
+            hasMultiple={eagohs.length > 1}
+            userTier={userTier}
+          />
 
           {/* Session type cards */}
           <Text style={styles.sectionLabel}>SESSION TYPES</Text>
-          <View style={styles.sessionGrid}>
-            {sessionTypes.map((session) => {
-              const accent = toneColor(session.tone);
-              const hasEagohs = eagohs.length > 0;
-              return (
-                <Pressable
-                  key={session.id}
-                  onPress={() => handleSessionSelect(session)}
-                  disabled={!hasEagohs && session.id !== "quick-check"}
-                  style={({ pressed }) => [
-                    styles.sessionCard,
-                    { borderColor: session.active ? `${accent}66` : palette.line },
-                    pressed && styles.pressed,
-                    !hasEagohs && styles.disabledCard,
-                  ]}
-                >
-                  <View style={[styles.sessionTopRow, { backgroundColor: `${accent}14` }]} />
-                  <View style={styles.sessionContent}>
-                    <View style={styles.sessionIconRow}>
-                      <View style={[styles.sessionIcon, { backgroundColor: `${accent}1F`, borderColor: `${accent}44` }]}>
-                        {session.id === "quick-check" ? (
-                          <Zap color={accent} size={20} />
-                        ) : session.id === "oracle" ? (
-                          <Orbit color={accent} size={20} />
-                        ) : session.id === "premium-event" ? (
-                          <Flame color={accent} size={20} />
-                        ) : (
-                          <BrainCircuit color={accent} size={20} />
-                        )}
-                      </View>
-                      {session.active ? (
-                        <View style={styles.activePill}>
-                          <Sparkles color={palette.success} size={10} />
-                          <Text style={styles.activePillText}>LIVE</Text>
-                        </View>
-                      ) : (
-                        <View style={styles.inactivePill}>
-                          <Clock color={palette.muted} size={10} />
-                          <Text style={styles.inactivePillText}>UI READY</Text>
-                        </View>
-                      )}
-                    </View>
-
-                    <Text style={styles.sessionName}>{session.name}</Text>
-                    <View style={styles.sessionMetaRow}>
-                      <Cpu color={palette.muted} size={12} />
-                      <Text style={styles.sessionModel}>{session.model}</Text>
-                    </View>
-                    <View style={styles.sessionMetaRow}>
-                      <Clock color={palette.muted} size={12} />
-                      <Text style={styles.sessionDuration}>{session.duration}</Text>
-                    </View>
-                    <Text style={styles.sessionMood}>{session.mood}</Text>
-                    <View style={styles.sessionCostRow}>
-                      <Zap color={accent} size={14} />
-                      <Text style={[styles.sessionCost, { color: accent }]}>{session.costRange}</Text>
-                    </View>
-                  </View>
-                  <View style={styles.sessionArrow}>
-                    <ChevronRight color={accent} size={18} />
-                  </View>
-                </Pressable>
-              );
-            })}
+          <View style={styles.sessionList}>
+            {sessionTypes.map((session) => (
+              <SessionCard
+                key={session.id}
+                session={session}
+                onPress={() => handleSessionPress(session)}
+                disabled={eagohs.length === 0 && session.id !== "quick-check"}
+              />
+            ))}
           </View>
 
           <View style={styles.bottomSpacer} />
         </ScrollView>
-      </LinearGradient>
+
+        {/* EAGOH picker overlay */}
+        {showPicker ? (
+          <EagohPicker
+            eagohs={eagohs}
+            selectedId={selectedEagohId}
+            onSelect={handleSelectEagoh}
+            onClose={() => setShowPicker(false)}
+          />
+        ) : null}
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.void },
-  root: { flex: 1 },
-  scroll: { padding: 18, paddingBottom: 120 },
+  root: { flex: 1, backgroundColor: palette.void },
+  scroll: { padding: 14, paddingBottom: 100 },
 
   // Hero
-  hero: {
-    borderRadius: 5,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: "rgba(54,245,255,0.2)",
-    backgroundColor: "rgba(8,15,26,0.85)",
-    marginBottom: 22,
-    overflow: "hidden",
-  },
-  heroGlow: { position: "absolute", right: -50, top: -50, width: 160, height: 160, borderRadius: 80, borderWidth: 1, borderColor: "rgba(54,245,255,0.18)" },
-  kicker: { color: palette.cyan, fontSize: 11, fontWeight: "900", letterSpacing: 2.4 },
-  title: { color: palette.text, fontSize: 34, fontWeight: "900", letterSpacing: -1, marginTop: 6 },
-  subtitle: { color: palette.muted, fontSize: 14, lineHeight: 21, marginTop: 10, fontWeight: "700" },
-  noEagohBanner: {
+  hero: { marginBottom: 14 },
+  kicker: { color: palette.cyan, fontSize: 10, fontWeight: "900", letterSpacing: 2.2, marginBottom: 4 },
+  title: { color: palette.text, fontSize: 26, fontWeight: "900", letterSpacing: -0.6 },
+  emptyBanner: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    marginTop: 14,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    gap: 6,
+    marginTop: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
     borderRadius: 5,
     backgroundColor: palette.goldSoft,
     borderWidth: 1,
-    borderColor: "rgba(255,181,71,0.25)",
+    borderColor: "rgba(255,181,71,0.20)",
   },
-  noEagohText: { color: palette.gold, fontSize: 13, fontWeight: "800" },
-  eagohCount: { color: palette.text, fontSize: 13, fontWeight: "900", marginTop: 14 },
+  emptyText: { color: palette.gold, fontSize: 12, fontWeight: "800" },
 
-  // Section
-  sectionLabel: { color: palette.gold, fontSize: 10, fontWeight: "900", letterSpacing: 2, marginBottom: 10 },
-
-  // Session grid
-  sessionGrid: { gap: 10 },
-  sessionCard: {
-    borderRadius: 5,
-    borderWidth: 1,
-    backgroundColor: "rgba(14,24,37,0.82)",
-    overflow: "hidden",
-    flexDirection: "row",
-  },
-  sessionTopRow: { position: "absolute", top: 0, left: 0, right: 0, height: 2 },
-  sessionContent: { flex: 1, padding: 16 },
-  sessionIconRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
-  sessionIcon: { width: 40, height: 40, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center" },
-  activePill: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 5, backgroundColor: "rgba(0,255,178,0.12)", borderWidth: 1, borderColor: "rgba(0,255,178,0.28)" },
-  activePillText: { color: palette.success, fontSize: 9, fontWeight: "900", letterSpacing: 1 },
-  inactivePill: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 5, backgroundColor: "rgba(141,162,181,0.08)", borderWidth: 1, borderColor: palette.line },
-  inactivePillText: { color: palette.muted, fontSize: 9, fontWeight: "700" },
-  sessionName: { color: palette.text, fontSize: 18, fontWeight: "900" },
-  sessionMetaRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 },
-  sessionModel: { color: palette.muted, fontSize: 12, fontWeight: "700" },
-  sessionDuration: { color: palette.muted, fontSize: 12, fontWeight: "700" },
-  sessionMood: { color: palette.text, fontSize: 12, fontWeight: "800", marginTop: 8 },
-  sessionCostRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 },
-  sessionCost: { fontSize: 14, fontWeight: "900" },
-  sessionArrow: { justifyContent: "center", paddingRight: 14 },
-  disabledCard: { opacity: 0.5 },
-  pressed: { transform: [{ scale: 0.985 }], opacity: 0.88 },
-
-  // Setup
-  setupWrap: { flex: 1, backgroundColor: palette.void, padding: 18 },
-  backButton: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 14 },
-  backText: { color: palette.muted, fontSize: 13, fontWeight: "800" },
-  setupHeader: { alignItems: "center", gap: 8, marginBottom: 22 },
-  setupIcon: { width: 60, height: 60, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.04)" },
-  setupTitle: { color: palette.text, fontSize: 24, fontWeight: "900" },
-  setupMeta: { color: palette.muted, fontSize: 13, fontWeight: "700" },
-  setupSection: { marginBottom: 16 },
-  setupLabel: { color: palette.cyan, fontSize: 11, fontWeight: "900", letterSpacing: 1.8, marginBottom: 8, textTransform: "uppercase" },
-  eagohSelector: {
+  // EAGOH card
+  eagohCard: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    minHeight: 52,
-    borderRadius: 5,
-    paddingHorizontal: 14,
-    borderWidth: 1,
-    borderColor: palette.line,
-    backgroundColor: "rgba(10,18,30,0.6)",
-  },
-  eagohSelected: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
-  eagohDot: { width: 10, height: 10, borderRadius: 5 },
-  eagohSelectedInfo: { flex: 1 },
-  eagohSelectedName: { color: palette.text, fontSize: 14, fontWeight: "900" },
-  eagohSelectedDomain: { color: palette.muted, fontSize: 11, marginTop: 2 },
-  eagohPlaceholder: { color: palette.muted, fontSize: 14, fontWeight: "700", flex: 1 },
-  eagohList: {
-    marginTop: 6,
     borderRadius: 5,
     borderWidth: 1,
     borderColor: palette.line,
-    backgroundColor: "rgba(2,4,10,0.92)",
-    overflow: "hidden",
-  },
-  eagohListItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
+    backgroundColor: "rgba(10,20,35,0.60)",
     paddingHorizontal: 14,
     paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: palette.line,
-  },
-  eagohItemInfo: { flex: 1 },
-  eagohItemName: { color: palette.text, fontSize: 13, fontWeight: "800" },
-  eagohItemDomain: { color: palette.muted, fontSize: 11, marginTop: 1 },
-  emptyText: { color: palette.muted, padding: 14, fontSize: 13, fontWeight: "700", textAlign: "center" },
-  promptInput: {
-    color: palette.text,
-    fontSize: 14,
-    fontWeight: "700",
-    minHeight: 100,
-    borderRadius: 5,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: palette.line,
-    backgroundColor: "rgba(10,18,30,0.6)",
-    textAlignVertical: "top",
-  },
-  domainReminder: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 10,
-    padding: 14,
-    borderRadius: 5,
-    borderWidth: 1,
     marginBottom: 16,
   },
-  domainTextWrap: { flex: 1 },
-  domainTitle: { fontSize: 13, fontWeight: "900" },
-  domainDesc: { color: palette.muted, fontSize: 11, lineHeight: 16, marginTop: 4 },
-  costRow: {
+  eagohCardLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
+  eagohCardAvatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 5,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  eagohCardInfo: { flex: 1 },
+  eagohCardName: { color: palette.text, fontSize: 14, fontWeight: "900" },
+  eagohCardDomain: { color: palette.muted, fontSize: 11, fontWeight: "700", marginTop: 1 },
+  eagohCardRight: { alignItems: "flex-end", gap: 4 },
+  eagohShellBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  eagohShellText: { fontSize: 8, fontWeight: "900", letterSpacing: 1 },
+  eagohCardChange: { color: palette.cyan, fontSize: 11, fontWeight: "800" },
+
+  // Section
+  sectionLabel: { color: palette.gold, fontSize: 9, fontWeight: "900", letterSpacing: 2, marginBottom: 8 },
+
+  // Session card list
+  sessionList: { gap: 6 },
+
+  // Session card (compact, max 140px)
+  sessionCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 5,
+    borderWidth: 1,
+    backgroundColor: "rgba(10,20,35,0.55)",
+    maxHeight: 88,
+    overflow: "hidden",
+  },
+  cardAccent: { width: 3, alignSelf: "stretch" },
+  cardIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 5,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 10,
+    marginVertical: 10,
+  },
+  cardBody: { flex: 1, paddingHorizontal: 10, paddingVertical: 10, gap: 2 },
+  cardTopRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  cardName: { color: palette.text, fontSize: 14, fontWeight: "900", flexShrink: 1 },
+  liveBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: "rgba(0,255,178,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(0,255,178,0.22)",
+  },
+  liveBadgeText: { color: palette.success, fontSize: 7, fontWeight: "900", letterSpacing: 1 },
+  cardDesc: { color: palette.muted, fontSize: 11, fontWeight: "700" },
+  cardMeta: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 1 },
+  cardMetaText: { color: palette.muted, fontSize: 10, fontWeight: "700" },
+  cardRight: {
+    alignItems: "center",
+    gap: 4,
+    paddingRight: 12,
+    paddingVertical: 10,
+  },
+  cardCostRow: { flexDirection: "row", alignItems: "center", gap: 3 },
+  cardCost: { fontSize: 12, fontWeight: "900" },
+  cardDisabled: { opacity: 0.45 },
+  pressed: { transform: [{ scale: 0.985 }], opacity: 0.88 },
+
+  // Setup
+  setupWrap: { flex: 1, backgroundColor: palette.void, padding: 14 },
+  backBtn: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 12 },
+  backText: { color: palette.muted, fontSize: 13, fontWeight: "800" },
+  setupHeader: { alignItems: "center", gap: 6, marginBottom: 18 },
+  setupIconRing: {
+    width: 64,
+    height: 64,
+    borderRadius: 5,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  setupTitle: { color: palette.text, fontSize: 22, fontWeight: "900" },
+  setupSub: { color: palette.muted, fontSize: 12, fontWeight: "700" },
+  setupBlock: { marginBottom: 14 },
+  setupLabel: { color: palette.cyan, fontSize: 10, fontWeight: "900", letterSpacing: 1.6, marginBottom: 6, textTransform: "uppercase" },
+  setupEagohRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    paddingVertical: 14,
+    minHeight: 48,
+    borderRadius: 5,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(10,18,30,0.55)",
+  },
+  setupEagohDot: { width: 9, height: 9, borderRadius: 5 },
+  setupEagohName: { color: palette.text, fontSize: 14, fontWeight: "800" },
+  setupEagohDomain: { color: palette.muted, fontSize: 11, marginLeft: 4 },
+  setupEagohPlaceholder: { color: palette.muted, fontSize: 13, fontWeight: "700", flex: 1 },
+  setupInput: {
+    color: palette.text,
+    fontSize: 13,
+    fontWeight: "700",
+    minHeight: 90,
+    borderRadius: 5,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(10,18,30,0.55)",
+    textAlignVertical: "top",
+  },
+  domainBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    padding: 10,
+    borderRadius: 5,
+    borderWidth: 1,
+    marginBottom: 14,
+  },
+  domainBannerText: { flex: 1 },
+  domainBannerTitle: { fontSize: 12, fontWeight: "900" },
+  domainBannerDesc: { color: palette.muted, fontSize: 10, lineHeight: 15, marginTop: 2 },
+  setupFooter: { marginTop: "auto", gap: 10 },
+  setupCostRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 10,
     borderTopWidth: 1,
-    borderBottomWidth: 1,
     borderColor: palette.line,
   },
-  costLabel: { color: palette.muted, fontSize: 13, fontWeight: "800", flex: 1 },
-  costValue: { color: palette.gold, fontSize: 18, fontWeight: "900" },
-  errorText: { color: palette.ember, fontSize: 12, fontWeight: "800", marginTop: 8 },
-  startButton: {
-    minHeight: 54,
+  setupCostLabel: { color: palette.gold, fontSize: 16, fontWeight: "900" },
+  setupStartBtn: {
+    minHeight: 50,
     borderRadius: 5,
     backgroundColor: palette.cyan,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: 8,
-    marginTop: 18,
     shadowColor: palette.cyan,
     shadowOpacity: 0.3,
     shadowRadius: 12,
   },
-  startButtonText: { color: palette.void, fontSize: 15, fontWeight: "900" },
-  disabledButton: { opacity: 0.5 },
+  setupStartText: { color: palette.void, fontSize: 14, fontWeight: "900" },
+  disabledButton: { opacity: 0.45 },
+  errorText: { color: palette.ember, fontSize: 11, fontWeight: "800", textAlign: "center" },
+
+  // Picker
+  pickerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(2,4,10,0.85)",
+    justifyContent: "flex-end",
+    zIndex: 100,
+  },
+  pickerSheet: {
+    maxHeight: "55%",
+    borderTopLeftRadius: 10,
+    borderTopRightRadius: 10,
+    borderTopWidth: 1,
+    borderColor: palette.line,
+    padding: 18,
+    overflow: "hidden",
+  },
+  pickerTitle: { color: palette.text, fontSize: 16, fontWeight: "900", marginBottom: 12 },
+  pickerEmpty: { color: palette.muted, fontSize: 13, fontWeight: "700", textAlign: "center", paddingVertical: 20 },
+  pickerItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "transparent",
+    marginBottom: 6,
+    backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  pickerDot: { width: 9, height: 9, borderRadius: 5 },
+  pickerItemInfo: { flex: 1 },
+  pickerItemName: { color: palette.text, fontSize: 13, fontWeight: "800" },
+  pickerItemDomain: { color: palette.muted, fontSize: 10, marginTop: 1 },
 
   // Chat
   chatWrap: { flex: 1, backgroundColor: palette.void },
   chatHeader: {
-    paddingHorizontal: 18,
-    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: palette.line,
-    marginBottom: 8,
+    marginBottom: 6,
   },
-  chatEagohInfo: { flexDirection: "row", alignItems: "center", gap: 10 },
-  chatEagohName: { color: palette.text, fontSize: 16, fontWeight: "900" },
-  chatSessionType: { color: palette.muted, fontSize: 11, fontWeight: "700", marginTop: 2 },
-  chatMessages: { flex: 1 },
-  chatMessagesContent: { padding: 18, gap: 12 },
-  messageBubble: { maxWidth: "85%", borderRadius: 5, padding: 14 },
-  userBubble: { alignSelf: "flex-end", backgroundColor: "rgba(54,245,255,0.14)", borderWidth: 1, borderColor: "rgba(54,245,255,0.28)" },
-  analystBubble: { alignSelf: "flex-start", backgroundColor: "rgba(16,27,42,0.82)", borderWidth: 1, borderColor: palette.line },
-  userText: { color: palette.text, fontSize: 14, fontWeight: "700" },
-  analystText: { color: palette.text, fontSize: 14, fontWeight: "700", lineHeight: 20 },
-  messageConfidence: { color: palette.muted, fontSize: 10, fontWeight: "900", marginTop: 8 },
-  messageCost: { color: palette.gold, fontSize: 10, fontWeight: "900", marginTop: 4 },
-  typingRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 },
-  typingText: { color: palette.muted, fontSize: 12, fontWeight: "700" },
+  chatName: { color: palette.text, fontSize: 15, fontWeight: "900" },
+  chatType: { color: palette.muted, fontSize: 10, fontWeight: "700", marginTop: 1 },
+  chatMsgs: { flex: 1 },
+  chatMsgsContent: { padding: 14, gap: 10 },
+  msgBubble: { maxWidth: "82%", borderRadius: 5, padding: 12 },
+  msgUser: { alignSelf: "flex-end", backgroundColor: "rgba(108,230,255,0.12)", borderWidth: 1, borderColor: "rgba(108,230,255,0.24)" },
+  msgAnalyst: { alignSelf: "flex-start", backgroundColor: "rgba(14,24,37,0.78)", borderWidth: 1, borderColor: palette.line },
+  msgUserText: { color: palette.text, fontSize: 13, fontWeight: "700" },
+  msgAnalystText: { color: palette.text, fontSize: 13, fontWeight: "700", lineHeight: 19 },
+  msgMeta: { color: palette.muted, fontSize: 10, fontWeight: "800", marginTop: 6 },
+  msgCost: { color: palette.gold, fontSize: 10, fontWeight: "800", marginTop: 3 },
+  typing: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 6 },
+  typingText: { color: palette.muted, fontSize: 11, fontWeight: "700" },
   typingDots: { flexDirection: "row", gap: 4 },
-  dot: { width: 5, height: 5, borderRadius: 5 },
-  dotMid: { opacity: 0.6 },
+  dot: { width: 5, height: 5, borderRadius: 3 },
+  dotMid: { opacity: 0.55 },
 
-  bottomSpacer: { height: 60 },
+  bottomSpacer: { height: 40 },
 });

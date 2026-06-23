@@ -1,23 +1,21 @@
 /**
- * EAGOH Forge — dedicated screen for creating and re-forging EAGOH identities.
+ * EAGOH Forge — premium mobile intelligence platform screen.
  *
- * Layout (per product direction):
- *   - Preview render at top (brain-in-glass-dome, full-body, same chassis)
- *   - Collapsible dropdown sections below for each customization input
- *   - Confirmation flow: preview summary + Edge cost → confirm/cancel
- *
- * Connected to the ForgeProvider + EdgeProvider for live image gen and Edge deduction.
- * Free tier EAGOHs render as battered/dormant; paid tiers as activated and premium.
+ * Layout:
+ *   - Top 40%: large hero preview of the EAGOH (brain-in-glass-dome, full-body, premium chassis)
+ *   - Info strip: name, intelligence domain, shell status, tier badge
+ *   - Scrollable collapsible customization sections with tight spacing
+ *   - Cybernetic Intensity near bottom of sections
+ *   - Forge cost displayed above the sticky CTA
+ *   - Bottom CTA "REVIEW & CONFIRM" always visible
  */
 
 import { palette } from "@/constants/colors";
-import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import {
   BrainCircuit,
   Check,
   ChevronDown,
-  ChevronRight,
   ChevronUp,
   Cpu,
   Crown,
@@ -34,37 +32,24 @@ import {
 import React, { memo, useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Animated,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useAuth } from "@/providers/AuthProvider";
+import { LinearGradient } from "expo-linear-gradient";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useForge, type ForgePending } from "@/providers/ForgeProvider";
 import { useEagohs } from "@/providers/EagohProvider";
 import { INTELLIGENCE_DOMAINS, type IntelligenceDomain } from "@/services/domains";
 import { TIER_MULTIPLIER, TIER_MAX_EAGOHS } from "@/services/edge";
+import { getForgeCost } from "@/services/edge";
 import type { EagohDraft } from "@/services/eagohs";
-
-type SectionId =
-  | "name"
-  | "domain"
-  | "gender"
-  | "bodyType"
-  | "face"
-  | "headwear"
-  | "body"
-  | "footwear"
-  | "accessories"
-  | "styleNotes"
-  | "cybernetic"
-  | "pose";
 
 type OptionTone = "cyan" | "gold" | "violet" | "ember" | "success";
 type ForgeOption = { id: string; label: string; detail?: string; tone: OptionTone };
@@ -160,11 +145,7 @@ function toneColor(tone: OptionTone): string {
   return palette.cyan;
 }
 
-function domainTone(domain: IntelligenceDomain): string {
-  return toneColor(domain.tone);
-}
-
-// ---- EAGOH Preview Render (brain-in-glass-dome, full-body) ----
+// ---- EAGOH Hero Preview (brain-in-glass-dome, full-body, premium chassis) ----
 const ForgePreview = memo(function ForgePreview({
   name,
   sport,
@@ -185,23 +166,25 @@ const ForgePreview = memo(function ForgePreview({
   const isFree = tier === "free";
   const intensity = intensities.find((i) => i.id === cyberneticIntensity);
   const accent = isFree ? "#6B7280" : toneColor(intensity?.tone ?? "cyan");
-  const displayName = name || "Unnamed EAGOH";
-  const domainLabel = INTELLIGENCE_DOMAINS.find((d) => d.id === domain)?.label ?? domain;
   const chassisBorder = isFree ? "rgba(107,114,128,0.4)" : `${accent}66`;
-  const chassisBg = isFree ? "rgba(45,45,50,0.6)" : `${accent}18`;
+  const chassisBg = isFree ? "rgba(45,45,50,0.6)" : `${accent}15`;
   const brainGlow = isFree ? "rgba(75,85,99,0.4)" : `${accent}88`;
 
   return (
     <View style={styles.previewStage}>
       <LinearGradient
-        colors={isFree ? ["#1A1A1E", "#0D0D10", "#1A1A1E"] : ["rgba(54,245,255,0.08)", "rgba(3,6,11,0.95)", "rgba(124,92,255,0.08)"]}
+        colors={isFree
+          ? ["#1A1A1E", "#0D0D10", "#1A1A1E"]
+          : ["rgba(54,245,255,0.10)", "rgba(3,6,11,0.92)", "rgba(124,92,255,0.10)"]}
         style={StyleSheet.absoluteFill}
       />
+      {/* Decorative ring */}
+      <View style={[styles.stageRing, { borderColor: isFree ? "rgba(107,114,128,0.15)" : `${accent}22` }]} />
       {/* Glass dome head with brain */}
-      <View style={[styles.glassDome, { borderColor: `rgba(255,255,255,${isFree ? "0.12" : "0.28"})` }]}>
-        <View style={[styles.glassDomeInner, { backgroundColor: `rgba(255,255,255,${isFree ? "0.03" : "0.08"})` }]}>
+      <View style={[styles.glassDome, { borderColor: `rgba(255,255,255,${isFree ? "0.14" : "0.32"})` }]}>
+        <View style={[styles.glassDomeInner, { backgroundColor: `rgba(255,255,255,${isFree ? "0.04" : "0.10"})` }]}>
           <View style={[styles.brainCore, { backgroundColor: brainGlow }]}>
-            <BrainCircuit color={isFree ? "#6B7280" : accent} size={28} />
+            <BrainCircuit color={isFree ? "#6B7280" : accent} size={32} />
           </View>
           {isFree ? <View style={[styles.crack, { backgroundColor: "#4B5563" }]} /> : null}
           {isFree ? <View style={[styles.crack2, { backgroundColor: "#4B5563" }]} /> : null}
@@ -217,7 +200,7 @@ const ForgePreview = memo(function ForgePreview({
             colors={isFree ? ["rgba(55,55,60,0.5)", "rgba(30,30,35,0.7)"] : [`${accent}30`, "rgba(10,15,26,0.8)"]}
             style={StyleSheet.absoluteFill}
           />
-          <Cpu color={isFree ? "#6B7280" : accent} size={24} />
+          <Cpu color={isFree ? "#6B7280" : accent} size={28} />
         </View>
         <View style={[styles.legLeft, { backgroundColor: isFree ? "rgba(75,85,99,0.3)" : `${accent}33` }]} />
         <View style={[styles.legRight, { backgroundColor: isFree ? "rgba(75,85,99,0.3)" : `${accent}33` }]} />
@@ -228,24 +211,11 @@ const ForgePreview = memo(function ForgePreview({
           </>
         ) : null}
       </View>
-      {/* Labels */}
-      <View style={styles.previewLabels}>
-        <Text style={[styles.previewName, isFree && { color: "#9CA3AF" }]}>{displayName}</Text>
-        <Text style={styles.previewMeta}>
-          {sport} · {domainLabel || "No domain"} · {pose.replace(/-/g, " ")}
-        </Text>
-        <View style={[styles.tierBadge, isFree ? styles.tierBadgeFree : styles.tierBadgePaid]}>
-          <Sparkles color={isFree ? "#6B7280" : accent} size={10} />
-          <Text style={[styles.tierBadgeText, { color: isFree ? "#9CA3AF" : accent }]}>
-            {isFree ? "DORMANT SHELL" : "ACTIVATED CHASSIS"}
-          </Text>
-        </View>
-      </View>
     </View>
   );
 });
 
-// ---- Collapsible section ----
+// ---- Collapsible section (tight) ----
 const CollapsibleSection = memo(function CollapsibleSection({
   id,
   title,
@@ -273,14 +243,14 @@ const CollapsibleSection = memo(function CollapsibleSection({
           {icon}
           <Text style={styles.sectionTitle}>{title}</Text>
         </View>
-        {expanded ? <ChevronUp color={palette.cyan} size={18} /> : <ChevronDown color={palette.muted} size={18} />}
+        {expanded ? <ChevronUp color={palette.cyan} size={16} /> : <ChevronDown color={palette.muted} size={16} />}
       </Pressable>
       {expanded ? <View style={styles.sectionBody}>{children}</View> : null}
     </View>
   );
 });
 
-// ---- Option chip ----
+// ---- Option chip (tight) ----
 const OptionChip = memo(function OptionChip({
   option,
   selected,
@@ -305,12 +275,12 @@ const OptionChip = memo(function OptionChip({
         pressed && styles.pressed,
       ]}
     >
-      <View style={[styles.optionDot, { backgroundColor: selected ? accent : "rgba(255,255,255,0.16)" }]} />
+      <View style={[styles.optionDot, { backgroundColor: selected ? accent : "rgba(255,255,255,0.14)" }]} />
       <View style={styles.optionCopy}>
         <Text style={[styles.optionLabel, selected && { color: accent }]}>{option.label}</Text>
         {option.detail ? <Text style={styles.optionDetail}>{option.detail}</Text> : null}
       </View>
-      {selected ? <Check color={accent} size={16} /> : null}
+      {selected ? <Check color={accent} size={14} /> : null}
     </Pressable>
   );
 });
@@ -334,10 +304,7 @@ function ConfirmationSheet({
       <Pressable style={StyleSheet.absoluteFill} onPress={onCancel} />
       <View style={styles.confirmCard}>
         <LinearGradient colors={["rgba(16,27,42,0.98)", "rgba(8,15,26,0.98)"]} style={StyleSheet.absoluteFill} />
-        <View style={styles.confirmHeader}>
-          <Sparkles color={palette.cyan} size={22} />
-          <Text style={styles.confirmTitle}>Confirm Forge</Text>
-        </View>
+        <Text style={styles.confirmHeader}>CONFIRM FORGE</Text>
         <Text style={styles.confirmName}>{pending.draft.name || "Unnamed EAGOH"}</Text>
         <View style={styles.confirmDetails}>
           {pending.summary.map((line, i) => (
@@ -374,11 +341,11 @@ function ConfirmationSheet({
 
 // ---- Main screen ----
 export default function ForgeScreen(): JSX.Element {
-  const { user } = useAuth();
   const { profile } = useProfile();
   const { total: edgeTotal } = useEdge();
-  const { pending, prepareForge, confirmForge, cancelForge, isGenerating, lastResult } = useForge();
+  const { pending, prepareForge, confirmForge, cancelForge, isGenerating } = useForge();
   const { remaining, canCreate, tier } = useEagohs();
+  const { height: windowHeight } = useWindowDimensions();
 
   const [name, setName] = useState<string>("");
   const [sport, setSport] = useState<string>("football");
@@ -423,6 +390,9 @@ export default function ForgeScreen(): JSX.Element {
   const currentTier = profile?.subscription_tier ?? "free";
   const multiplier = TIER_MULTIPLIER[currentTier] ?? 0;
   const maxEagohs = TIER_MAX_EAGOHS[currentTier] ?? 0;
+  const forgeCost = getForgeCost("initial");
+
+  const domainLabel = INTELLIGENCE_DOMAINS.find((d) => d.id === domain)?.label ?? domain;
 
   const draft: EagohDraft = useMemo(() => ({
     name,
@@ -467,51 +437,58 @@ export default function ForgeScreen(): JSX.Element {
     cancelForge();
   }, [cancelForge]);
 
-  // Reset after successful forge
-  const lastWasOk = lastResult?.ok;
+  // Preview height: ~40% of screen, capped
+  const previewHeight = Math.min(windowHeight * 0.40, 380);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <View style={styles.root}>
-        {/* Header */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.kicker}>FORGE CHAMBER</Text>
-            <Text style={styles.title}>Forge your EAGOH</Text>
-          </View>
-          <View style={styles.headerRight}>
-            <View style={styles.tierChip}>
-              <Zap color={toneColor("gold")} size={12} />
-              <Text style={styles.tierChipText}>{currentTier.replace("_", " ").toUpperCase()}</Text>
-            </View>
-            <Text style={styles.remainingText}>
-              {remaining} of {maxEagohs} slots free
+        {/* ── Hero Preview (top 40%) ── */}
+        <View style={[styles.previewArea, { height: previewHeight }]}>
+          <ForgePreview
+            name={name}
+            sport={sport}
+            gender={gender}
+            domain={domain}
+            cyberneticIntensity={cyberneticIntensity}
+            pose={pose}
+            tier={currentTier}
+          />
+          {/* Tier chip floating on preview */}
+          <View style={[styles.tierChipFloat, currentTier !== "free" && styles.tierChipFloatPaid]}>
+            <Zap color={currentTier !== "free" ? palette.cyan : palette.muted} size={11} />
+            <Text style={[styles.tierChipFloatText, currentTier !== "free" && { color: palette.cyan }]}>
+              {currentTier.replace("_", " ").toUpperCase()}
             </Text>
           </View>
         </View>
 
-        {/* EAGOH Preview */}
-        <ForgePreview
-          name={name}
-          sport={sport}
-          gender={gender}
-          domain={domain}
-          cyberneticIntensity={cyberneticIntensity}
-          pose={pose}
-          tier={currentTier}
-        />
+        {/* ── Info strip ── */}
+        <View style={styles.infoStrip}>
+          <Text style={styles.infoName} numberOfLines={1}>{name || "Unnamed EAGOH"}</Text>
+          <View style={styles.infoMeta}>
+            <Text style={styles.infoDomain}>{domainLabel}</Text>
+            <View style={styles.infoDot} />
+            <Text style={styles.infoShell}>
+              {currentTier === "free" ? "DORMANT SHELL" : "ACTIVATED CHASSIS"}
+            </Text>
+            <View style={styles.infoDot} />
+            <Text style={styles.infoSlots}>{remaining}/{maxEagohs} slots</Text>
+          </View>
+        </View>
 
-        {/* Collapsible sections */}
+        {/* ── Scrollable sections ── */}
         <ScrollView
           style={styles.sectionsScroll}
           contentContainerStyle={styles.sectionsContent}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
           {/* Name */}
           <CollapsibleSection
             id="name"
             title="EAGOH Name"
-            icon={<Crown color={palette.gold} size={16} />}
+            icon={<Crown color={palette.gold} size={14} />}
             expanded={isExpanded("name")}
             onToggle={toggleSection}
           >
@@ -528,7 +505,7 @@ export default function ForgeScreen(): JSX.Element {
           <CollapsibleSection
             id="domain"
             title="Intelligence Domain"
-            icon={<BrainCircuit color={palette.violet} size={16} />}
+            icon={<BrainCircuit color={palette.violet} size={14} />}
             expanded={isExpanded("domain")}
             onToggle={toggleSection}
           >
@@ -549,7 +526,7 @@ export default function ForgeScreen(): JSX.Element {
           <CollapsibleSection
             id="gender"
             title="Gender"
-            icon={<ScanFace color={palette.cyan} size={16} />}
+            icon={<ScanFace color={palette.cyan} size={14} />}
             expanded={isExpanded("gender")}
             onToggle={toggleSection}
           >
@@ -562,7 +539,7 @@ export default function ForgeScreen(): JSX.Element {
           <CollapsibleSection
             id="bodyType"
             title="Body Type"
-            icon={<Shirt color={palette.ember} size={16} />}
+            icon={<Shirt color={palette.ember} size={14} />}
             expanded={isExpanded("bodyType")}
             onToggle={toggleSection}
           >
@@ -575,15 +552,15 @@ export default function ForgeScreen(): JSX.Element {
           <CollapsibleSection
             id="face"
             title="Face & Features"
-            icon={<Eye color={palette.success} size={16} />}
+            icon={<Eye color={palette.success} size={14} />}
             expanded={isExpanded("face")}
             onToggle={toggleSection}
           >
-            <Text style={styles.sectionHint}>Describe distinctive facial traits, expression, or visor configuration.</Text>
+            <Text style={styles.sectionHint}>Distinctive facial traits, expression, or visor configuration.</Text>
             <TextInput
               value={faceFeatures}
               onChangeText={setFaceFeatures}
-              placeholder="e.g. angular jaw, neon optic visor, calm gaze…"
+              placeholder="e.g. angular jaw, neon optic visor…"
               placeholderTextColor={palette.muted}
               style={styles.input}
               multiline
@@ -594,7 +571,7 @@ export default function ForgeScreen(): JSX.Element {
           <CollapsibleSection
             id="headwear"
             title="Headwear"
-            icon={<Crown color={palette.gold} size={16} />}
+            icon={<Crown color={palette.gold} size={14} />}
             expanded={isExpanded("headwear")}
             onToggle={toggleSection}
           >
@@ -607,7 +584,7 @@ export default function ForgeScreen(): JSX.Element {
           <CollapsibleSection
             id="body"
             title="Body Gear"
-            icon={<Shirt color={palette.cyan} size={16} />}
+            icon={<Shirt color={palette.cyan} size={14} />}
             expanded={isExpanded("body")}
             onToggle={toggleSection}
           >
@@ -620,7 +597,7 @@ export default function ForgeScreen(): JSX.Element {
           <CollapsibleSection
             id="footwear"
             title="Footwear"
-            icon={<Footprints color={palette.success} size={16} />}
+            icon={<Footprints color={palette.success} size={14} />}
             expanded={isExpanded("footwear")}
             onToggle={toggleSection}
           >
@@ -633,7 +610,7 @@ export default function ForgeScreen(): JSX.Element {
           <CollapsibleSection
             id="accessories"
             title="Accessories"
-            icon={<Gem color={palette.violet} size={16} />}
+            icon={<Gem color={palette.violet} size={14} />}
             expanded={isExpanded("accessories")}
             onToggle={toggleSection}
           >
@@ -642,30 +619,30 @@ export default function ForgeScreen(): JSX.Element {
             ))}
           </CollapsibleSection>
 
-          {/* Additional Style Notes */}
+          {/* Additional Notes */}
           <CollapsibleSection
             id="styleNotes"
-            title="Additional Style Notes"
-            icon={<SlidersHorizontal color={palette.gold} size={16} />}
+            title="Additional Notes"
+            icon={<SlidersHorizontal color={palette.gold} size={14} />}
             expanded={isExpanded("styleNotes")}
             onToggle={toggleSection}
           >
-            <Text style={styles.sectionHint}>Any extra appearance cues — color hints, material notes, attitude.</Text>
+            <Text style={styles.sectionHint}>Extra cues — color hints, material notes, attitude.</Text>
             <TextInput
               value={styleNotes}
               onChangeText={setStyleNotes}
-              placeholder="e.g. matte black finish, gold accent trim…"
+              placeholder="e.g. matte black finish, gold trim…"
               placeholderTextColor={palette.muted}
               style={styles.input}
               multiline
             />
           </CollapsibleSection>
 
-          {/* Cybernetic Intensity */}
+          {/* Cybernetic Intensity — near bottom of sections */}
           <CollapsibleSection
             id="cybernetic"
             title="Cybernetic Intensity"
-            icon={<Cpu color={palette.ember} size={16} />}
+            icon={<Cpu color={palette.ember} size={14} />}
             expanded={isExpanded("cybernetic")}
             onToggle={toggleSection}
           >
@@ -678,7 +655,7 @@ export default function ForgeScreen(): JSX.Element {
           <CollapsibleSection
             id="pose"
             title="Fixed Pose"
-            icon={<ScanFace color={palette.cyan} size={16} />}
+            icon={<ScanFace color={palette.cyan} size={14} />}
             expanded={isExpanded("pose")}
             onToggle={toggleSection}
           >
@@ -687,11 +664,11 @@ export default function ForgeScreen(): JSX.Element {
             ))}
           </CollapsibleSection>
 
-          {/* DNA Archetypes (compact) */}
+          {/* DNA Archetypes */}
           <CollapsibleSection
             id="dna"
             title="DNA Archetypes"
-            icon={<Sparkles color={palette.violet} size={16} />}
+            icon={<Sparkles color={palette.violet} size={14} />}
             expanded={isExpanded("dna")}
             onToggle={toggleSection}
           >
@@ -700,25 +677,25 @@ export default function ForgeScreen(): JSX.Element {
             ))}
           </CollapsibleSection>
 
-          {/* Fanatic Teams (compact) */}
+          {/* Fanatic Teams */}
           <CollapsibleSection
             id="teams"
             title="Fanatic Teams"
-            icon={<Heart color={palette.ember} size={16} />}
+            icon={<Heart color={palette.ember} size={14} />}
             expanded={isExpanded("teams")}
             onToggle={toggleSection}
           >
-            <Text style={styles.sectionHint}>Mock faction affinity — no real team logos or marks are used.</Text>
+            <Text style={styles.sectionHint}>Mock faction affinity — no real team logos or marks.</Text>
             {fanaticTeams.map((opt) => (
               <OptionChip key={opt.id} option={opt} selected={teams.includes(opt.id)} onPress={toggleTeams} />
             ))}
           </CollapsibleSection>
 
-          {/* Sport + Lab (compact) */}
+          {/* Sport & Lab */}
           <CollapsibleSection
             id="sport"
             title="Sport & Lab"
-            icon={<Zap color={palette.gold} size={16} />}
+            icon={<Zap color={palette.gold} size={14} />}
             expanded={isExpanded("sport")}
             onToggle={toggleSection}
           >
@@ -726,7 +703,7 @@ export default function ForgeScreen(): JSX.Element {
             {sports.map((opt) => (
               <OptionChip key={opt.id} option={opt} selected={sport === opt.id} onPress={setSport} />
             ))}
-            <Text style={[styles.sectionHint, { marginTop: 12 }]}>Forge lab</Text>
+            <Text style={[styles.sectionHint, { marginTop: 10 }]}>Forge lab</Text>
             {labs.map((opt) => (
               <OptionChip key={opt.id} option={opt} selected={lab === opt.id} onPress={setLab} />
             ))}
@@ -735,18 +712,34 @@ export default function ForgeScreen(): JSX.Element {
           {/* Error */}
           {forgeError ? <Text style={styles.errorText}>{forgeError}</Text> : null}
 
-          {/* Forge button */}
+          {/* Forge cost — above CTA */}
+          <View style={styles.costPreview}>
+            <Zap color={palette.gold} size={16} />
+            <Text style={styles.costPreviewLabel}>Forge Cost</Text>
+            <Text style={styles.costPreviewValue}>{forgeCost} Edge</Text>
+          </View>
+
+          <View style={styles.bottomSpacer} />
+        </ScrollView>
+
+        {/* ── Sticky CTA ── */}
+        <View style={styles.ctaContainer}>
+          <LinearGradient
+            colors={["rgba(2,4,10,0.0)", "rgba(2,4,10,0.92)", palette.void]}
+            style={styles.ctaFade}
+            pointerEvents="none"
+          />
           <Pressable
             onPress={handleForge}
             disabled={isGenerating || !canCreate}
             style={({ pressed }) => [
-              styles.forgeButton,
+              styles.ctaButton,
               (!canCreate || isGenerating) && styles.disabledButton,
               pressed && styles.pressed,
             ]}
           >
             <LinearGradient
-              colors={[palette.cyan, "rgba(61,165,255,0.8)"]}
+              colors={[palette.cyan, "rgba(61,165,255,0.85)"]}
               style={StyleSheet.absoluteFill}
             />
             {isGenerating ? (
@@ -754,15 +747,13 @@ export default function ForgeScreen(): JSX.Element {
             ) : (
               <>
                 <Sparkles color={palette.void} size={18} />
-                <Text style={styles.forgeButtonText}>
-                  {canCreate ? "Review Forge" : `Tier limit reached (${maxEagohs} max)`}
+                <Text style={styles.ctaButtonText}>
+                  {canCreate ? "REVIEW & CONFIRM" : `Tier limit (${maxEagohs} max)`}
                 </Text>
               </>
             )}
           </Pressable>
-
-          <View style={styles.bottomSpacer} />
-        </ScrollView>
+        </View>
 
         {/* Confirmation overlay */}
         {pending ? (
@@ -782,172 +773,201 @@ export default function ForgeScreen(): JSX.Element {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.void },
   root: { flex: 1, backgroundColor: palette.void },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 10,
-  },
-  kicker: { color: palette.cyan, fontSize: 11, fontWeight: "900", letterSpacing: 2.2 },
-  title: { color: palette.text, fontSize: 28, fontWeight: "900", letterSpacing: -0.8, marginTop: 2 },
-  headerRight: { alignItems: "flex-end", gap: 4 },
-  tierChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 5,
-    backgroundColor: palette.goldSoft,
-    borderWidth: 1,
-    borderColor: "rgba(255,181,71,0.28)",
-  },
-  tierChipText: { color: palette.gold, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
-  remainingText: { color: palette.muted, fontSize: 11, fontWeight: "700" },
 
-  // Preview
+  // ── Preview area ──
+  previewArea: {
+    position: "relative",
+    marginHorizontal: 12,
+    marginTop: 6,
+  },
   previewStage: {
-    height: 310,
-    marginHorizontal: 18,
+    flex: 1,
     borderRadius: 5,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(54,245,255,0.18)",
+    borderColor: "rgba(54,245,255,0.20)",
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "rgba(3,6,11,0.6)",
+  },
+  stageRing: {
+    position: "absolute",
+    width: "92%",
+    height: "88%",
+    borderRadius: 5,
+    borderWidth: 1,
   },
   glassDome: {
-    width: 90,
-    height: 100,
+    width: 110,
+    height: 120,
     borderRadius: 5,
     borderWidth: 2,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 6,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    marginBottom: 8,
+    backgroundColor: "rgba(255,255,255,0.05)",
   },
-  glassDomeInner: { width: 70, height: 76, borderRadius: 5, alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  brainCore: { width: 44, height: 44, borderRadius: 5, alignItems: "center", justifyContent: "center" },
-  crack: { position: "absolute", top: 8, left: 10, width: 24, height: 2, transform: [{ rotate: "-28deg" }] },
-  crack2: { position: "absolute", bottom: 14, right: 8, width: 18, height: 2, transform: [{ rotate: "15deg" }] },
+  glassDomeInner: { width: 84, height: 90, borderRadius: 5, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  brainCore: { width: 54, height: 54, borderRadius: 5, alignItems: "center", justifyContent: "center" },
+  crack: { position: "absolute", top: 10, left: 12, width: 28, height: 2, transform: [{ rotate: "-28deg" }] },
+  crack2: { position: "absolute", bottom: 16, right: 10, width: 22, height: 2, transform: [{ rotate: "15deg" }] },
   bodyFrame: {
-    width: 130,
-    height: 140,
+    width: 150,
+    height: 160,
     borderRadius: 5,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
   },
-  neckConnector: { position: "absolute", top: -4, width: 16, height: 10, backgroundColor: "rgba(255,255,255,0.12)", borderRadius: 5 },
-  shoulderLeft: { position: "absolute", top: 10, left: -14, width: 28, height: 60, borderRadius: 5 },
-  shoulderRight: { position: "absolute", top: 10, right: -14, width: 28, height: 60, borderRadius: 5 },
-  torsoCore: { width: 84, height: 90, borderRadius: 5, alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  legLeft: { position: "absolute", bottom: -28, left: 28, width: 22, height: 50, borderRadius: 5 },
-  legRight: { position: "absolute", bottom: -28, right: 28, width: 22, height: 50, borderRadius: 5 },
-  exposedWire: { position: "absolute", bottom: 30, left: 8, width: 14, height: 2, transform: [{ rotate: "35deg" }] },
-  exposedWire2: { position: "absolute", top: 40, right: 6, width: 10, height: 1.5, transform: [{ rotate: "-20deg" }] },
-  previewLabels: { position: "absolute", bottom: 20, alignItems: "center" },
-  previewName: { color: palette.text, fontSize: 16, fontWeight: "900", letterSpacing: 1.2 },
-  previewMeta: { color: palette.muted, fontSize: 11, fontWeight: "700", marginTop: 3 },
-  tierBadge: {
+  neckConnector: { position: "absolute", top: -5, width: 20, height: 12, backgroundColor: "rgba(255,255,255,0.14)", borderRadius: 5 },
+  shoulderLeft: { position: "absolute", top: 12, left: -16, width: 32, height: 68, borderRadius: 5 },
+  shoulderRight: { position: "absolute", top: 12, right: -16, width: 32, height: 68, borderRadius: 5 },
+  torsoCore: { width: 96, height: 100, borderRadius: 5, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  legLeft: { position: "absolute", bottom: -32, left: 32, width: 26, height: 56, borderRadius: 5 },
+  legRight: { position: "absolute", bottom: -32, right: 32, width: 26, height: 56, borderRadius: 5 },
+  exposedWire: { position: "absolute", bottom: 34, left: 10, width: 16, height: 2, transform: [{ rotate: "35deg" }] },
+  exposedWire2: { position: "absolute", top: 44, right: 8, width: 12, height: 1.5, transform: [{ rotate: "-20deg" }] },
+  tierChipFloat: {
+    position: "absolute",
+    top: 10,
+    right: 10,
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    marginTop: 8,
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 5,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
   },
-  tierBadgeFree: { backgroundColor: "rgba(107,114,128,0.18)", borderWidth: 1, borderColor: "rgba(107,114,128,0.3)" },
-  tierBadgePaid: { backgroundColor: "rgba(54,245,255,0.12)", borderWidth: 1, borderColor: "rgba(54,245,255,0.28)" },
-  tierBadgeText: { fontSize: 9, fontWeight: "900", letterSpacing: 1.4 },
+  tierChipFloatPaid: {
+    borderColor: "rgba(108,230,255,0.28)",
+    backgroundColor: "rgba(8,20,35,0.75)",
+  },
+  tierChipFloatText: { color: palette.muted, fontSize: 9, fontWeight: "900", letterSpacing: 1.2 },
 
-  // Sections
+  // ── Info strip ──
+  infoStrip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.line,
+  },
+  infoName: { color: palette.text, fontSize: 18, fontWeight: "900", letterSpacing: 0.6 },
+  infoMeta: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 },
+  infoDomain: { color: palette.cyan, fontSize: 11, fontWeight: "800" },
+  infoDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: palette.muted },
+  infoShell: { color: palette.muted, fontSize: 10, fontWeight: "800", letterSpacing: 0.8 },
+  infoSlots: { color: palette.muted, fontSize: 10, fontWeight: "700" },
+
+  // ── Sections ──
   sectionsScroll: { flex: 1 },
-  sectionsContent: { paddingHorizontal: 18, paddingTop: 12, gap: 8 },
+  sectionsContent: { paddingHorizontal: 12, paddingTop: 6, gap: 5 },
   section: {
     borderRadius: 5,
     borderWidth: 1,
     borderColor: palette.line,
-    backgroundColor: "rgba(10,18,30,0.62)",
+    backgroundColor: "rgba(10,18,30,0.55)",
     overflow: "hidden",
   },
   sectionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 14,
-    paddingVertical: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
   },
-  sectionHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
-  sectionTitle: { color: palette.text, fontSize: 14, fontWeight: "900", letterSpacing: 0.4 },
-  sectionBody: { paddingHorizontal: 14, paddingBottom: 14, gap: 8 },
-  sectionHint: { color: palette.muted, fontSize: 11, fontWeight: "700", marginBottom: 4 },
-  pressed: { transform: [{ scale: 0.985 }], opacity: 0.88 },
+  sectionHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 8 },
+  sectionTitle: { color: palette.text, fontSize: 13, fontWeight: "800", letterSpacing: 0.2 },
+  sectionBody: { paddingHorizontal: 12, paddingBottom: 10, gap: 5 },
+  sectionHint: { color: palette.muted, fontSize: 10, fontWeight: "700", marginBottom: 2 },
 
-  // Options
-  optionsGrid: { gap: 6 },
+  // ── Options ──
+  optionsGrid: { gap: 4 },
   optionChip: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    minHeight: 46,
+    gap: 8,
+    minHeight: 40,
     borderRadius: 5,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderWidth: 1,
     borderColor: palette.line,
-    backgroundColor: "rgba(255,255,255,0.035)",
-    marginBottom: 4,
+    backgroundColor: "rgba(255,255,255,0.03)",
+    marginBottom: 2,
   },
-  optionDot: { width: 9, height: 9, borderRadius: 5 },
+  optionDot: { width: 8, height: 8, borderRadius: 4 },
   optionCopy: { flex: 1 },
-  optionLabel: { color: palette.text, fontSize: 13, fontWeight: "800" },
-  optionDetail: { color: palette.muted, fontSize: 10, marginTop: 1 },
+  optionLabel: { color: palette.text, fontSize: 12, fontWeight: "800" },
+  optionDetail: { color: palette.muted, fontSize: 9, marginTop: 1 },
 
-  // Input
+  // ── Input ──
   input: {
     color: palette.text,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "700",
     borderWidth: 1,
     borderColor: palette.line,
     borderRadius: 5,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    backgroundColor: "rgba(3,6,11,0.4)",
-    minHeight: 46,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    backgroundColor: "rgba(3,6,11,0.35)",
+    minHeight: 40,
   },
 
-  // Error
-  errorText: { color: palette.ember, fontSize: 12, fontWeight: "800", textAlign: "center" },
+  // ── Error ──
+  errorText: { color: palette.ember, fontSize: 11, fontWeight: "800", textAlign: "center", paddingVertical: 4 },
 
-  // Forge button
-  forgeButton: {
-    minHeight: 56,
+  // ── Cost preview (above CTA) ──
+  costPreview: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    marginTop: 4,
+  },
+  costPreviewLabel: { color: palette.muted, fontSize: 12, fontWeight: "800", flex: 1 },
+  costPreviewValue: { color: palette.gold, fontSize: 16, fontWeight: "900" },
+
+  // ── Sticky CTA ──
+  ctaContainer: {
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    paddingTop: 0,
+  },
+  ctaFade: {
+    position: "absolute",
+    top: -20,
+    left: 0,
+    right: 0,
+    height: 20,
+  },
+  ctaButton: {
+    minHeight: 54,
     borderRadius: 5,
     overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
-    gap: 8,
-    marginTop: 8,
+    gap: 10,
     shadowColor: palette.cyan,
-    shadowOpacity: 0.3,
-    shadowRadius: 14,
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 0 },
   },
-  forgeButtonText: { color: palette.void, fontSize: 16, fontWeight: "900" },
-  disabledButton: { opacity: 0.5 },
+  ctaButtonText: { color: palette.void, fontSize: 15, fontWeight: "900", letterSpacing: 1.2 },
+  disabledButton: { opacity: 0.45 },
+  pressed: { transform: [{ scale: 0.985 }], opacity: 0.88 },
+  bottomSpacer: { height: 8 },
 
-  bottomSpacer: { height: 120 },
-
-  // Confirmation overlay
+  // ── Confirmation overlay ──
   confirmOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(2,4,10,0.88)",
+    backgroundColor: "rgba(2,4,10,0.90)",
     justifyContent: "center",
     alignItems: "center",
     padding: 24,
@@ -959,22 +979,21 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     padding: 22,
     borderWidth: 1,
-    borderColor: "rgba(54,245,255,0.3)",
+    borderColor: "rgba(54,245,255,0.30)",
     overflow: "hidden",
-    gap: 14,
+    gap: 12,
   },
-  confirmHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
-  confirmTitle: { color: palette.text, fontSize: 20, fontWeight: "900" },
-  confirmName: { color: palette.cyan, fontSize: 16, fontWeight: "900", letterSpacing: 1 },
-  confirmDetails: { gap: 4 },
+  confirmHeader: { color: palette.cyan, fontSize: 11, fontWeight: "900", letterSpacing: 2.2 },
+  confirmName: { color: palette.text, fontSize: 20, fontWeight: "900", letterSpacing: 0.8 },
+  confirmDetails: { gap: 3 },
   confirmLine: { color: palette.muted, fontSize: 12, fontWeight: "700" },
   confirmEdgeRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 10, borderTopWidth: 1, borderBottomWidth: 1, borderColor: palette.line },
   confirmEdgeCost: { color: palette.gold, fontSize: 20, fontWeight: "900" },
-  confirmError: { color: palette.ember, fontSize: 12, fontWeight: "800" },
+  confirmError: { color: palette.ember, fontSize: 11, fontWeight: "800" },
   confirmActions: { flexDirection: "row", gap: 10 },
   confirmCancel: {
     flex: 1,
-    minHeight: 46,
+    minHeight: 44,
     borderRadius: 5,
     alignItems: "center",
     justifyContent: "center",
@@ -982,10 +1001,10 @@ const styles = StyleSheet.create({
     borderColor: palette.line,
     backgroundColor: "rgba(255,255,255,0.05)",
   },
-  confirmCancelText: { color: palette.muted, fontWeight: "900" },
+  confirmCancelText: { color: palette.muted, fontWeight: "800", fontSize: 14 },
   confirmForge: {
     flex: 2,
-    minHeight: 46,
+    minHeight: 44,
     borderRadius: 5,
     alignItems: "center",
     justifyContent: "center",
@@ -994,5 +1013,5 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 12,
   },
-  confirmForgeText: { color: palette.void, fontWeight: "900", fontSize: 15 },
+  confirmForgeText: { color: palette.void, fontWeight: "900", fontSize: 14 },
 });

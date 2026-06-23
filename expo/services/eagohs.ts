@@ -19,6 +19,10 @@ export type EagohRecord = {
   name: string;
   sport: string;
   gender: string | null;
+  domain: string | null;
+  body_type: string | null;
+  style_notes: string | null;
+  face_features: string | null;
   cybernetic_intensity: string | null;
   pose: string | null;
   lab: string | null;
@@ -49,6 +53,10 @@ export type EagohDraft = {
   name: string;
   sport: string;
   gender: string;
+  domain: string;
+  bodyType: string;
+  faceFeatures: string;
+  styleNotes: string;
   dna: string[];
   teams: string[];
   appearance: Record<string, string>;
@@ -73,7 +81,7 @@ export function getEagohLimit(tier: SubscriptionTier): number {
 export async function listEagohs(userId: string): Promise<EagohRecord[]> {
   const { data, error } = await supabase
     .from("eagohs")
-    .select("id,user_id,name,sport,gender,cybernetic_intensity,pose,lab,dna,image_url,image_thumb_url,image_prompt,image_generated_at,created_at,updated_at")
+    .select("id,user_id,name,sport,gender,domain,body_type,face_features,style_notes,cybernetic_intensity,pose,lab,dna,image_url,image_thumb_url,image_prompt,image_generated_at,created_at,updated_at")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -130,6 +138,10 @@ export async function createEagoh(
     name: draft.name?.trim() || "Unnamed EAGOH",
     sport: draft.sport,
     gender: draft.gender,
+    domain: draft.domain || null,
+    body_type: draft.bodyType || null,
+    face_features: draft.faceFeatures || null,
+    style_notes: draft.styleNotes || null,
     cybernetic_intensity: draft.cyberneticIntensity,
     pose: draft.pose,
     lab: draft.lab,

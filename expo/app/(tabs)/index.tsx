@@ -3,14 +3,18 @@ import * as Haptics from "expo-haptics";
 import {
   BarChart3,
   ChevronRight,
+  Cpu,
   Eye,
+  FlaskConical,
   Gauge,
   Hexagon,
   RadioTower,
   ScanLine,
+  Shield,
   ShieldCheck,
   Sparkles,
   Star,
+  Sword,
   WalletCards,
   Zap,
 } from "lucide-react-native";
@@ -23,7 +27,7 @@ import { useAuth } from "@/providers/AuthProvider";
 
 type Phase = "loading" | "onboarding" | "auth" | "app";
 type CardTone = "cyan" | "gold" | "violet" | "ember" | "success";
-type HomeSection = { id: string; kind: "hero" | "sponsored" | "trending" | "feed" | "analyst" | "quickcheck" | "recent" | "favorites" };
+type HomeSection = { id: string; kind: "hero" | "sponsored" | "trending" | "feed" | "analyst" | "quickcheck" | "recent" | "favorites" | "labs" | "factions" };
 type CardProps = { title: string; subtitle: string; meta?: string; tone?: "cyan" | "gold" | "violet"; icon?: React.ReactNode };
 type SponsoredEagoh = { id: string; name: string; analytics: string; score: string; detail: string; accent: CardTone; signal: string };
 type EagohItem = { id: string; name: string; metric: string; trend: string; accent: CardTone };
@@ -45,8 +49,10 @@ const stats = [
 const homeSections: HomeSection[] = [
   { id: "hero", kind: "hero" },
   { id: "sponsored", kind: "sponsored" },
+  { id: "labs", kind: "labs" },
   { id: "trending", kind: "trending" },
   { id: "feed", kind: "feed" },
+  { id: "factions", kind: "factions" },
   { id: "analyst", kind: "analyst" },
   { id: "quickcheck", kind: "quickcheck" },
   { id: "recent", kind: "recent" },
@@ -240,6 +246,60 @@ const QuickCheckSection = React.memo(function QuickCheckSection(): JSX.Element {
           </Pressable>
         );
       })}</View>
+    </View>
+  );
+});
+
+const LabsFeatureCard = React.memo(function LabsFeatureCard(): JSX.Element {
+  return (
+    <View>
+      <SectionHeader eyebrow="FORGE & LABS" title="Prototype intelligence" action="Forge tab" />
+      <View style={styles.featureCard}>
+        <View style={[styles.featureIconWrap, { borderColor: "rgba(108,230,255,0.4)" }]}>
+          <FlaskConical color={palette.cyan} size={24} />
+        </View>
+        <View style={styles.featureInfo}>
+          <Text style={styles.featureTitle}>EAGOH Forge</Text>
+          <Text style={styles.featureDesc}>Create your EAGOH with cybernetic body, glass-dome brain, and intelligence domain tuning. Forge tab.</Text>
+        </View>
+        <ChevronRight color={palette.cyan} size={18} />
+      </View>
+      <View style={[styles.featureCard, { marginTop: 8 }]}>
+        <View style={[styles.featureIconWrap, { borderColor: "rgba(0,255,178,0.4)" }]}>
+          <Cpu color={palette.success} size={24} />
+        </View>
+        <View style={styles.featureInfo}>
+          <Text style={styles.featureTitle}>Open Intelligence Lab</Text>
+          <Text style={styles.featureDesc}>Feed observations, classify signals, and score intelligence with edge detection tools.</Text>
+        </View>
+      </View>
+    </View>
+  );
+});
+
+const FactionsFeatureCard = React.memo(function FactionsFeatureCard(): JSX.Element {
+  return (
+    <View>
+      <SectionHeader eyebrow="FACTIONS" title="Intelligence alliances" action="Mock" />
+      <View style={styles.featureCard}>
+        <View style={[styles.featureIconWrap, { borderColor: "rgba(138,92,255,0.4)" }]}>
+          <Shield color={palette.violet} size={24} />
+        </View>
+        <View style={styles.featureInfo}>
+          <Text style={styles.featureTitle}>Faction Network</Text>
+          <Text style={styles.featureDesc}>Align with syndicates, pool observations, and climb the faction influence ladder.</Text>
+        </View>
+        <ChevronRight color={palette.violet} size={18} />
+      </View>
+      <View style={[styles.featureCard, { marginTop: 8 }]}>
+        <View style={[styles.featureIconWrap, { borderColor: "rgba(255,181,71,0.4)" }]}>
+          <Sword color={palette.gold} size={24} />
+        </View>
+        <View style={styles.featureInfo}>
+          <Text style={styles.featureTitle}>Faction Activity</Text>
+          <Text style={styles.featureDesc}>Track signal shares, reputation badges, and tactical rankings across mock syndicates.</Text>
+        </View>
+      </View>
     </View>
   );
 });
@@ -439,6 +499,8 @@ function HomeApp(): JSX.Element {
     if (item.kind === "sponsored") return <SponsoredSection />;
     if (item.kind === "trending") return <View><SectionHeader eyebrow="MARKET HEAT" title="Trending EAGOHs" action="Mock" /><EagohRail items={trendingEagohs} /></View>;
     if (item.kind === "feed") return <ActivityFeed />;
+    if (item.kind === "labs") return <LabsFeatureCard />;
+    if (item.kind === "factions") return <FactionsFeatureCard />;
     if (item.kind === "analyst") return <AnalystAccess />;
     if (item.kind === "quickcheck") return <QuickCheckSection />;
     if (item.kind === "recent") return <View><SectionHeader eyebrow="RETURN PATH" title="Recently viewed EAGOHs" /><EagohRail items={recentlyViewed} /></View>;
@@ -562,6 +624,11 @@ const styles = StyleSheet.create({
   quickGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   quickButton: { width: "48%", minHeight: 56, borderRadius: 5, borderWidth: 1, borderColor: palette.line, backgroundColor: "rgba(16,27,42,0.78)", flexDirection: "row", alignItems: "center", paddingHorizontal: 13, gap: 9 },
   quickText: { color: palette.text, fontSize: 13, fontWeight: "900" },
+  featureCard: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 5, padding: 14, backgroundColor: "rgba(14,24,37,0.72)", borderWidth: 1, borderColor: palette.line },
+  featureIconWrap: { width: 46, height: 46, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.04)" },
+  featureInfo: { flex: 1 },
+  featureTitle: { color: palette.text, fontSize: 14, fontWeight: "900" },
+  featureDesc: { color: palette.muted, fontSize: 12, lineHeight: 17, marginTop: 4 },
   teamList: { borderWidth: 1, borderColor: palette.line, borderRadius: 5, backgroundColor: palette.panel, padding: 12, gap: 10 },
   teamRow: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 50 },
   teamBadge: { width: 38, height: 38, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.04)" },

@@ -67,6 +67,8 @@ export const [ForgeProvider, useForge] = createContextHook(() => {
           cyberneticIntensity: draft.cyberneticIntensity,
           pose: draft.pose,
           lab: draft.lab,
+          domain: draft.domain,
+          tier: profile?.subscription_tier ?? "free",
         },
         { scope: mode === "partial_reforge" ? scope : "full" },
       );
@@ -81,6 +83,9 @@ export const [ForgeProvider, useForge] = createContextHook(() => {
         pose: draft.pose,
         lab: draft.lab,
       });
+      if (draft.domain) {
+        summary.push(`Domain: ${draft.domain}`);
+      }
       const edgeCost = getForgeCost(mode);
       const next: ForgePending = { mode, scope, draft, eagohId: options.eagohId, prompt, summary, edgeCost };
       setPending(next);

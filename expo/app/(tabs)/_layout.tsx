@@ -1,5 +1,5 @@
 import { Tabs } from "expo-router";
-import { FlaskConical, Home, Shield, Store, UserRound } from "lucide-react-native";
+import { Flame, Home, MessageCircle, Store, UserRound } from "lucide-react-native";
 import React from "react";
 import { Platform, StyleSheet, View } from "react-native";
 import { BlurView } from "expo-blur";
@@ -10,6 +10,8 @@ import AmbientBackground from "@/app/components/ui/AmbientBackground";
  * Floating glass tab bar with neon-glow active state.
  * Renders the shared AmbientBackground behind every tab screen so the entire
  * app inherits a single cybernetic atmosphere.
+ *
+ * Tabs: Home, Forge, Sessions, Exchange, Profile
  */
 export default function TabLayout(): JSX.Element {
   return (
@@ -51,9 +53,9 @@ export default function TabLayout(): JSX.Element {
         }}
       >
         <Tabs.Screen name="index" options={{ title: "HOME", tabBarIcon: ({ color, size, focused }) => <TabIcon focused={focused}><Home color={color} size={size - 2} /></TabIcon> }} />
-        <Tabs.Screen name="marketplace" options={{ title: "MARKET", tabBarIcon: ({ color, size, focused }) => <TabIcon focused={focused}><Store color={color} size={size - 2} /></TabIcon> }} />
-        <Tabs.Screen name="factions" options={{ title: "FACTIONS", tabBarIcon: ({ color, size, focused }) => <TabIcon focused={focused}><Shield color={color} size={size - 2} /></TabIcon> }} />
-        <Tabs.Screen name="labs" options={{ title: "FORGE", tabBarIcon: ({ color, size, focused }) => <TabIcon focused={focused} forge><FlaskConical color={color} size={size - 2} /></TabIcon> }} />
+        <Tabs.Screen name="forge" options={{ title: "FORGE", tabBarIcon: ({ color, size, focused }) => <TabIcon focused={focused} forge><Flame color={color} size={size - 2} /></TabIcon> }} />
+        <Tabs.Screen name="sessions" options={{ title: "SESSIONS", tabBarIcon: ({ color, size, focused }) => <TabIcon focused={focused}><MessageCircle color={color} size={size - 2} /></TabIcon> }} />
+        <Tabs.Screen name="marketplace" options={{ title: "EXCHANGE", tabBarIcon: ({ color, size, focused }) => <TabIcon focused={focused}><Store color={color} size={size - 2} /></TabIcon> }} />
         <Tabs.Screen name="profile" options={{ title: "PROFILE", tabBarIcon: ({ color, size, focused }) => <TabIcon focused={focused}><UserRound color={color} size={size - 2} /></TabIcon> }} />
       </Tabs>
     </View>

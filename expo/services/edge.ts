@@ -82,6 +82,22 @@ export const TIER_MONTHLY_ALLOCATION: Record<SubscriptionTier, number> = {
   syndicate: 3700,
 };
 
+/** Maximum number of EAGOHs per tier. */
+export const TIER_MAX_EAGOHS: Record<SubscriptionTier, number> = {
+  free: 0,
+  pro: 2,
+  oracle_elite: 3,
+  syndicate: 5,
+};
+
+/** Edge efficiency multiplier per tier. */
+export const TIER_MULTIPLIER: Record<SubscriptionTier, number> = {
+  free: 0,
+  pro: 1.0,
+  oracle_elite: 1.2,
+  syndicate: 1.5,
+};
+
 /** Rollover cap and retention requirement (10% each). */
 export const ROLLOVER_CAP_PCT = 0.1;
 export const ROLLOVER_RETENTION_PCT = 0.1;

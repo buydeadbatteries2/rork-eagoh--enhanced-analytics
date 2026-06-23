@@ -2,7 +2,7 @@ import { palette } from "@/constants/colors";
 import { LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/components/PerformancePrimitives";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
-import { Activity, BadgeCheck, BarChart3, Crown, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Shield, Sparkles, Swords, TrendingUp, WalletCards, Zap } from "lucide-react-native";
+import { Activity, BadgeCheck, BarChart3, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Shield, Sparkles, Swords, TrendingUp, WalletCards, Zap } from "lucide-react-native";
 import React, { memo, useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -18,7 +18,7 @@ type LabEnvironment = {
   tone: LabTone;
   grid: string;
 };
-type ProfileSection = { id: string; kind: "hero" | "stats" | "identity" | "wallet" | "subscriptions" | "edge" | "labs" };
+type ProfileSection = { id: string; kind: "hero" | "stats" | "identity" | "features" | "wallet" | "subscriptions" | "edge" | "labs" };
 type MultiplierTier = { name: string; value: string; detail: string; active: boolean; tone: LabTone };
 type UsageMetric = { label: string; value: string; detail: string; progress: number; tone: LabTone };
 type SubscriptionPlan = {
@@ -39,6 +39,7 @@ type Stat = { label: string; value: string; detail: string; tone: LabTone };
 const sections: ProfileSection[] = [
   { id: "hero", kind: "hero" },
   { id: "stats", kind: "stats" },
+  { id: "features", kind: "features" },
   { id: "identity", kind: "identity" },
   { id: "wallet", kind: "wallet" },
   { id: "subscriptions", kind: "subscriptions" },
@@ -227,6 +228,31 @@ export default function ProfileScreen(): JSX.Element {
     if (item.kind === "stats") {
       return <View style={styles.statGrid}>{stats.map((stat) => <StatCard key={stat.label} item={stat} />)}</View>;
     }
+    if (item.kind === "features") {
+      return (
+        <View style={styles.panel}>
+          <SectionTitle eyebrow="FEATURES" title="Labs & Factions" />
+          <View style={styles.featureCard}>
+            <View style={[styles.featureIconWrap, { borderColor: "rgba(108,230,255,0.4)" }]}>
+              <FlaskConical color={palette.cyan} size={20} />
+            </View>
+            <View style={styles.featureInfo}>
+              <Text style={styles.featureTitle}>EAGOH Forge & Labs</Text>
+              <Text style={styles.featureDesc}>Create EAGOHs with brain-in-glass-dome, full-body cybernetic chassis, domain intelligence tuning, and open intelligence observation feeds.</Text>
+            </View>
+          </View>
+          <View style={styles.featureCard}>
+            <View style={[styles.featureIconWrap, { borderColor: "rgba(138,92,255,0.4)" }]}>
+              <Shield color={palette.violet} size={20} />
+            </View>
+            <View style={styles.featureInfo}>
+              <Text style={styles.featureTitle}>Faction Network</Text>
+              <Text style={styles.featureDesc}>Align with intelligence syndicates, pool observations, earn reputation badges, and climb the faction influence ladder.</Text>
+            </View>
+          </View>
+        </View>
+      );
+    }
     if (item.kind === "identity") {
       return (
         <View style={styles.panel}>
@@ -414,4 +440,9 @@ const styles = StyleSheet.create({
   selectedText: { fontSize: 10, fontWeight: "900", letterSpacing: 1 },
   signOutButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 14, paddingVertical: 12, borderRadius: 5, borderWidth: 1, borderColor: "rgba(255,107,53,0.32)", backgroundColor: "rgba(255,107,53,0.08)" },
   signOutText: { color: palette.ember, fontWeight: "900", fontSize: 13, letterSpacing: 1.2 },
+  featureCard: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 5, padding: 13, backgroundColor: "rgba(14,24,37,0.64)", borderWidth: 1, borderColor: palette.line, marginBottom: 8 },
+  featureIconWrap: { width: 42, height: 42, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.035)" },
+  featureInfo: { flex: 1 },
+  featureTitle: { color: palette.text, fontSize: 13, fontWeight: "900" },
+  featureDesc: { color: palette.muted, fontSize: 11, lineHeight: 16, marginTop: 3 },
 });

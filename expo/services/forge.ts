@@ -43,7 +43,7 @@ export type RunForgeResult =
   | { ok: true; eagoh: EagohRecord; imageUrl: string; thumbUrl: string | null; prompt: string }
   | { ok: false; reason: "limit" | "image" | "persist"; error: string };
 
-function toPromptInput(draft: EagohDraft): ForgePromptInput {
+function toPromptInput(draft: EagohDraft, tier?: SubscriptionTier): ForgePromptInput {
   return {
     name: draft.name,
     sport: draft.sport,
@@ -54,11 +54,13 @@ function toPromptInput(draft: EagohDraft): ForgePromptInput {
     cyberneticIntensity: draft.cyberneticIntensity,
     pose: draft.pose,
     lab: draft.lab,
+    domain: draft.domain,
+    tier: tier ?? "free",
   };
 }
 
 export async function runForge(input: RunForgeInput): Promise<RunForgeResult> {
-  const promptInput = toPromptInput(input.draft);
+  const promptInput = toPromptInput(input.draft, input.tier);
   const prompt = buildForgePrompt(promptInput, { scope: input.mode === "partial_reforge" ? input.scope ?? "full" : "full" });
 
   // ---- Resolve target EAGOH (create row on initial forge) ----

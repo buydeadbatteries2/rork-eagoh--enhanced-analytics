@@ -3,10 +3,12 @@
  *
  * Pure, structured prompt construction from forge inputs. No network calls.
  * Every prompt enforces:
+ *  - brain encased in a glass dome head
+ *  - full-body render, head-to-toe
  *  - transparent background
- *  - full-body render
  *  - isolated subject only (no environments)
- *  - no team logos, no copyrighted imagery, no real athlete likeness
+ *  - same EAGOH core chassis across all renders
+ *  - no team logos, no league logos, no copyrighted imagery, no real athlete likeness
  *  - futuristic cybernetic premium aesthetic
  *
  * Reusable for initial forge, full reforge, and partial reforge prompts.
@@ -22,6 +24,8 @@ export type ForgePromptInput = {
   cyberneticIntensity: string;
   pose: string;
   lab?: string | null;
+  domain?: string | null;
+  tier?: string | null;
 };
 
 export type ForgePromptOptions = {
@@ -90,6 +94,23 @@ const GENDER_CUES: Record<string, string> = {
   feminine: "feminine-presenting build",
   androgynous: "androgynous build",
   nonbinary: "non-binary build",
+  male: "masculine-presenting build",
+  female: "feminine-presenting build",
+  neutral: "androgynous balanced build",
+};
+
+const BODY_TYPE_CUES: Record<string, string> = {
+  slim: "slim lean frame",
+  average: "average athletic frame",
+  muscular: "muscular powerful build",
+  "heavy-husky": "heavy husky solid frame",
+};
+
+const TIER_AESTHETIC_CUES: Record<string, string> = {
+  free: "battered dormant shell, cracked plating, dim lights, exposed wiring, dull gray black white muted tone",
+  pro: "activated polished chassis, clean alloy lines, bright neural glow, ready stance, premium cybernetic finish",
+  oracle_elite: "activated polished chassis, clean alloy lines, bright neural glow, ready stance, premium cybernetic finish",
+  syndicate: "activated polished chassis, clean alloy lines, bright neural glow, ready stance, premium cybernetic finish",
 };
 
 function describeAppearance(appearance: Record<string, string>): string[] {
@@ -113,10 +134,13 @@ function describeTeams(teams: string[]): string {
 }
 
 const NEGATIVE_GUARDRAILS =
-  "Absolutely no team logos, no league marks, no recognizable real athlete likeness, no copyrighted brand iconography, no stadium or environment, no background scene, no shadows on the floor, no text, no watermark.";
+  "Absolutely no team logos, no league marks, no recognizable real athlete likeness, no copyrighted brand iconography, no stadium or environment, no background scene, no shadows on the floor, no text, no watermark. No team colors as direct design elements — only inspired lighting hues allowed.";
+
+const CORE_CHASSIS =
+  "Same unified EAGOH core chassis design across all renders — sleek full-body cybernetic suit with layered alloy plating, integrated neural conduit lines, shoulder-mounted interface nodes, and forearm data blades. The chassis is always present and consistent.";
 
 const POSITIVE_FRAMING =
-  "Full-body character render, isolated subject only on a fully transparent background, centered, head-to-toe visible, photographic premium quality, sharp edges, cinematic rim lighting, futuristic cybernetic style, collectible-grade tactical character art, identity-driven, mobile-optimized clean silhouette.";
+  "Full-body character render, brain visible inside a transparent glass dome helmet, isolated subject only on a fully transparent background, centered, head-to-toe visible, photographic premium quality, sharp edges, cinematic rim lighting, futuristic cybernetic style, collectible-grade tactical character art, identity-driven, mobile-optimized clean silhouette.";
 
 /**
  * Build a structured prompt string from forge inputs.
@@ -140,11 +164,15 @@ export function buildForgePrompt(input: ForgePromptInput, options: ForgePromptOp
     genderCue,
   ].join(", ");
 
+  const tierCue = TIER_AESTHETIC_CUES[input.tier ?? "free"] ?? TIER_AESTHETIC_CUES.free;
+
   if (scope === "full") {
     const body = [
       POSITIVE_FRAMING,
+      CORE_CHASSIS,
       identityAnchor,
       sportCue,
+      `chassis state: ${tierCue}`,
       `cybernetic intensity: ${intensityCue}`,
       `DNA traits: ${dnaCue || "balanced tactical signature"}`,
       teamCue,

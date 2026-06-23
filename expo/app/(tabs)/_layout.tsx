@@ -1,5 +1,5 @@
 import { Tabs } from "expo-router";
-import { Flame, Home, MessageCircle, Store, UserRound } from "lucide-react-native";
+import { Atom, Home, MessageCircle, Store, UserRound } from "lucide-react-native";
 import React from "react";
 import { Platform, StyleSheet, View } from "react-native";
 import { BlurView } from "expo-blur";
@@ -53,7 +53,7 @@ export default function TabLayout(): JSX.Element {
         }}
       >
         <Tabs.Screen name="index" options={{ title: "HOME", tabBarIcon: ({ color, size, focused }) => <TabIcon focused={focused}><Home color={color} size={size - 2} /></TabIcon> }} />
-        <Tabs.Screen name="forge" options={{ title: "FORGE", tabBarIcon: ({ color, size, focused }) => <TabIcon focused={focused} forge><Flame color={color} size={size - 2} /></TabIcon> }} />
+        <Tabs.Screen name="forge" options={{ title: "FORGE", tabBarIcon: ({ color, size, focused }) => <TabIcon focused={focused} forge><Atom color={color} size={size + 2} /></TabIcon> }} />
         <Tabs.Screen name="sessions" options={{ title: "SESSIONS", tabBarIcon: ({ color, size, focused }) => <TabIcon focused={focused}><MessageCircle color={color} size={size - 2} /></TabIcon> }} />
         <Tabs.Screen name="marketplace" options={{ title: "EXCHANGE", tabBarIcon: ({ color, size, focused }) => <TabIcon focused={focused}><Store color={color} size={size - 2} /></TabIcon> }} />
         <Tabs.Screen name="profile" options={{ title: "PROFILE", tabBarIcon: ({ color, size, focused }) => <TabIcon focused={focused}><UserRound color={color} size={size - 2} /></TabIcon> }} />
@@ -64,8 +64,9 @@ export default function TabLayout(): JSX.Element {
 
 function TabIcon({ children, focused, forge }: { children: React.ReactNode; focused: boolean; forge?: boolean }): JSX.Element {
   return (
-    <View style={[styles.iconWrap, focused && styles.iconFocused, focused && forge && styles.iconForge]}>
-      {focused ? <View style={[styles.iconRing, forge && { borderColor: palette.blue }]} /> : null}
+    <View style={[styles.iconWrap, forge && styles.iconForgePersistent, focused && styles.iconFocused, focused && forge && styles.iconForgeActive]}>
+      {forge ? <View style={[styles.iconRingForge, focused && styles.iconRingForgeFocused]} /> : null}
+      {focused && !forge ? <View style={styles.iconRing} /> : null}
       {children}
     </View>
   );
@@ -77,6 +78,9 @@ const styles = StyleSheet.create({
   tabBorder: { ...StyleSheet.absoluteFillObject, borderRadius: 5, borderWidth: 1, borderColor: "rgba(108,230,255,0.22)" },
   iconWrap: { width: 36, height: 36, borderRadius: 5, alignItems: "center", justifyContent: "center" },
   iconFocused: { backgroundColor: "rgba(108,230,255,0.10)" },
-  iconForge: { backgroundColor: "rgba(61,165,255,0.18)", shadowColor: palette.blue, shadowOpacity: 0.6, shadowRadius: 12, shadowOffset: { width: 0, height: 0 } },
+  iconForgePersistent: { width: 42, height: 42, borderRadius: 5, backgroundColor: "rgba(61,165,255,0.10)" },
+  iconForgeActive: { backgroundColor: "rgba(61,165,255,0.22)", shadowColor: palette.blue, shadowOpacity: 0.7, shadowRadius: 16, shadowOffset: { width: 0, height: 0 }, borderWidth: 1, borderColor: "rgba(108,230,255,0.45)" },
   iconRing: { position: "absolute", width: 38, height: 38, borderRadius: 5, borderWidth: 1, borderColor: "rgba(108,230,255,0.4)" },
+  iconRingForge: { position: "absolute", width: 42, height: 42, borderRadius: 5, borderWidth: 1.5, borderColor: "rgba(108,230,255,0.18)" },
+  iconRingForgeFocused: { borderColor: "rgba(108,230,255,0.7)", borderWidth: 1.5, shadowColor: palette.cyan, shadowOpacity: 0.5, shadowRadius: 10, shadowOffset: { width: 0, height: 0 } },
 });

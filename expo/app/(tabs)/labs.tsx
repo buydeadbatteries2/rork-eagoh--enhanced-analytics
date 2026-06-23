@@ -30,7 +30,7 @@ import {
   Waves,
 } from "lucide-react-native";
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Animated, DimensionValue, Easing, FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useEdge } from "@/providers/EdgeProvider";
 import { getQuickCheckCost, runQuickCheck, type AnalystRequestKind } from "@/services/analyst";
@@ -542,7 +542,7 @@ export default function LabsScreen(): JSX.Element {
       {mode === "analyst" ? renderAnalystChat() : mode === "intelligence" ? renderOpenIntelligence() : <View style={styles.forgeWrap}>
         <ForgeDashboard stepIndex={stepIndex} totalSteps={steps.length} completion={completion} />
         <View style={styles.forgeTopBar}><Text style={styles.forgeBrand}>FORGE</Text><View style={styles.streakPill}><View style={styles.streakDot} /><Text style={styles.streakText}>Step {stepIndex + 1} of {steps.length}</Text></View></View>
-        <View style={styles.forgeHero}><TransparentMockRender state={forgeState} /><View style={styles.forgeHeroFooter}><View style={styles.forgeHeroFooterRow}><Text style={styles.forgeHeroName}>{(forgeState.name || "UNNAMED EAGOH").toUpperCase()}</Text><Text style={styles.forgeHeroDivider}>|</Text><Text style={styles.forgeHeroMeta}>Sync Score <Text style={styles.forgeHeroMetaValue}>{Math.round(((stepIndex + 1) / steps.length) * 99)}</Text></Text></View><View style={styles.forgeHeroUnderlineTrack}><View style={[styles.forgeHeroUnderlineFill, { width: completion }]} /></View></View></View>
+        <View style={styles.forgeHero}><TransparentMockRender state={forgeState} /><View style={styles.forgeHeroFooter}><View style={styles.forgeHeroFooterRow}><Text style={styles.forgeHeroName}>{(forgeState.name || "UNNAMED EAGOH").toUpperCase()}</Text><Text style={styles.forgeHeroDivider}>|</Text><Text style={styles.forgeHeroMeta}>Sync Score <Text style={styles.forgeHeroMetaValue}>{Math.round(((stepIndex + 1) / steps.length) * 99)}</Text></Text></View><View style={styles.forgeHeroUnderlineTrack}><View style={[styles.forgeHeroUnderlineFill, { width: completion as DimensionValue }]} /></View></View></View>
         <View style={styles.forgeCard}>
           <View style={styles.forgeCardTopRow}><View style={styles.missionPill}><Text style={styles.missionPillText}>Step {String(stepIndex + 1).padStart(2, "0")}</Text></View><Text style={styles.forgeCardSubtle}>Day {stepIndex + 1} of {steps.length}</Text></View>
           <Text style={styles.forgeCardTitle}>{activeStep === "Identity" ? "Identity Calibration" : activeStep === "DNA" ? "DNA Sequencing" : activeStep === "Teams" ? "Fanatic Binding" : activeStep === "Body" ? "Silhouette Assembly" : activeStep === "Pose" ? "Stance Lock" : "Final Review"}</Text>
@@ -625,7 +625,7 @@ const styles = StyleSheet.create({
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: palette.cyan, opacity: 0.55 },
   dotMid: { opacity: 1, transform: [{ translateY: -2 }] },
   typingText: { color: palette.muted, fontSize: 12, fontWeight: "800" },
-  errorText: { color: palette.danger, fontSize: 12, fontWeight: "800", marginTop: 4 },
+  errorText: { color: palette.ember, fontSize: 12, fontWeight: "800", marginTop: 4 },
   memoryCard: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, borderWidth: 1, borderColor: palette.line, borderRadius: 5, padding: 12, backgroundColor: "rgba(255,255,255,0.04)" },
   memoryTitle: { color: palette.text, fontSize: 14, fontWeight: "900" },
   memoryDetail: { color: palette.muted, fontSize: 12, fontWeight: "700", marginTop: 3, lineHeight: 17 },

@@ -239,7 +239,6 @@ export async function applyMonthlyRollover(
     edge_subscription: nextSub,
     // @ts-expect-error – column exists in schema, optional in TS type
     last_rollover_at: new Date().toISOString(),
-    // @ts-expect-error – column exists in schema, optional in TS type
     last_allocation: allocation,
   });
 

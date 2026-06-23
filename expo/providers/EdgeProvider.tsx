@@ -74,9 +74,9 @@ export const [EdgeProvider, useEdge] = createContextHook(() => {
   });
 
   const quickCheckMutation = useMutation({
-    mutationFn: (note?: string) => {
+    mutationFn: ({ prompt, note }: { prompt: string; note?: string }) => {
       const { uid, p } = requireCtx();
-      return deductForQuickCheck(uid, p, note);
+      return deductForQuickCheck(uid, p, prompt, note);
     },
     onSuccess: writeBack,
   });
@@ -151,7 +151,8 @@ export const [EdgeProvider, useEdge] = createContextHook(() => {
       spendMutation.mutateAsync({ amount, reason, note }),
 
     // reusable deduction helpers
-    deductQuickCheck: (note?: string) => quickCheckMutation.mutateAsync(note),
+    deductQuickCheck: (prompt: string, note?: string) =>
+      quickCheckMutation.mutateAsync({ prompt, note }),
     deductObservation: (note?: string) => observationMutation.mutateAsync(note),
     deductMarketplace: (amount?: number, note?: string) =>
       marketplaceMutation.mutateAsync({ amount, note }),

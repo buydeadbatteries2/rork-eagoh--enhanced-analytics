@@ -132,7 +132,7 @@ const observationTypes: ObservationType[] = [
   { id: "fatigue", label: "Fatigue", tone: "gold" }, { id: "injury-concern", label: "Injury concern", tone: "ember" }, { id: "crowd-pressure", label: "Crowd pressure", tone: "violet" }, { id: "rivalry", label: "Rivalry", tone: "ember" }, { id: "momentum", label: "Momentum", tone: "success" }, { id: "coaching-decisions", label: "Coaching decisions", tone: "cyan" }, { id: "emotional-instability", label: "Emotional instability", tone: "violet" }, { id: "media-pressure", label: "Media pressure", tone: "gold" }, { id: "defensive-weakness", label: "Defensive weakness", tone: "ember" }, { id: "offensive-inconsistency", label: "Offensive inconsistency", tone: "cyan" }, { id: "weather-influence", label: "Weather influence", tone: "success" }, { id: "lineup-chemistry", label: "Lineup chemistry", tone: "gold" },
 ];
 const sessionTypes: SessionType[] = [
-  { id: "quick-check", name: "Quick Check", cost: "5 Edge", model: "Pulse-Lite", duration: "2 min", mood: "Alert + concise", tone: "cyan" },
+  { id: "quick-check", name: "Quick Check", cost: "1-3 Edge", model: "Pulse-Lite", duration: "2 min", mood: "Alert + concise", tone: "cyan" },
   { id: "quick-analytics", name: "Quick Analytics", cost: "12 Edge", model: "Tactic-Core", duration: "6 min", mood: "Tactical + calm", tone: "gold" },
   { id: "standard", name: "Standard Session", cost: "20 Edge", model: "EAGOH Analyst", duration: "15 min", mood: "Emotionally aware", tone: "success" },
   { id: "oracle", name: "Oracle Deep Dive", cost: "40 Edge", model: "Oracle-Synapse", duration: "30 min", mood: "Deep strategic", tone: "violet" },
@@ -440,7 +440,7 @@ export default function LabsScreen(): JSX.Element {
       setMessages((current) => [...current, { id: `u-${Date.now()}`, sender: "user", text: prompt }]);
       setIsAnalystTyping(true);
       try {
-        await deductQuickCheck(`Quick Check (${kind}) · ${cost} Edge`);
+        await deductQuickCheck(prompt, `Quick Check (${kind}) · ${cost} Edge`);
       } catch (error) {
         console.warn("Edge deduction failed", error instanceof Error ? error.message : error);
         setAnalystError("Edge deduction failed. Try again in a moment.");

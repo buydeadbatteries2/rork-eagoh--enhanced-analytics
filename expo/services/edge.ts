@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { getQuickCheckCost } from "@/services/analyst";
 import { updateProfile, type SubscriptionTier, type UserProfile } from "@/services/profile";
 
 /**
@@ -50,7 +51,6 @@ export type EdgeTransaction = {
 
 /** Default Edge cost for each deductible action. Tweak freely. */
 export const EDGE_COSTS: Record<
-  | "quick_check"
   | "observation"
   | "marketplace"
   | "customization"
@@ -59,7 +59,6 @@ export const EDGE_COSTS: Record<
   | "forge_partial_reforge",
   number
 > = {
-  quick_check: 5,
   observation: 10,
   marketplace: 25,
   customization: 15,
@@ -75,12 +74,12 @@ export function getForgeCost(mode: "initial" | "full_reforge" | "partial_reforge
   return EDGE_COSTS.forge_partial_reforge;
 }
 
-/** Monthly subscription Edge allocations per tier (mock). */
+/** Monthly subscription Edge allocations per tier. Free tier is dormant (no allocation). */
 export const TIER_MONTHLY_ALLOCATION: Record<SubscriptionTier, number> = {
-  free: 50,
-  pro: 250,
-  oracle_elite: 600,
-  syndicate: 1500,
+  free: 0,
+  pro: 600,
+  oracle_elite: 1400,
+  syndicate: 3700,
 };
 
 /** Rollover cap and retention requirement (10% each). */
@@ -146,8 +145,8 @@ export async function spendEdge(
 }
 
 /** Convenience deduction helpers for the standard action surfaces. */
-export const deductForQuickCheck = (userId: string, profile: UserProfile, note?: string) =>
-  spendEdge(userId, profile, EDGE_COSTS.quick_check, "quick_check", note);
+export const deductForQuickCheck = (userId: string, profile: UserProfile, prompt: string, note?: string) =>
+  spendEdge(userId, profile, getQuickCheckCost(prompt), "quick_check", note);
 
 export const deductForObservation = (userId: string, profile: UserProfile, note?: string) =>
   spendEdge(userId, profile, EDGE_COSTS.observation, "observation", note);

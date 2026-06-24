@@ -548,6 +548,106 @@ create policy "mvs_vendor_insert" on public.marketplace_vendor_stats
   for insert with check (auth.uid() = vendor_id);
 
 -- =====================================================================
+-- SPONSORED BANNERS (active banner placements)
+-- =====================================================================
+create table if not exists public.sponsored_banners (
+  id uuid primary key default gen_random_uuid(),
+  purchaser_id uuid not null references auth.users(id) on delete cascade,
+  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
+  location text not null check (location in ('home', 'marketplace')),
+  start_date date not null,
+  end_date date not null,
+  colored_border boolean not null default false,
+  hot_badge boolean not null default false,
+  edge_cost int not null,
+  active boolean not null default true,
+  created_at timestamptz default now()
+);
+
+create index if not exists sb_location_active_idx on public.sponsored_banners(location, active) where active = true;
+create index if not exists sb_dates_idx on public.sponsored_banners(start_date, end_date);
+create index if not exists sb_purchaser_idx on public.sponsored_banners(purchaser_id);
+
+alter table public.sponsored_banners enable row level security;
+
+drop policy if exists "sb_select_active" on public.sponsored_banners;
+drop policy if exists "sb_purchaser_insert" on public.sponsored_banners;
+drop policy if exists "sb_purchaser_select_all" on public.sponsored_banners;
+
+create policy "sb_select_active" on public.sponsored_banners
+  for select using (active = true);
+
+create policy "sb_purchaser_insert" on public.sponsored_banners
+  for insert with check (auth.uid() = purchaser_id);
+
+create policy "sb_purchaser_select_all" on public.sponsored_banners
+  for select using (auth.uid() = purchaser_id);
+
+-- =====================================================================
+-- BANNER PURCHASES (purchase history)
+-- =====================================================================
+create table if not exists public.banner_purchases (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  banner_id uuid references public.sponsored_banners(id) on delete set null,
+  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
+  location text not null check (location in ('home', 'marketplace')),
+  start_date date not null,
+  days int not null check (days between 1 and 5),
+  colored_border boolean not null default false,
+  hot_badge boolean not null default false,
+  edge_cost int not null,
+  created_at timestamptz default now()
+);
+
+create index if not exists bp_user_idx on public.banner_purchases(user_id, created_at desc);
+
+alter table public.banner_purchases enable row level security;
+
+drop policy if exists "bp_self_select" on public.banner_purchases;
+drop policy if exists "bp_self_insert" on public.banner_purchases;
+
+create policy "bp_self_select" on public.banner_purchases
+  for select using (auth.uid() = user_id);
+
+create policy "bp_self_insert" on public.banner_purchases
+  for insert with check (auth.uid() = user_id);
+
+-- =====================================================================
+-- BANNER ANALYTICS (impressions, taps, tap-and-holds per banner)
+-- =====================================================================
+create table if not exists public.banner_analytics (
+  id uuid primary key default gen_random_uuid(),
+  banner_id uuid not null references public.sponsored_banners(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  date date not null default current_date,
+  impressions int not null default 0,
+  tap_count int not null default 0,
+  tap_hold_count int not null default 0,
+  updated_at timestamptz default now(),
+  unique(banner_id, user_id, date)
+);
+
+create index if not exists ba_banner_idx on public.banner_analytics(banner_id, date);
+create index if not exists ba_user_idx on public.banner_analytics(user_id);
+
+alter table public.banner_analytics enable row level security;
+
+drop policy if exists "ba_self_insert" on public.banner_analytics;
+drop policy if exists "ba_owner_select" on public.banner_analytics;
+
+create policy "ba_self_insert" on public.banner_analytics
+  for insert with check (auth.uid() = user_id);
+
+create policy "ba_owner_select" on public.banner_analytics
+  for select using (
+    exists (
+      select 1 from public.sponsored_banners sb
+      where sb.id = banner_id and sb.purchaser_id = auth.uid()
+    )
+  );
+
+-- =====================================================================
 -- STORAGE BUCKET: eagoh-renders (public read, owner write)
 -- Optional: rendered images are already CDN-hosted; the bucket is here
 -- for projects that want to mirror copies into Supabase Storage.

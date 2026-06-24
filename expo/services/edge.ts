@@ -31,6 +31,7 @@ export type EdgeReason =
   | "rollover"
   | "purchase"
   | "faction_slot_expansion"
+  | "sponsored_banner"
   | "manual";
 
 export type EdgeTransactionKind = "deduction" | "addition" | "rollover" | "purchase";

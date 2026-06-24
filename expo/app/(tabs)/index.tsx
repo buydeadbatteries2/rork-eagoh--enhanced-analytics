@@ -2,12 +2,15 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import {
   BarChart3,
+  Calendar,
   ChevronRight,
+  Coins,
   Cpu,
   Eye,
   FlaskConical,
   Gauge,
   Hexagon,
+  Megaphone,
   RadioTower,
   ScanLine,
   Shield,
@@ -16,20 +19,35 @@ import {
   Star,
   Sword,
   WalletCards,
+  X,
   Zap,
 } from "lucide-react-native";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Animated, Dimensions, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Dimensions, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { palette } from "@/constants/colors";
 import { HORIZONTAL_LIST_PERFORMANCE_PROPS, LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/components/PerformancePrimitives";
 import { useAuth } from "@/providers/AuthProvider";
+import { useEdge } from "@/providers/EdgeProvider";
+import { useEagohs } from "@/providers/EagohProvider";
+import { useProfile } from "@/providers/ProfileProvider";
+import {
+  computeBannerCost,
+  getActiveBanners,
+  purchaseBanner,
+  recordBannerImpression,
+  recordBannerTap,
+  recordBannerTapHold,
+  type EnrichedBanner,
+} from "@/services/sponsoredBanners";
+import { canTransact } from "@/services/marketplace";
+import type { EagohRecord } from "@/services/eagohs";
 
 type Phase = "loading" | "onboarding" | "auth" | "app";
 type CardTone = "cyan" | "gold" | "violet" | "ember" | "success";
 type HomeSection = { id: string; kind: "hero" | "sponsored" | "trending" | "feed" | "analyst" | "quickcheck" | "recent" | "favorites" | "labs" | "factions" };
 type CardProps = { title: string; subtitle: string; meta?: string; tone?: "cyan" | "gold" | "violet"; icon?: React.ReactNode };
-type SponsoredEagoh = { id: string; name: string; analytics: string; score: string; detail: string; accent: CardTone; signal: string };
+
 type EagohItem = { id: string; name: string; metric: string; trend: string; accent: CardTone };
 type ActivityItem = { id: string; faction: string; event: string; time: string; accent: CardTone };
 type TeamItem = { id: string; team: string; status: string; heat: string; accent: CardTone };
@@ -59,11 +77,6 @@ const homeSections: HomeSection[] = [
   { id: "favorites", kind: "favorites" },
 ];
 
-const sponsoredEagohs: SponsoredEagoh[] = [
-  { id: "s1", name: "Apex Raven", analytics: "+24% trust velocity", score: "97.2", detail: "Sponsored mock state · fan sentiment, scarcity pressure, and faction lift expanded.", accent: "cyan", signal: "PRIME" },
-  { id: "s2", name: "Solar Warden", analytics: "8.4K watch heat", score: "91.8", detail: "Brand safety strong · marketplace pulse climbing across three mock channels.", accent: "gold", signal: "BOOST" },
-  { id: "s3", name: "Neon Lynx", analytics: "+41% social wake", score: "88.6", detail: "Analyst queue flagged momentum from creator drops and team chatter.", accent: "violet", signal: "HOT" },
-];
 
 const trendingEagohs: EagohItem[] = [
   { id: "t1", name: "Ghost Falcon", metric: "Trust 96", trend: "+18%", accent: "cyan" },
@@ -140,24 +153,57 @@ const MiniImage = React.memo(function MiniImage({ accent, label }: { accent: Car
   return <OptimizedEagohImage tone={accent} label={label} size="compact" />;
 });
 
-const SponsoredBanner = React.memo(function SponsoredBanner({ item }: { item: SponsoredEagoh }): JSX.Element {
+const SponsoredBanner = React.memo(function SponsoredBanner({ item, userId }: { item: EnrichedBanner; userId: string | null }): JSX.Element {
   const [expanded, setExpanded] = useState<boolean>(false);
-  const accent = toneColor(item.accent);
+  const accent = item.vendor_rank === "S-TIER" ? palette.gold : item.vendor_rank === "ELITE" ? palette.cyan : palette.violet;
+  const domainLabel: string = item.eagoh_domain.charAt(0).toUpperCase() + item.eagoh_domain.slice(1).replace(/_/g, " ");
+
+  // Record impression on mount
+  useEffect(() => {
+    if (userId) recordBannerImpression(item.id, userId).catch(() => undefined);
+  }, [item.id, userId]);
+
+  const onPress = (): void => {
+    if (userId) recordBannerTap(item.id, userId).catch(() => undefined);
+  };
+
   const onLongPress = (): void => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (userId) recordBannerTapHold(item.id, userId).catch(() => undefined);
     setExpanded(true);
   };
+
   return (
-    <Pressable onLongPress={onLongPress} onPressOut={() => setExpanded(false)} delayLongPress={280} style={({ pressed }) => [styles.sponsoredCard, pressed && styles.pressed]}>
-      <MiniImage accent={item.accent} label={item.signal} />
+    <Pressable
+      onPress={onPress}
+      onLongPress={onLongPress}
+      onPressOut={() => setExpanded(false)}
+      delayLongPress={280}
+      style={({ pressed }) => [
+        styles.sponsoredCard,
+        pressed && styles.pressed,
+        item.colored_border && { borderColor: accent, borderWidth: 1.5 },
+        item.hot_badge && styles.sponsoredCardHot,
+      ]}
+    >
+      <MiniImage accent={item.vendor_rank === "S-TIER" ? "gold" : item.vendor_rank === "ELITE" ? "cyan" : "violet"} label={item.eagoh_name.slice(0, 8).toUpperCase()} />
+      {item.hot_badge && (
+        <View style={styles.hotBadge}>
+          <Text style={styles.hotBadgeText}>HOT</Text>
+        </View>
+      )}
       <View style={styles.sponsoredContent}>
         <View style={styles.sponsoredTopline}>
           <Text style={[styles.meta, { color: accent }]}>SPONSORED</Text>
-          <Text style={styles.score}>{item.score}</Text>
+          <Text style={styles.score}>{item.quality_score}</Text>
         </View>
-        <Text style={styles.sponsoredTitle}>{item.name}</Text>
-        <Text style={styles.sponsoredAnalytics}>{item.analytics}</Text>
-        <Text numberOfLines={expanded ? 3 : 1} style={styles.sponsoredDetail}>{expanded ? item.detail : "Hold to expand analytics"}</Text>
+        <Text style={styles.sponsoredTitle}>{item.eagoh_name}</Text>
+        <Text style={styles.sponsoredAnalytics}>{domainLabel} · Sync Score: {item.sync_score}</Text>
+        <Text numberOfLines={expanded ? 3 : 1} style={styles.sponsoredDetail}>
+          {expanded
+            ? `Vendor: ${item.vendor_username ?? "Anonymous"} · Rank: ${item.vendor_rank} · Quality: ${item.quality_score} · Sync: ${item.sync_score}`
+            : "Hold to view full details"}
+        </Text>
       </View>
     </Pressable>
   );
@@ -177,12 +223,55 @@ const HeroSection = React.memo(function HeroSection(): JSX.Element {
   );
 });
 
-const SponsoredSection = React.memo(function SponsoredSection(): JSX.Element {
-  const renderItem = useCallback(({ item }: { item: SponsoredEagoh }) => <SponsoredBanner item={item} />, []);
+const SponsoredSection = React.memo(function SponsoredSection({ userId }: { userId: string | null }): JSX.Element {
+  const [banners, setBanners] = useState<EnrichedBanner[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    getActiveBanners("home")
+      .then((b) => { setBanners(b); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const renderItem = useCallback(
+    ({ item }: { item: EnrichedBanner }) => <SponsoredBanner item={item} userId={userId} />,
+    [userId],
+  );
+
+  if (loading) {
+    return (
+      <View>
+        <SectionHeader eyebrow="PROMOTED SIGNALS" title="Sponsored EAGOHs" action="Loading..." />
+        <View style={styles.loadingRow}><ActivityIndicator color={palette.cyan} size="small" /></View>
+      </View>
+    );
+  }
+
+  if (banners.length === 0) {
+    return (
+      <View>
+        <SectionHeader eyebrow="PROMOTED SIGNALS" title="Sponsored EAGOHs" action="Promote yours" />
+        <View style={styles.emptyBannerCard}>
+          <Megaphone color={palette.muted} size={28} />
+          <Text style={styles.emptyBannerText}>No active sponsors. Purchase a banner spot to promote your EAGOH.</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View>
-      <SectionHeader eyebrow="PROMOTED SIGNALS" title="Sponsored EAGOH carousel" action="Hold cards" />
-      <FlatList data={sponsoredEagohs} renderItem={renderItem} keyExtractor={(item) => item.id} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList} {...HORIZONTAL_LIST_PERFORMANCE_PROPS} />
+      <SectionHeader eyebrow="PROMOTED SIGNALS" title="Sponsored EAGOHs" action="Hold cards" />
+      <FlatList
+        data={banners}
+        renderItem={renderItem}
+        keyExtractor={(item) => item.id}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.horizontalList}
+        {...HORIZONTAL_LIST_PERFORMANCE_PROPS}
+      />
     </View>
   );
 });
@@ -493,10 +582,10 @@ function AuthScreen(): JSX.Element {
   );
 }
 
-function HomeApp(): JSX.Element {
+function HomeApp({ userId, onPromote }: { userId: string | null; onPromote: () => void }): JSX.Element {
   const renderSection = useCallback(({ item }: { item: HomeSection }) => {
     if (item.kind === "hero") return <HeroSection />;
-    if (item.kind === "sponsored") return <SponsoredSection />;
+    if (item.kind === "sponsored") return <SponsoredSection userId={userId} />;
     if (item.kind === "trending") return <View><SectionHeader eyebrow="MARKET HEAT" title="Trending EAGOHs" action="Mock" /><EagohRail items={trendingEagohs} /></View>;
     if (item.kind === "feed") return <ActivityFeed />;
     if (item.kind === "labs") return <LabsFeatureCard />;
@@ -505,21 +594,225 @@ function HomeApp(): JSX.Element {
     if (item.kind === "quickcheck") return <QuickCheckSection />;
     if (item.kind === "recent") return <View><SectionHeader eyebrow="RETURN PATH" title="Recently viewed EAGOHs" /><EagohRail items={recentlyViewed} /></View>;
     return <FavoritesSection />;
-  }, []);
+  }, [userId]);
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <FlatList data={homeSections} renderItem={renderSection} keyExtractor={(item) => item.id} contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} {...LIST_PERFORMANCE_PROPS} />
+      <FlatList
+        data={homeSections}
+        renderItem={renderSection}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        {...LIST_PERFORMANCE_PROPS}
+        ListFooterComponent={
+          <Pressable onPress={onPromote} style={styles.promoteBannerButton}>
+            <Megaphone color={palette.cyan} size={18} />
+            <Text style={styles.promoteBannerText}>Promote Your EAGOH · From 250 EC/day</Text>
+          </Pressable>
+        }
+      />
     </SafeAreaView>
   );
 }
 
+function BannerPurchaseModal({
+  visible,
+  onClose,
+  onPurchased,
+  userId,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onPurchased: () => void;
+  userId: string | null;
+}): JSX.Element {
+  const { eagohs } = useEagohs();
+  const { profile } = useProfile();
+  const [selectedEagohId, setSelectedEagohId] = useState<string>("");
+  const [location, setLocation] = useState<"home" | "marketplace">("home");
+  const [startDate, setStartDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10);
+  });
+  const [days, setDays] = useState<number>(1);
+  const [coloredBorder, setColoredBorder] = useState<boolean>(false);
+  const [hotBadge, setHotBadge] = useState<boolean>(false);
+  const [purchasing, setPurchasing] = useState(false);
+
+  const myEagohs = (eagohs ?? []).filter((e: EagohRecord) => e.user_id === userId);
+  const totalCost = computeBannerCost(location, days, coloredBorder, hotBadge);
+
+  const handlePurchase = async () => {
+    if (!userId || !profile || !selectedEagohId) return;
+    setPurchasing(true);
+    try {
+      const result = await purchaseBanner(
+        { userId, eagohId: selectedEagohId, location, startDate, days, coloredBorder, hotBadge },
+        profile,
+      );
+      if (result.ok) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Alert.alert("Banner Purchased", `Your EAGOH will be promoted for ${days} day(s) starting ${startDate}.`);
+        onPurchased();
+        onClose();
+      } else {
+        Alert.alert("Purchase Failed", result.error);
+      }
+    } catch (err: unknown) {
+      Alert.alert("Error", (err as Error).message ?? "Failed to purchase banner.");
+    } finally {
+      setPurchasing(false);
+    }
+  };
+
+  const reset = () => {
+    setSelectedEagohId("");
+    setLocation("home");
+    setDays(1);
+    setColoredBorder(false);
+    setHotBadge(false);
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={() => { reset(); onClose(); }}>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalSheet}>
+          <LinearGradient colors={["#0A1628", "#050D18"]} style={StyleSheet.absoluteFill} />
+          <View style={styles.modalHandle} />
+          <View style={styles.modalHeaderRow}>
+            <Megaphone color={palette.cyan} size={20} />
+            <Text style={styles.modalTitle}>Promote Your EAGOH</Text>
+            <Pressable onPress={() => { reset(); onClose(); }} style={styles.modalClose}>
+              <X color={palette.muted} size={20} />
+            </Pressable>
+          </View>
+
+          {/* Select EAGOH */}
+          <Text style={styles.modalSectionLabel}>Select EAGOH</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRail}>
+            {myEagohs.map((e: EagohRecord) => (
+              <Pressable
+                key={e.id}
+                onPress={() => setSelectedEagohId(e.id)}
+                style={[styles.chip, selectedEagohId === e.id && styles.activeChip]}
+              >
+                <Text style={[styles.chipText, selectedEagohId === e.id && styles.activeChipText]}>{e.name}</Text>
+              </Pressable>
+            ))}
+            {myEagohs.length === 0 && <Text style={styles.emptyHint}>No EAGOHs. Forge one first.</Text>}
+          </ScrollView>
+
+          {/* Location */}
+          <Text style={styles.modalSectionLabel}>Banner Location</Text>
+          <View style={styles.locationRow}>
+            <Pressable
+              onPress={() => setLocation("home")}
+              style={[styles.locationChip, location === "home" && styles.locationChipActive]}
+            >
+              <Text style={[styles.locationChipText, location === "home" && styles.locationChipTextActive]}>Home Page</Text>
+              <Text style={[styles.locationPrice, location === "home" && styles.locationPriceActive]}>250 EC/day</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setLocation("marketplace")}
+              style={[styles.locationChip, location === "marketplace" && styles.locationChipActive]}
+            >
+              <Text style={[styles.locationChipText, location === "marketplace" && styles.locationChipTextActive]}>Marketplace</Text>
+              <Text style={[styles.locationPrice, location === "marketplace" && styles.locationPriceActive]}>150 EC/day</Text>
+            </Pressable>
+          </View>
+
+          {/* Start Date */}
+          <Text style={styles.modalSectionLabel}>Start Date (6 AM ET)</Text>
+          <TextInput
+            value={startDate}
+            onChangeText={setStartDate}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={palette.muted}
+            style={styles.dateInput}
+          />
+
+          {/* Duration */}
+          <Text style={styles.modalSectionLabel}>Duration (1-5 days)</Text>
+          <View style={styles.daysRow}>
+            {[1, 2, 3, 4, 5].map((d) => (
+              <Pressable
+                key={d}
+                onPress={() => setDays(d)}
+                style={[styles.dayChip, days === d && styles.dayChipActive]}
+              >
+                <Text style={[styles.dayChipText, days === d && styles.dayChipTextActive]}>{d}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {/* Premium Effects */}
+          <Text style={styles.modalSectionLabel}>Premium Effects</Text>
+          <View style={styles.premiumRow}>
+            <Pressable
+              onPress={() => setColoredBorder(!coloredBorder)}
+              style={[styles.premiumChip, coloredBorder && styles.premiumChipActive]}
+            >
+              <Text style={[styles.premiumChipText, coloredBorder && styles.premiumChipTextActive]}>Colored Border</Text>
+              <Text style={[styles.premiumChipPrice, coloredBorder && styles.premiumChipPriceActive]}>+10 EC/day</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setHotBadge(!hotBadge)}
+              style={[styles.premiumChip, hotBadge && styles.premiumChipActive]}
+            >
+              <Text style={[styles.premiumChipText, hotBadge && styles.premiumChipTextActive]}>Hot Badge</Text>
+              <Text style={[styles.premiumChipPrice, hotBadge && styles.premiumChipPriceActive]}>+15 EC/day</Text>
+            </Pressable>
+          </View>
+
+          {/* Total */}
+          <View style={styles.totalRow}>
+            <Text style={styles.totalLabel}>Total Cost</Text>
+            <View style={styles.totalValueRow}>
+              <Coins color={palette.gold} size={18} />
+              <Text style={styles.totalValue}>{totalCost} EC</Text>
+            </View>
+          </View>
+          <Text style={styles.totalBreakdown}>
+            {location === "home" ? "Home" : "Marketplace"} · {days} day(s){coloredBorder ? " · Border" : ""}{hotBadge ? " · Hot Badge" : ""}
+          </Text>
+
+          {/* Confirm */}
+          <Pressable
+            onPress={handlePurchase}
+            disabled={purchasing || !selectedEagohId}
+            style={({ pressed }) => [
+              styles.confirmButton,
+              (purchasing || !selectedEagohId) && styles.confirmButtonDisabled,
+              pressed && styles.pressed,
+            ]}
+          >
+            {purchasing ? (
+              <ActivityIndicator color={palette.void} size="small" />
+            ) : (
+              <>
+                <Calendar color={palette.void} size={17} />
+                <Text style={styles.confirmButtonText}>Purchase Banner</Text>
+              </>
+            )}
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 export default function HomeScreen(): JSX.Element {
-  const { isReady, isAuthenticated } = useAuth();
+  const { isReady, isAuthenticated, user } = useAuth();
+  const { profile } = useProfile();
   const [phase, setPhase] = useState<Phase>("loading");
   const [bootDone, setBootDone] = useState<boolean>(false);
   const [onboardingDone, setOnboardingDone] = useState<boolean>(false);
+  const [purchaseModal, setPurchaseModal] = useState(false);
   const width = Dimensions.get("window").width;
   const compact = useMemo<boolean>(() => width < 380, [width]);
+
+  const isPaid = profile ? canTransact(profile.subscription_tier) : false;
 
   useEffect(() => {
     if (!bootDone || !isReady) {
@@ -536,7 +829,27 @@ export default function HomeScreen(): JSX.Element {
   if (phase === "loading") return <LoadingScreen onDone={() => setBootDone(true)} />;
   if (phase === "onboarding") return <OnboardingScreen onComplete={() => setOnboardingDone(true)} />;
   if (phase === "auth") return <AuthScreen />;
-  return <View style={[styles.appRoot, compact && styles.compact]}><HomeApp /></View>;
+  return (
+    <View style={[styles.appRoot, compact && styles.compact]}>
+      <HomeApp
+        userId={user?.id ?? null}
+        onPromote={() => {
+          if (isPaid) {
+            Haptics.selectionAsync();
+            setPurchaseModal(true);
+          } else {
+            Alert.alert("Subscription Required", "Upgrade to Pro or higher to promote your EAGOH with sponsored banners.");
+          }
+        }}
+      />
+      <BannerPurchaseModal
+        visible={purchaseModal}
+        onClose={() => setPurchaseModal(false)}
+        onPurchased={() => {}}
+        userId={user?.id ?? null}
+      />
+    </View>
+  );
 }
 
 export { FuturisticCard };
@@ -633,4 +946,142 @@ const styles = StyleSheet.create({
   teamRow: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 50 },
   teamBadge: { width: 38, height: 38, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.04)" },
   teamHeat: { fontSize: 16, fontWeight: "900" },
+  // Sponsored banner extras
+  hotBadge: { position: "absolute", top: 8, right: 8, borderRadius: 5, backgroundColor: palette.ember, paddingHorizontal: 7, paddingVertical: 3 },
+  hotBadgeText: { color: palette.text, fontSize: 9, fontWeight: "900", letterSpacing: 1.2 },
+  sponsoredCardHot: { borderColor: "rgba(255,77,109,0.45)" },
+  loadingRow: { minHeight: 80, alignItems: "center", justifyContent: "center" },
+  emptyBannerCard: { minHeight: 88, borderRadius: 5, borderWidth: 1, borderColor: palette.line, borderStyle: "dashed", alignItems: "center", justifyContent: "center", gap: 8, padding: 16 },
+  emptyBannerText: { color: palette.muted, fontSize: 13, textAlign: "center", lineHeight: 18, fontWeight: "700" },
+  promoteBannerButton: {
+    marginTop: 4,
+    minHeight: 48,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "rgba(108,230,255,0.28)",
+    backgroundColor: "rgba(108,230,255,0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 9,
+  },
+  promoteBannerText: { color: palette.cyan, fontSize: 13, fontWeight: "900" },
+  // Modal (shared pattern with marketplace)
+  modalOverlay: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.72)" },
+  modalSheet: {
+    maxHeight: "88%",
+    borderRadius: 5,
+    overflow: "hidden",
+    paddingHorizontal: 18,
+    paddingTop: 12,
+    paddingBottom: 38,
+    gap: 12,
+    borderTopWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+  },
+  modalHandle: { width: 42, height: 4, borderRadius: 5, backgroundColor: "rgba(255,255,255,0.18)", alignSelf: "center", marginBottom: 6 },
+  modalHeaderRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  modalTitle: { color: palette.text, fontSize: 18, fontWeight: "900", flex: 1 },
+  modalClose: { padding: 6 },
+  modalSectionLabel: { color: palette.muted, fontSize: 10, fontWeight: "900", letterSpacing: 1.5, textTransform: "uppercase" as const, marginBottom: 2 },
+  chipRail: { gap: 7, paddingRight: 12 },
+  chip: {
+    borderWidth: 1,
+    borderColor: palette.line,
+    borderRadius: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  activeChip: { backgroundColor: palette.cyan, borderColor: palette.cyan },
+  chipText: { color: palette.muted, fontSize: 11, fontWeight: "900" },
+  activeChipText: { color: palette.void },
+  emptyHint: { color: palette.muted, fontSize: 12, fontWeight: "700", paddingVertical: 8 },
+  locationRow: { flexDirection: "row", gap: 10 },
+  locationChip: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: palette.line,
+    borderRadius: 5,
+    padding: 12,
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  locationChipActive: { backgroundColor: palette.cyanSoft, borderColor: palette.cyan },
+  locationChipText: { color: palette.muted, fontSize: 13, fontWeight: "900" },
+  locationChipTextActive: { color: palette.cyan },
+  locationPrice: { color: palette.muted, fontSize: 10, fontWeight: "800" },
+  locationPriceActive: { color: palette.cyan },
+  dateInput: {
+    borderWidth: 1,
+    borderColor: palette.line,
+    borderRadius: 5,
+    padding: 13,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    color: palette.text,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  daysRow: { flexDirection: "row", gap: 10 },
+  dayChip: {
+    width: 48,
+    height: 42,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: palette.line,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  dayChipActive: { backgroundColor: palette.cyan, borderColor: palette.cyan },
+  dayChipText: { color: palette.muted, fontSize: 15, fontWeight: "900" },
+  dayChipTextActive: { color: palette.void },
+  premiumRow: { flexDirection: "row", gap: 10 },
+  premiumChip: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: palette.line,
+    borderRadius: 5,
+    padding: 10,
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  premiumChipActive: { backgroundColor: palette.goldSoft, borderColor: palette.gold },
+  premiumChipText: { color: palette.muted, fontSize: 12, fontWeight: "900" },
+  premiumChipTextActive: { color: palette.gold },
+  premiumChipPrice: { color: palette.muted, fontSize: 10, fontWeight: "800" },
+  premiumChipPriceActive: { color: palette.gold },
+  totalRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderRadius: 5,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    backgroundColor: "rgba(255,181,71,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(255,181,71,0.22)",
+  },
+  totalLabel: { color: palette.muted, fontSize: 13, fontWeight: "700" },
+  totalValueRow: { flexDirection: "row", alignItems: "center", gap: 7 },
+  totalValue: { color: palette.gold, fontSize: 20, fontWeight: "900" },
+  totalBreakdown: { color: palette.muted, fontSize: 11, textAlign: "center" as const, marginTop: -6 },
+  confirmButton: {
+    minHeight: 52,
+    borderRadius: 5,
+    backgroundColor: palette.cyan,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+    shadowColor: palette.cyan,
+    shadowOpacity: 0.35,
+    shadowRadius: 18,
+  },
+  confirmButtonDisabled: { opacity: 0.5 },
+  confirmButtonText: { color: palette.void, fontSize: 15, fontWeight: "900" },
+  // Modal close
+  modalCloseBtn: { width: 38, height: 38, borderRadius: 5, alignItems: "center", justifyContent: "center" },
 });

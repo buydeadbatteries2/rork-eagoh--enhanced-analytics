@@ -19,6 +19,8 @@ import {
   Sparkles,
   Tag,
   UserCheck,
+  Megaphone,
+  TrendingUp,
   X,
 } from "lucide-react-native";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
@@ -58,6 +60,13 @@ import {
   type SyncLevel,
 } from "@/services/marketplace";
 import type { EagohRecord } from "@/services/eagohs";
+import {
+  getActiveBanners,
+  recordBannerImpression,
+  recordBannerTap,
+  recordBannerTapHold,
+  type EnrichedBanner,
+} from "@/services/sponsoredBanners";
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -691,6 +700,85 @@ const MyListingCard = memo(function MyListingCard({
   );
 });
 
+// ── Marketplace Sponsored Banner Carousel ──────────────────────────────
+
+const MktSponsoredBanner = memo(function MktSponsoredBanner({ item, userId }: { item: EnrichedBanner; userId: string | null }): JSX.Element {
+  const accent = item.vendor_rank === "S-TIER" ? palette.gold : item.vendor_rank === "ELITE" ? palette.cyan : palette.violet;
+  const domainLabel: string = item.eagoh_domain.charAt(0).toUpperCase() + item.eagoh_domain.slice(1).replace(/_/g, " ");
+
+  useEffect(() => {
+    if (userId) recordBannerImpression(item.id, userId).catch(() => undefined);
+  }, [item.id, userId]);
+
+  return (
+    <Pressable
+      onLongPress={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        if (userId) recordBannerTapHold(item.id, userId).catch(() => undefined);
+      }}
+      onPress={() => {
+        if (userId) recordBannerTap(item.id, userId).catch(() => undefined);
+      }}
+      delayLongPress={280}
+      style={({ pressed }) => [
+        styles.mktBannerCard,
+        pressed && styles.pressed,
+        item.colored_border && { borderColor: accent, borderWidth: 1.5 },
+        item.hot_badge && { borderColor: palette.ember },
+      ]}
+    >
+      {item.hot_badge && (
+        <View style={styles.mktHotBadge}>
+          <Text style={styles.mktHotBadgeText}>HOT</Text>
+        </View>
+      )}
+      <View style={styles.mktBannerImage}>
+        <OptimizedEagohImage tone={item.vendor_rank === "S-TIER" ? "gold" : item.vendor_rank === "ELITE" ? "cyan" : "violet"} label={item.eagoh_name.slice(0, 8).toUpperCase()} size="banner" />
+      </View>
+      <View style={styles.mktBannerInfo}>
+        <Text style={styles.mktBannerName} numberOfLines={1}>{item.eagoh_name}</Text>
+        <Text style={styles.mktBannerDomain}>{domainLabel}</Text>
+        <View style={styles.mktBannerMeta}>
+          <Text style={styles.mktBannerScore}>Q: {item.quality_score}</Text>
+          <Text style={styles.mktBannerSync}>Sync: {item.sync_score}</Text>
+        </View>
+      </View>
+    </Pressable>
+  );
+});
+
+const MktSponsoredCarousel = memo(function MktSponsoredCarousel({ userId }: { userId: string | null }): JSX.Element | null {
+  const [banners, setBanners] = useState<EnrichedBanner[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    getActiveBanners("marketplace")
+      .then((b) => { setBanners(b); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  if (loading) return null;
+  if (banners.length === 0) return null;
+
+  return (
+    <View style={{ marginTop: 16, gap: 10 }}>
+      <View style={styles.sectionHeader}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <Megaphone color={palette.gold} size={15} />
+          <Text style={styles.sectionTitle}>Sponsored EAGOHs</Text>
+        </View>
+        <Text style={styles.sectionCount}>{banners.length}</Text>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 16 }} {...HORIZONTAL_LIST_PERFORMANCE_PROPS}>
+        {banners.map((b) => (
+          <MktSponsoredBanner key={b.id} item={b} userId={userId} />
+        ))}
+      </ScrollView>
+    </View>
+  );
+});
+
 // ── Main Screen ────────────────────────────────────────────────────────
 
 export default function MarketplaceScreen(): JSX.Element {
@@ -936,6 +1024,11 @@ export default function MarketplaceScreen(): JSX.Element {
     return null;
   };
 
+  const renderSponsoredCarousel = useCallback(() => {
+    if (tab !== "browse") return null;
+    return <MktSponsoredCarousel userId={user?.id ?? null} />;
+  }, [tab, user?.id]);
+
   return (
     <LinearGradient colors={["#03060B", "#08111C", "#0B141F"]} style={styles.root}>
       <SafeAreaView edges={["top"]} style={styles.safe}>
@@ -943,7 +1036,7 @@ export default function MarketplaceScreen(): JSX.Element {
           data={[] as any[]}
           renderItem={null}
           ListHeaderComponent={renderHeader}
-          ListFooterComponent={renderListings}
+          ListFooterComponent={() => (<View>{renderListings()}{renderSponsoredCarousel()}</View>)}
           keyExtractor={() => "dummy"}
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
@@ -1454,4 +1547,42 @@ const styles = StyleSheet.create({
   },
 
   pressed: { opacity: 0.72, transform: [{ scale: 0.99 }] },
+
+  // Marketplace sponsored banner carousel
+  mktBannerCard: {
+    width: 200,
+    borderRadius: 5,
+    padding: 10,
+    backgroundColor: "rgba(14,24,37,0.84)",
+    borderWidth: 1,
+    borderColor: palette.line,
+    overflow: "hidden",
+    flexDirection: "column",
+    gap: 8,
+  },
+  mktHotBadge: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    zIndex: 2,
+    borderRadius: 5,
+    backgroundColor: palette.ember,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  mktHotBadgeText: { color: palette.text, fontSize: 8, fontWeight: "900", letterSpacing: 1 },
+  mktBannerImage: {
+    width: "100%",
+    height: 100,
+    borderRadius: 5,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  mktBannerInfo: { gap: 3 },
+  mktBannerName: { color: palette.text, fontSize: 14, fontWeight: "900" },
+  mktBannerDomain: { color: palette.cyan, fontSize: 11, fontWeight: "800" },
+  mktBannerMeta: { flexDirection: "row", gap: 10, marginTop: 2 },
+  mktBannerScore: { color: palette.gold, fontSize: 11, fontWeight: "900" },
+  mktBannerSync: { color: palette.violet, fontSize: 11, fontWeight: "900" },
 });

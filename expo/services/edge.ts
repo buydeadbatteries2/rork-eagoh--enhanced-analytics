@@ -30,6 +30,7 @@ export type EdgeReason =
   | "subscription_allocation"
   | "rollover"
   | "purchase"
+  | "faction_slot_expansion"
   | "manual";
 
 export type EdgeTransactionKind = "deduction" | "addition" | "rollover" | "purchase";

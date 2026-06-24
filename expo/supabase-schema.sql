@@ -237,6 +237,206 @@ create policy "oi_self_insert" on public.open_intelligence
   for insert with check (auth.uid() = user_id);
 
 -- =====================================================================
+-- FACTIONS (intelligence alliances)
+-- =====================================================================
+create table if not exists public.factions (
+  id uuid primary key default gen_random_uuid(),
+  commander_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  description text,
+  emblem text,
+  intelligence_domain text not null default 'sports',
+  included_members int not null default 3,
+  max_members int not null default 10,
+  current_members int not null default 1,
+  influence_score int not null default 0,
+  created_at timestamptz default now()
+);
+
+create index if not exists factions_commander_id_idx on public.factions(commander_id);
+
+alter table public.factions enable row level security;
+
+drop policy if exists "factions_select_all" on public.factions;
+drop policy if exists "factions_commander_insert" on public.factions;
+drop policy if exists "factions_commander_update" on public.factions;
+drop policy if exists "factions_commander_delete" on public.factions;
+
+create policy "factions_select_all" on public.factions
+  for select using (true);
+
+create policy "factions_commander_insert" on public.factions
+  for insert with check (auth.uid() = commander_id);
+
+create policy "factions_commander_update" on public.factions
+  for update using (auth.uid() = commander_id);
+
+create policy "factions_commander_delete" on public.factions
+  for delete using (auth.uid() = commander_id);
+
+-- =====================================================================
+-- FACTION MEMBERS (roles and statuses)
+-- =====================================================================
+create table if not exists public.faction_members (
+  id uuid primary key default gen_random_uuid(),
+  faction_id uuid not null references public.factions(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  role text not null default 'analyst',
+  status text not null default 'active',
+  downgrade_at timestamptz,
+  joined_at timestamptz default now(),
+  unique(faction_id, user_id)
+);
+
+create index if not exists fm_faction_id_idx on public.faction_members(faction_id);
+create index if not exists fm_user_id_idx on public.faction_members(user_id);
+
+alter table public.faction_members enable row level security;
+
+drop policy if exists "fm_select_all" on public.faction_members;
+drop policy if exists "fm_self_insert" on public.faction_members;
+drop policy if exists "fm_self_update" on public.faction_members;
+drop policy if exists "fm_commander_delete" on public.faction_members;
+
+create policy "fm_select_all" on public.faction_members
+  for select using (true);
+
+create policy "fm_self_insert" on public.faction_members
+  for insert with check (auth.uid() = user_id);
+
+create policy "fm_self_update" on public.faction_members
+  for update using (auth.uid() = user_id);
+
+create policy "fm_commander_delete" on public.faction_members
+  for delete using (
+    exists (
+      select 1 from public.factions f
+      where f.id = faction_id and f.commander_id = auth.uid()
+    )
+  );
+
+-- =====================================================================
+-- FACTION INVITES
+-- =====================================================================
+create table if not exists public.faction_invites (
+  id uuid primary key default gen_random_uuid(),
+  faction_id uuid not null references public.factions(id) on delete cascade,
+  inviter_id uuid not null references auth.users(id) on delete cascade,
+  invitee_id uuid not null references auth.users(id) on delete cascade,
+  role text not null default 'analyst',
+  status text not null default 'pending',
+  expires_at timestamptz default (now() + interval '7 days'),
+  created_at timestamptz default now()
+);
+
+create index if not exists fi_invitee_idx on public.faction_invites(invitee_id, status);
+create index if not exists fi_faction_idx on public.faction_invites(faction_id);
+
+alter table public.faction_invites enable row level security;
+
+drop policy if exists "fi_select_self" on public.faction_invites;
+drop policy if exists "fi_commander_insert" on public.faction_invites;
+drop policy if exists "fi_invitee_update" on public.faction_invites;
+
+create policy "fi_select_self" on public.faction_invites
+  for select using (auth.uid() = inviter_id or auth.uid() = invitee_id);
+
+create policy "fi_commander_insert" on public.faction_invites
+  for insert with check (
+    exists (
+      select 1 from public.factions f
+      where f.id = faction_id and f.commander_id = auth.uid()
+    )
+  );
+
+create policy "fi_invitee_update" on public.faction_invites
+  for update using (auth.uid() = invitee_id);
+
+-- =====================================================================
+-- FACTION ACTIVITY (event log)
+-- =====================================================================
+create table if not exists public.faction_activity (
+  id uuid primary key default gen_random_uuid(),
+  faction_id uuid not null references public.factions(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  kind text not null,
+  details jsonb default '{}'::jsonb,
+  created_at timestamptz default now()
+);
+
+create index if not exists fa_faction_idx on public.faction_activity(faction_id, created_at desc);
+
+alter table public.faction_activity enable row level security;
+
+drop policy if exists "fa_select_all" on public.faction_activity;
+drop policy if exists "fa_self_insert" on public.faction_activity;
+
+create policy "fa_select_all" on public.faction_activity
+  for select using (true);
+
+create policy "fa_self_insert" on public.faction_activity
+  for insert with check (auth.uid() = user_id);
+
+-- =====================================================================
+-- FACTION SHARED INTELLIGENCE (links OI entries to factions)
+-- =====================================================================
+create table if not exists public.faction_shared_intelligence (
+  id uuid primary key default gen_random_uuid(),
+  faction_id uuid not null references public.factions(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  oi_entry_id uuid not null references public.open_intelligence(id) on delete cascade,
+  shared_at timestamptz default now()
+);
+
+create index if not exists fsi_faction_idx on public.faction_shared_intelligence(faction_id, shared_at desc);
+create index if not exists fsi_user_idx on public.faction_shared_intelligence(user_id);
+
+alter table public.faction_shared_intelligence enable row level security;
+
+drop policy if exists "fsi_select_all" on public.faction_shared_intelligence;
+drop policy if exists "fsi_self_insert" on public.faction_shared_intelligence;
+drop policy if exists "fsi_commander_delete" on public.faction_shared_intelligence;
+
+create policy "fsi_select_all" on public.faction_shared_intelligence
+  for select using (true);
+
+create policy "fsi_self_insert" on public.faction_shared_intelligence
+  for insert with check (auth.uid() = user_id);
+
+create policy "fsi_commander_delete" on public.faction_shared_intelligence
+  for delete using (
+    exists (
+      select 1 from public.factions f
+      where f.id = faction_id and f.commander_id = auth.uid()
+    )
+  );
+
+-- =====================================================================
+-- FACTION SLOT PURCHASES (expansion history)
+-- =====================================================================
+create table if not exists public.faction_slot_purchases (
+  id uuid primary key default gen_random_uuid(),
+  faction_id uuid not null references public.factions(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  slots_purchased int not null,
+  edge_cost int not null,
+  purchased_at timestamptz default now()
+);
+
+create index if not exists fsp_faction_idx on public.faction_slot_purchases(faction_id, purchased_at desc);
+
+alter table public.faction_slot_purchases enable row level security;
+
+drop policy if exists "fsp_select_all" on public.faction_slot_purchases;
+drop policy if exists "fsp_self_insert" on public.faction_slot_purchases;
+
+create policy "fsp_select_all" on public.faction_slot_purchases
+  for select using (true);
+
+create policy "fsp_self_insert" on public.faction_slot_purchases
+  for insert with check (auth.uid() = user_id);
+
+-- =====================================================================
 -- STORAGE BUCKET: eagoh-renders (public read, owner write)
 -- Optional: rendered images are already CDN-hosted; the bucket is here
 -- for projects that want to mirror copies into Supabase Storage.

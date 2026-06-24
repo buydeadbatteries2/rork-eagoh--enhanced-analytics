@@ -31,6 +31,10 @@ function RootLayoutNav(): JSX.Element {
         name="open-intelligence"
         options={{ presentation: "modal", headerShown: false }}
       />
+      <Stack.Screen
+        name="leaderboards"
+        options={{ presentation: "modal", headerShown: false }}
+      />
     </Stack>
   );
 }

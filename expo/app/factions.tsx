@@ -666,6 +666,40 @@ function FactionDetail({
         </View>
       )}
 
+      {/* ── Top Contributors ────────────────────────────────────────── */}
+      {full && full.sharedEntries && full.sharedEntries.length > 0 && (() => {
+        const contribMap = new Map<string, number>();
+        for (const entry of full.sharedEntries) {
+          const uid = (entry as any).user_id ?? (entry as any).shared_by;
+          if (uid) contribMap.set(uid, (contribMap.get(uid) ?? 0) + 1);
+        }
+        const topContribs = [...contribMap.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5);
+        if (topContribs.length === 0) return null;
+        return (
+          <View style={styles.topContribSection}>
+            <SectionHeader eyebrow="CONTRIBUTORS" title="Top Intelligence Contributors" />
+            {topContribs.map(([uid, count], i) => {
+              const member = members.find((m) => m.user_id === uid);
+              const rep = memberRepMap.get(eagohIdForMember(uid));
+              return (
+                <View key={uid} style={styles.contributorRow}>
+                  <Text style={[styles.contributorRank, i < 3 && { color: palette.gold }]}>#{i + 1}</Text>
+                  <View style={styles.rowText}>
+                    <Text style={styles.contributorName}>{member ? getRoleLabel(member.role) : "Unknown"}</Text>
+                    <Text style={styles.contributorCount}>{count} shared intelligence entries</Text>
+                  </View>
+                  {rep && (
+                    <Text style={[styles.contributorRep, { color: repRankColor(rep.rank as RankTier) }]}>{rep.reputation_score}</Text>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+        );
+      })()}
+
       {/* ── Activity Feed ─────────────────────────────────────────────── */}
       <SectionHeader eyebrow="LOG" title="Recent Activity" />
       {(!full?.recentActivity || full.recentActivity.length === 0) ? (
@@ -1611,4 +1645,10 @@ const styles = StyleSheet.create({
   factionAvgRep: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 5, backgroundColor: palette.goldSoft, borderWidth: 1, borderColor: "rgba(255,184,77,0.18)", marginTop: 8 },
   factionAvgRepLabel: { color: palette.muted, fontSize: 12, fontWeight: "800" as const, flex: 1 },
   factionAvgRepValue: { color: palette.gold, fontSize: 16, fontWeight: "900" as const },
+  topContribSection: { marginTop: 8 },
+  contributorRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 10, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 5, backgroundColor: "rgba(16,27,42,0.54)", borderWidth: 1, borderColor: palette.line, marginTop: 6 },
+  contributorRank: { color: palette.muted, fontSize: 13, fontWeight: "900" as const, minWidth: 24 },
+  contributorName: { color: palette.text, fontSize: 13, fontWeight: "800" as const },
+  contributorCount: { color: palette.muted, fontSize: 11, marginTop: 1 },
+  contributorRep: { fontSize: 14, fontWeight: "900" as const },
 });

@@ -19,6 +19,7 @@ import {
   Sparkles,
   Star,
   Sword,
+  Trophy,
   WalletCards,
   X,
   Zap,
@@ -26,6 +27,7 @@ import {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, Dimensions, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { palette } from "@/constants/colors";
 import { HORIZONTAL_LIST_PERFORMANCE_PROPS, LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/components/PerformancePrimitives";
 import { useAuth } from "@/providers/AuthProvider";
@@ -48,7 +50,7 @@ import type { ReputationRow } from "@/services/reputation";
 
 type Phase = "loading" | "onboarding" | "auth" | "app";
 type CardTone = "cyan" | "gold" | "violet" | "ember" | "success";
-type HomeSection = { id: string; kind: "hero" | "sponsored" | "trending" | "feed" | "analyst" | "quickcheck" | "recent" | "favorites" | "labs" | "factions" };
+type HomeSection = { id: string; kind: "hero" | "sponsored" | "trending" | "feed" | "analyst" | "quickcheck" | "recent" | "favorites" | "labs" | "factions" | "leaderboards" };
 type CardProps = { title: string; subtitle: string; meta?: string; tone?: "cyan" | "gold" | "violet"; icon?: React.ReactNode };
 
 type EagohItem = { id: string; name: string; metric: string; trend: string; accent: CardTone };
@@ -70,6 +72,7 @@ const stats = [
 const homeSections: HomeSection[] = [
   { id: "hero", kind: "hero" },
   { id: "sponsored", kind: "sponsored" },
+  { id: "leaderboards", kind: "leaderboards" },
   { id: "labs", kind: "labs" },
   { id: "trending", kind: "trending" },
   { id: "feed", kind: "feed" },
@@ -601,10 +604,33 @@ function AuthScreen(): JSX.Element {
   );
 }
 
+const LeaderboardsFeatureCard = React.memo(function LeaderboardsFeatureCard(): JSX.Element {
+  const router = useRouter();
+  return (
+    <Pressable
+      onPress={() => {
+        Haptics.selectionAsync().catch(() => undefined);
+        router.push("/leaderboards" as never);
+      }}
+      style={({ pressed }) => [styles.featureCard, pressed && styles.pressed]}
+    >
+      <View style={[styles.featureIconWrap, { borderColor: "rgba(255,215,0,0.4)" }]}>
+        <Trophy color={palette.gold} size={24} />
+      </View>
+      <View style={styles.featureInfo}>
+        <Text style={styles.featureTitle}>EAGOH Leaderboards</Text>
+        <Text style={styles.featureDesc}>Top-ranked EAGOHs across all domains. See who leads in reputation, marketplace, factions, and intelligence.</Text>
+      </View>
+      <ChevronRight color={palette.gold} size={18} />
+    </Pressable>
+  );
+});
+
 function HomeApp({ userId, onPromote }: { userId: string | null; onPromote: () => void }): JSX.Element {
   const renderSection = useCallback(({ item }: { item: HomeSection }) => {
     if (item.kind === "hero") return <HeroSection />;
     if (item.kind === "sponsored") return <SponsoredSection userId={userId} />;
+    if (item.kind === "leaderboards") return <View><SectionHeader eyebrow="RANKINGS" title="EAGOH Leaderboards" action="View all" /><LeaderboardsFeatureCard /></View>;
     if (item.kind === "trending") return <View><SectionHeader eyebrow="MARKET HEAT" title="Trending EAGOHs" action="Mock" /><EagohRail items={trendingEagohs} /></View>;
     if (item.kind === "feed") return <ActivityFeed />;
     if (item.kind === "labs") return <LabsFeatureCard />;

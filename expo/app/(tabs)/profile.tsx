@@ -3,7 +3,7 @@ import { LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/components/Pe
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
-import { Activity, Award, BadgeCheck, BarChart3, BrainCircuit, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Shield, Sparkles, Swords, TrendingUp, WalletCards, Zap } from "lucide-react-native";
+import { Activity, Award, BadgeCheck, BarChart3, BrainCircuit, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Shield, Sparkles, Swords, TrendingUp, Trophy, WalletCards, Zap } from "lucide-react-native";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -18,6 +18,7 @@ import {
   type EagohReputationDisplay,
   type RankTier,
 } from "@/services/reputation";
+import { getUserRankings, type LeaderboardEntry } from "@/services/leaderboards";
 
 type LabTone = "cyan" | "gold" | "violet" | "ember" | "success";
 type LabEnvironment = {
@@ -233,6 +234,7 @@ export default function ProfileScreen(): JSX.Element {
 
   // ── Reputation for primary EAGOH ────────────────────────────────────
   const [reputation, setReputation] = useState<EagohReputationDisplay | null>(null);
+  const [userRankings, setUserRankings] = useState<{ eagohEntries: LeaderboardEntry[]; bestCategory: string; rankChanges: any[] } | null>(null);
   const primaryEagoh = (eagohs ?? [])[0];
   useEffect(() => {
     if (!primaryEagoh?.id || !user?.id) return;
@@ -240,6 +242,13 @@ export default function ProfileScreen(): JSX.Element {
       .then(setReputation)
       .catch(() => undefined);
   }, [primaryEagoh?.id, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    getUserRankings(user.id)
+      .then(setUserRankings)
+      .catch(() => undefined);
+  }, [user?.id]);
 
   const reputationStats: Stat[] = useMemo<Stat[]>(() => {
     if (!reputation) {
@@ -307,6 +316,48 @@ export default function ProfileScreen(): JSX.Element {
                   })}
                 </View>
               </View>
+              {/* ── My Rankings ─────────────────────────────────────── */}
+              {userRankings && userRankings.eagohEntries.length > 0 && (
+                <View style={styles.rankingsSection}>
+                  <Text style={styles.repDetailLabel}>My Leaderboard Rankings</Text>
+                  <View style={styles.rankingsList}>
+                    {userRankings.eagohEntries.slice(0, 3).map((entry) => (
+                      <View key={entry.eagoh_id} style={styles.rankingMiniCard}>
+                        <View style={styles.rankingMiniLeft}>
+                          <Text style={styles.rankingMiniRank}>#{entry.rank}</Text>
+                          <Text style={styles.rankingMiniName} numberOfLines={1}>{entry.eagoh_name}</Text>
+                          <View style={[styles.rankingMiniBadge, { borderColor: `${repRankColor(entry.rank_tier)}44`, backgroundColor: `${repRankColor(entry.rank_tier)}18` }]}>
+                            <Text style={[styles.rankingMiniBadgeText, { color: repRankColor(entry.rank_tier) }]}>{entry.rank_tier}</Text>
+                          </View>
+                        </View>
+                        <Text style={[styles.rankingMiniScore, { color: repRankColor(entry.rank_tier) }]}>{entry.reputation_score}</Text>
+                      </View>
+                    ))}
+                  </View>
+                  {userRankings.bestCategory && (
+                    <View style={styles.bestCategoryRow}>
+                      <Trophy color={palette.gold} size={13} />
+                      <Text style={styles.bestCategoryText}>Strongest: {userRankings.bestCategory.replace(/_/g, " ")}</Text>
+                    </View>
+                  )}
+                  {/* Rank changes */}
+                  {userRankings.rankChanges.length > 0 && (
+                    <View style={styles.rankChangesSection}>
+                      <Text style={styles.repDetailLabel}>Recent Rank Changes</Text>
+                      {userRankings.rankChanges.slice(0, 3).map((change: any, i: number) => (
+                        <View key={i} style={styles.rankChangeRow}>
+                          <TrendingUp color={change.new_rank && change.previous_rank && change.new_rank !== change.previous_rank ? palette.success : palette.muted} size={14} />
+                          <Text style={styles.rankChangeText}>
+                            {change.previous_rank ?? "None"} → {change.new_rank}
+                          </Text>
+                          <Text style={styles.rankChangeDate}>{new Date(change.created_at).toLocaleDateString()}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              )}
+
               {/* Badges */}
               {reputation.badges.length > 0 && (
                 <View style={styles.badgesSection}>
@@ -342,6 +393,10 @@ export default function ProfileScreen(): JSX.Element {
         Haptics.selectionAsync().catch(() => undefined);
         router.push("/open-intelligence" as never);
       };
+      const handleLeaderboardsPress = (): void => {
+        Haptics.selectionAsync().catch(() => undefined);
+        router.push("/leaderboards" as never);
+      };
       return (
         <View style={styles.panel}>
           <SectionTitle eyebrow="FEATURES" title="Labs, Factions & Intelligence" />
@@ -370,6 +425,15 @@ export default function ProfileScreen(): JSX.Element {
             <View style={styles.featureInfo}>
               <Text style={styles.featureTitle}>Faction Network</Text>
               <Text style={styles.featureDesc}>Align with intelligence syndicates, pool observations, earn reputation badges, and climb the faction influence ladder.</Text>
+            </View>
+          </Pressable>
+          <Pressable onPress={handleLeaderboardsPress} style={({ pressed }) => [styles.featureCard, pressed && { opacity: 0.8 }]}>
+            <View style={[styles.featureIconWrap, { borderColor: "rgba(255,215,0,0.4)" }]}>
+              <Trophy color={palette.gold} size={20} />
+            </View>
+            <View style={styles.featureInfo}>
+              <Text style={styles.featureTitle}>My Rankings</Text>
+              <Text style={styles.featureDesc}>Track your EAGOH leaderboard positions, reputation growth, and earned badges across all leaderboard categories.</Text>
             </View>
           </Pressable>
         </View>
@@ -581,6 +645,22 @@ const styles = StyleSheet.create({
   badgeDesc: { color: palette.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
   signOutButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 14, paddingVertical: 12, borderRadius: 5, borderWidth: 1, borderColor: "rgba(255,107,53,0.32)", backgroundColor: "rgba(255,107,53,0.08)" },
   signOutText: { color: palette.ember, fontWeight: "900", fontSize: 13, letterSpacing: 1.2 },
+  // Rankings
+  rankingsSection: { marginTop: 8, paddingTop: 10, borderTopWidth: 1, borderTopColor: palette.line },
+  rankingsList: { gap: 6 },
+  rankingMiniCard: { flexDirection: "row" as const, justifyContent: "space-between" as const, alignItems: "center" as const, padding: 10, borderRadius: 5, backgroundColor: "rgba(16,27,42,0.54)", borderWidth: 1, borderColor: palette.line },
+  rankingMiniLeft: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8, flex: 1 },
+  rankingMiniRank: { color: palette.gold, fontSize: 14, fontWeight: "900" as const, minWidth: 28 },
+  rankingMiniName: { color: palette.text, fontSize: 13, fontWeight: "900" as const, flex: 1 },
+  rankingMiniBadge: { borderWidth: 1, borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 },
+  rankingMiniBadgeText: { fontSize: 9, fontWeight: "900" as const },
+  rankingMiniScore: { fontSize: 18, fontWeight: "900" as const, minWidth: 36, textAlign: "right" as const },
+  bestCategoryRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6, marginTop: 6 },
+  bestCategoryText: { color: palette.gold, fontSize: 11, fontWeight: "800" as const, textTransform: "capitalize" as const },
+  rankChangesSection: { marginTop: 10 },
+  rankChangeRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8, paddingVertical: 6 },
+  rankChangeText: { color: palette.text, fontSize: 12, fontWeight: "700" as const, flex: 1 },
+  rankChangeDate: { color: palette.muted, fontSize: 10 },
   featureCard: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 5, padding: 13, backgroundColor: "rgba(14,24,37,0.64)", borderWidth: 1, borderColor: palette.line, marginBottom: 8 },
   featureIconWrap: { width: 42, height: 42, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.035)" },
   featureInfo: { flex: 1 },

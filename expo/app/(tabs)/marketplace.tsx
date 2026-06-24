@@ -71,6 +71,7 @@ import {
 } from "@/services/sponsoredBanners";
 import { getBulkReputations, rankColor as repRankColor, RANK_TIERS, type RankTier } from "@/services/reputation";
 import type { ReputationRow } from "@/services/reputation";
+import { getLeaderboard } from "@/services/leaderboards";
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -856,7 +857,9 @@ export default function MarketplaceScreen(): JSX.Element {
   const [purchases, setPurchases] = useState<EnrichedPurchase[]>([]);
   const [filterMeta, setFilterMeta] = useState<{ domains: string[]; sports: string[]; ranks: string[] }>({ domains: [], sports: [], ranks: [] });
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"browse" | "my-listings" | "my-syncs" | "my-purchases">("browse");
+  const [tab, setTab] = useState<"browse" | "rankings" | "my-listings" | "my-syncs" | "my-purchases">("browse");
+  const [rankingsData, setRankingsData] = useState<Array<{ rank: number; eagoh_id: string; eagoh_name: string; reputation_score: number; rank_tier: RankTier; marketplace_trust: number; sync_success: number; marketplace_sales: number; owner_username: string }>>([]);
+  const [rankingsLoading, setRankingsLoading] = useState(false);
   const [repMap, setRepMap] = useState<Map<string, ReputationRow>>(new Map());
 
   const [purchaseModal, setPurchaseModal] = useState<EnrichedListing | null>(null);
@@ -948,27 +951,53 @@ export default function MarketplaceScreen(): JSX.Element {
           </View>
         )}
 
-        {/* Tab bar: Browse | My Listings | My Syncs | My Purchases */}
-        {isPaid && (
+        {/* Tab bar: Browse | Rankings | My Listings | My Syncs | My Purchases */}
+        {(true) && (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabRail}>
             {([
               { key: "browse", label: "Browse" },
-              { key: "my-listings", label: "My Listings" },
-              { key: "my-syncs", label: "Active Syncs" },
-              { key: "my-purchases", label: "History" },
-            ] as const).map((t) => (
+              { key: "rankings", label: "Rankings" },
+              ...(isPaid ? [
+                { key: "my-listings" as const, label: "My Listings" },
+                { key: "my-syncs" as const, label: "Active Syncs" },
+                { key: "my-purchases" as const, label: "History" },
+              ] : []),
+            ]).map((t) => (
               <Pressable
                 key={t.key}
-                onPress={() => setTab(t.key)}
+                onPress={() => {
+                  setTab(t.key as typeof tab);
+                  if (t.key === "rankings" && rankingsData.length === 0) {
+                    setRankingsLoading(true);
+                    getLeaderboard("top_vendors", {}, 10, 0)
+                      .then((r) => {
+                        setRankingsData(r.entries.map((e) => ({
+                          rank: e.rank,
+                          eagoh_id: e.eagoh_id,
+                          eagoh_name: e.eagoh_name,
+                          reputation_score: e.reputation_score,
+                          rank_tier: e.rank_tier,
+                          marketplace_trust: e.marketplace_trust,
+                          sync_success: e.sync_success,
+                          marketplace_sales: e.marketplace_sales,
+                          owner_username: e.owner_username,
+                        })));
+                        setRankingsLoading(false);
+                      })
+                      .catch(() => setRankingsLoading(false));
+                  }
+                }}
                 style={[styles.tabChip, tab === t.key && styles.tabChipActive]}
               >
                 <Text style={[styles.tabChipText, tab === t.key && styles.tabChipTextActive]}>{t.label}</Text>
               </Pressable>
             ))}
-            <Pressable onPress={() => setCreateModal(true)} style={styles.createListingBtn}>
-              <PlusCircle color={palette.cyan} size={14} />
-              <Text style={styles.createListingText}>Create Listing</Text>
-            </Pressable>
+            {isPaid && (
+              <Pressable onPress={() => setCreateModal(true)} style={styles.createListingBtn}>
+                <PlusCircle color={palette.cyan} size={14} />
+                <Text style={styles.createListingText}>Create Listing</Text>
+              </Pressable>
+            )}
           </ScrollView>
         )}
 
@@ -1088,6 +1117,63 @@ export default function MarketplaceScreen(): JSX.Element {
           {purchases.map((s) => (
             <ActiveSyncCard key={s.id} item={s} />
           ))}
+        </View>
+      );
+    }
+
+    if (tab === "rankings") {
+      if (rankingsLoading) {
+        return (
+          <View style={styles.loadingWrap}>
+            <ActivityIndicator color={palette.gold} size="large" />
+          </View>
+        );
+      }
+      if (rankingsData.length === 0) {
+        return (
+          <View style={styles.emptyWrap}>
+            <TrendingUp color={palette.muted} size={40} />
+            <Text style={styles.emptyTitle}>No Rankings Yet</Text>
+            <Text style={styles.emptyBody}>Marketplace rankings will appear as vendors list their EAGOHs.</Text>
+          </View>
+        );
+      }
+      return (
+        <View style={styles.listingsWrap}>
+          {rankingsData.map((entry) => {
+            const rkColor = rankColor(entry.rank_tier as RankTier);
+            return (
+              <View key={entry.eagoh_id} style={styles.rankingCard}>
+                <View style={[styles.cardGlow, { backgroundColor: rkColor }]} />
+                <View style={styles.rankingCardLeft}>
+                  <Text style={[styles.rankingNumber, entry.rank <= 3 && { color: palette.gold }]}>#{entry.rank}</Text>
+                  <View>
+                    <Text style={styles.rankingName} numberOfLines={1}>{entry.eagoh_name}</Text>
+                    <Text style={styles.rankingVendor}>{entry.owner_username || "Anonymous"}</Text>
+                  </View>
+                </View>
+                <View style={styles.rankingCardRight}>
+                  <View style={[styles.rankingRankBadge, { borderColor: rkColor + "44", backgroundColor: rkColor + "18" }]}>
+                    <Text style={[styles.rankingRankBadgeText, { color: rkColor }]}>{entry.rank_tier}</Text>
+                  </View>
+                  <View style={styles.rankingMetrics}>
+                    <View style={styles.rankingMetric}>
+                      <Signal color={palette.success} size={10} />
+                      <Text style={styles.rankingMetricText}>{entry.sync_success}</Text>
+                    </View>
+                    <View style={styles.rankingMetric}>
+                      <Star color={palette.gold} size={10} />
+                      <Text style={styles.rankingMetricText}>{entry.reputation_score}</Text>
+                    </View>
+                    <View style={styles.rankingMetric}>
+                      <Coins color={palette.gold} size={10} />
+                      <Text style={styles.rankingMetricText}>{entry.marketplace_sales}</Text>
+                    </View>
+                  </View>
+                </View>
+              </View>
+            );
+          })}
         </View>
       );
     }
@@ -1664,4 +1750,33 @@ const styles = StyleSheet.create({
   mktBannerSync: { color: palette.violet, fontSize: 11, fontWeight: "900" },
   mktBannerRankRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 4, borderRadius: 5, borderWidth: 1, paddingHorizontal: 6, paddingVertical: 3, marginTop: 2 },
   mktBannerRankText: { fontSize: 10, fontWeight: "900" as const },
+
+  // Rankings tab
+  rankingCard: {
+    borderRadius: 5,
+    padding: 12,
+    backgroundColor: "rgba(14,24,37,0.84)",
+    borderWidth: 1,
+    borderColor: palette.line,
+    overflow: "hidden" as const,
+    flexDirection: "row" as const,
+    justifyContent: "space-between" as const,
+    alignItems: "center" as const,
+  },
+  rankingCardLeft: { flexDirection: "row" as const, alignItems: "center" as const, gap: 10, flex: 1 },
+  rankingNumber: { color: palette.text, fontSize: 18, fontWeight: "900" as const, minWidth: 36 },
+  rankingName: { color: palette.text, fontSize: 14, fontWeight: "900" as const },
+  rankingVendor: { color: palette.muted, fontSize: 11, fontWeight: "700" as const, marginTop: 1 },
+  rankingCardRight: { alignItems: "flex-end" as const, gap: 6 },
+  rankingRankBadge: {
+    borderWidth: 1,
+    borderRadius: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    overflow: "hidden" as const,
+  },
+  rankingRankBadgeText: { fontSize: 10, fontWeight: "900" as const },
+  rankingMetrics: { flexDirection: "row" as const, gap: 8 },
+  rankingMetric: { flexDirection: "row" as const, alignItems: "center" as const, gap: 3 },
+  rankingMetricText: { color: palette.text, fontSize: 10, fontWeight: "800" as const },
 });

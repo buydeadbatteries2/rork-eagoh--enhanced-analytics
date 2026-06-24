@@ -17,7 +17,7 @@
 - [x] Structure the Profile area with identity, rank, achievements, wallet-style stats, and settings placeholders.
 - [x] Create immersive EAGOH profile chambers with full-body pseudo-3D display.
 - [x] Add 10 premium profile lab environments plus one free dormant lab.
-- [x] Create the EAGOH Forge with brain-in-glass-dome preview at top, collapsible dropdown sections for all customization inputs, intelligence domain selection, free vs paid tier visual differentiation, and confirmation flow with live image generation via Rork toolkit.
+- [x] Create the EAGOH Forge with brain-in-glass-dome preview at top, a stepped wizard for all customization inputs, intelligence domain selection, free vs paid tier visual differentiation, and confirmation flow with live image generation via Rork toolkit.
 - [x] Add Intelligence Domains: Sports, Music, Film & Television, Fashion, Education, Gaming, Business, Finance, Technology, Health & Fitness. Each EAGOH answers only within its domain.
 - [x] Create the Sessions screen with Quick Check (1-3 Edge), Quick Analysis, Standard Analysis, Oracle Deep Dive, and Premium Event Analysis. Setup flow with EAGOH selection, topic, domain check, and Edge confirmation.
 - [x] Edge economy: Free (0), Pro (600/2 EAGOHs/1.0x), Oracle Elite (1400/3/1.2x), Syndicate (3700/5/1.5x). Subscription rollover at 10% if 10% retained. Purchased Edge permanent. Quick Check uses dynamic 1-3 Edge pricing.
@@ -41,7 +41,7 @@
 - [x] Onboarding screens introducing the core app fantasy.
 - [x] Real Supabase authentication screen for sign-in and account creation.
 - [x] Home dashboard with featured EAGOH banners, sponsored carousel, trending signals, faction feed, Labs and Factions feature cards, analyst shortcuts, Edge balance, Quick Check access, recently viewed EAGOHs, and favorite Fanatic Teams.
-- [x] Forge screen with brain-in-glass-dome preview, collapsible input sections, domain selection, tier visualization, and confirmation flow.
+- [x] Forge screen with brain-in-glass-dome preview, stepped input wizard, domain selection, tier visualization, and confirmation flow.
 - [x] Sessions screen with session type cards, EAGOH selection, domain-aware topic entry, Edge cost preview, and active chat view.
 - [x] Exchange (Marketplace) screen with featured EAGOH listings, sponsored banners, tactical filters, sync options, faction influence, trending vendors, and detailed vendor profile mockups.
 - [x] Factions screen with faction invites, tactical faction cards, shared intelligence, faction rankings, badges, sync influence, reputation, and activity previews.

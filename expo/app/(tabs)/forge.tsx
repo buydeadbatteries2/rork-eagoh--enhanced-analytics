@@ -1,22 +1,23 @@
 /**
- * EAGOH Forge — premium mobile intelligence platform screen.
+ * EAGOH Forge — stepped wizard creation flow.
  *
- * Layout:
- *   - Top 40%: large hero preview of the EAGOH (brain-in-glass-dome, full-body, premium chassis)
- *   - Info strip: name, intelligence domain, shell status, tier badge
- *   - Scrollable collapsible customization sections with tight spacing
- *   - Cybernetic Intensity near bottom of sections
- *   - Forge cost displayed above the sticky CTA
- *   - Bottom CTA "REVIEW & CONFIRM" always visible
+ * Keeps the existing Forge generation pipeline intact while replacing the
+ * collapsible customization panels with a guided step-by-step builder.
  */
 
 import { palette } from "@/constants/colors";
+import { useEdge } from "@/providers/EdgeProvider";
+import { useEagohs } from "@/providers/EagohProvider";
+import { useForge, type ForgePending } from "@/providers/ForgeProvider";
+import { useProfile } from "@/providers/ProfileProvider";
+import { INTELLIGENCE_DOMAINS } from "@/services/domains";
+import { TIER_MAX_EAGOHS, TIER_MULTIPLIER, getForgeCost } from "@/services/edge";
+import type { EagohDraft } from "@/services/eagohs";
 import * as Haptics from "expo-haptics";
+import { LinearGradient } from "expo-linear-gradient";
 import {
   BrainCircuit,
   Check,
-  ChevronDown,
-  ChevronUp,
   Cpu,
   Crown,
   Eye,
@@ -32,6 +33,8 @@ import {
 import React, { memo, useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -41,18 +44,33 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { LinearGradient } from "expo-linear-gradient";
-import { useProfile } from "@/providers/ProfileProvider";
-import { useEdge } from "@/providers/EdgeProvider";
-import { useForge, type ForgePending } from "@/providers/ForgeProvider";
-import { useEagohs } from "@/providers/EagohProvider";
-import { INTELLIGENCE_DOMAINS, type IntelligenceDomain } from "@/services/domains";
-import { TIER_MULTIPLIER, TIER_MAX_EAGOHS } from "@/services/edge";
-import { getForgeCost } from "@/services/edge";
-import type { EagohDraft } from "@/services/eagohs";
 
 type OptionTone = "cyan" | "gold" | "violet" | "ember" | "success";
 type ForgeOption = { id: string; label: string; detail?: string; tone: OptionTone };
+type WizardStepId =
+  | "name"
+  | "domain"
+  | "gender"
+  | "bodyType"
+  | "face"
+  | "headwear"
+  | "bodyGear"
+  | "footwear"
+  | "accessories"
+  | "notes"
+  | "cybernetic"
+  | "pose"
+  | "dna"
+  | "teams"
+  | "sportLab";
+
+type WizardStep = {
+  id: WizardStepId;
+  title: string;
+  eyebrow: string;
+  hint: string;
+  icon: React.ReactNode;
+};
 
 const genders: ForgeOption[] = [
   { id: "male", label: "Male", tone: "cyan" },
@@ -145,14 +163,8 @@ function toneColor(tone: OptionTone): string {
   return palette.cyan;
 }
 
-// ---- EAGOH Hero Preview (brain-in-glass-dome, full-body, premium chassis) ----
 const ForgePreview = memo(function ForgePreview({
-  name,
-  sport,
-  gender,
-  domain,
   cyberneticIntensity,
-  pose,
   tier,
 }: {
   name: string;
@@ -178,19 +190,16 @@ const ForgePreview = memo(function ForgePreview({
           : ["rgba(54,245,255,0.10)", "rgba(3,6,11,0.92)", "rgba(124,92,255,0.10)"]}
         style={StyleSheet.absoluteFill}
       />
-      {/* Decorative ring */}
       <View style={[styles.stageRing, { borderColor: isFree ? "rgba(107,114,128,0.15)" : `${accent}22` }]} />
-      {/* Glass dome head with brain */}
       <View style={[styles.glassDome, { borderColor: `rgba(255,255,255,${isFree ? "0.14" : "0.32"})` }]}>
         <View style={[styles.glassDomeInner, { backgroundColor: `rgba(255,255,255,${isFree ? "0.04" : "0.10"})` }]}>
           <View style={[styles.brainCore, { backgroundColor: brainGlow }]}>
             <BrainCircuit color={isFree ? "#6B7280" : accent} size={32} />
           </View>
-          {isFree ? <View style={[styles.crack, { backgroundColor: "#4B5563" }]} /> : null}
-          {isFree ? <View style={[styles.crack2, { backgroundColor: "#4B5563" }]} /> : null}
+          {isFree ? <View style={styles.crack} /> : null}
+          {isFree ? <View style={styles.crack2} /> : null}
         </View>
       </View>
-      {/* Cybernetic body / chassis */}
       <View style={[styles.bodyFrame, { borderColor: chassisBorder, backgroundColor: chassisBg }]}>
         <View style={styles.neckConnector} />
         <View style={[styles.shoulderLeft, { backgroundColor: isFree ? "rgba(75,85,99,0.4)" : `${accent}44` }]} />
@@ -206,8 +215,8 @@ const ForgePreview = memo(function ForgePreview({
         <View style={[styles.legRight, { backgroundColor: isFree ? "rgba(75,85,99,0.3)" : `${accent}33` }]} />
         {isFree ? (
           <>
-            <View style={[styles.exposedWire, { backgroundColor: "#4B5563" }]} />
-            <View style={[styles.exposedWire2, { backgroundColor: "#4B5563" }]} />
+            <View style={styles.exposedWire} />
+            <View style={styles.exposedWire2} />
           </>
         ) : null}
       </View>
@@ -215,42 +224,6 @@ const ForgePreview = memo(function ForgePreview({
   );
 });
 
-// ---- Collapsible section (tight) ----
-const CollapsibleSection = memo(function CollapsibleSection({
-  id,
-  title,
-  icon,
-  expanded,
-  onToggle,
-  children,
-}: {
-  id: string;
-  title: string;
-  icon: React.ReactNode;
-  expanded: boolean;
-  onToggle: (id: string) => void;
-  children: React.ReactNode;
-}): JSX.Element {
-  const handlePress = useCallback(() => {
-    Haptics.selectionAsync().catch(() => undefined);
-    onToggle(id);
-  }, [id, onToggle]);
-
-  return (
-    <View style={styles.section}>
-      <Pressable onPress={handlePress} style={({ pressed }) => [styles.sectionHeader, pressed && styles.pressed]}>
-        <View style={styles.sectionHeaderLeft}>
-          {icon}
-          <Text style={styles.sectionTitle}>{title}</Text>
-        </View>
-        {expanded ? <ChevronUp color={palette.cyan} size={16} /> : <ChevronDown color={palette.muted} size={16} />}
-      </Pressable>
-      {expanded ? <View style={styles.sectionBody}>{children}</View> : null}
-    </View>
-  );
-});
-
-// ---- Option chip (tight) ----
 const OptionChip = memo(function OptionChip({
   option,
   selected,
@@ -285,7 +258,6 @@ const OptionChip = memo(function OptionChip({
   );
 });
 
-// ---- Confirmation modal ----
 function ConfirmationSheet({
   pending,
   onConfirm,
@@ -308,16 +280,14 @@ function ConfirmationSheet({
         <Text style={styles.confirmName}>{pending.draft.name || "Unnamed EAGOH"}</Text>
         <View style={styles.confirmDetails}>
           {pending.summary.map((line, i) => (
-            <Text key={i} style={styles.confirmLine}>{line}</Text>
+            <Text key={`${line}-${i}`} style={styles.confirmLine}>{line}</Text>
           ))}
         </View>
         <View style={styles.confirmEdgeRow}>
           <Zap color={palette.gold} size={18} />
           <Text style={styles.confirmEdgeCost}>{pending.edgeCost} Edge</Text>
         </View>
-        {!canAfford ? (
-          <Text style={styles.confirmError}>Insufficient Edge balance. Purchase Edge or upgrade your tier.</Text>
-        ) : null}
+        {!canAfford ? <Text style={styles.confirmError}>Insufficient Edge balance. Purchase Edge or upgrade your tier.</Text> : null}
         <View style={styles.confirmActions}>
           <Pressable onPress={onCancel} disabled={isGenerating} style={({ pressed }) => [styles.confirmCancel, pressed && styles.pressed]}>
             <Text style={styles.confirmCancelText}>Cancel</Text>
@@ -327,11 +297,7 @@ function ConfirmationSheet({
             disabled={isGenerating || !canAfford}
             style={({ pressed }) => [styles.confirmForge, !canAfford && styles.disabledButton, pressed && styles.pressed]}
           >
-            {isGenerating ? (
-              <ActivityIndicator color={palette.void} />
-            ) : (
-              <Text style={styles.confirmForgeText}>Generate EAGOH</Text>
-            )}
+            {isGenerating ? <ActivityIndicator color={palette.void} /> : <Text style={styles.confirmForgeText}>Generate EAGOH</Text>}
           </Pressable>
         </View>
       </View>
@@ -339,7 +305,6 @@ function ConfirmationSheet({
   );
 }
 
-// ---- Main screen ----
 export default function ForgeScreen(): JSX.Element {
   const { profile } = useProfile();
   const { total: edgeTotal } = useEdge();
@@ -360,39 +325,36 @@ export default function ForgeScreen(): JSX.Element {
   const [cyberneticIntensity, setCyberneticIntensity] = useState<string>("moderate");
   const [pose, setPose] = useState<string>("relaxed-confidence");
   const [lab, setLab] = useState<string>("neon-vault");
-
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(["name", "domain"]));
+  const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
   const [forgeError, setForgeError] = useState<string | null>(null);
 
-  const toggleSection = useCallback((id: string): void => {
-    setExpandedSections((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
-  const isExpanded = useCallback((id: string): boolean => expandedSections.has(id), [expandedSections]);
-
-  const setAppearanceField = useCallback((category: string, optionId: string): void => {
-    setAppearance((prev) => ({ ...prev, [category]: optionId }));
-  }, []);
-
-  const toggleDna = useCallback((id: string): void => {
-    setDna((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
-  }, []);
-
-  const toggleTeams = useCallback((id: string): void => {
-    setTeams((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
-  }, []);
-
-  const currentTier = profile?.subscription_tier ?? "free";
+  const currentTier = profile?.subscription_tier ?? tier ?? "free";
   const multiplier = TIER_MULTIPLIER[currentTier] ?? 0;
   const maxEagohs = TIER_MAX_EAGOHS[currentTier] ?? 0;
   const forgeCost = getForgeCost("initial");
-
   const domainLabel = INTELLIGENCE_DOMAINS.find((d) => d.id === domain)?.label ?? domain;
+
+  const wizardSteps: WizardStep[] = useMemo(() => [
+    { id: "name", title: "EAGOH Name", eyebrow: "Step 01", hint: "Give your intelligence unit a memorable identity.", icon: <Crown color={palette.gold} size={15} /> },
+    { id: "domain", title: "Intelligence Domain", eyebrow: "Step 02", hint: "This controls what your EAGOH is allowed to answer.", icon: <BrainCircuit color={palette.violet} size={15} /> },
+    { id: "gender", title: "Gender", eyebrow: "Step 03", hint: "Choose the presentation direction for the chassis.", icon: <ScanFace color={palette.cyan} size={15} /> },
+    { id: "bodyType", title: "Body Type", eyebrow: "Step 04", hint: "Tune the physical silhouette without changing the core EAGOH chassis.", icon: <Shirt color={palette.ember} size={15} /> },
+    { id: "face", title: "Face & Features", eyebrow: "Step 05", hint: "Describe facial details, optics, dome features, or expression.", icon: <Eye color={palette.success} size={15} /> },
+    { id: "headwear", title: "Headwear", eyebrow: "Step 06", hint: "Add headwear that modifies the glass-dome chassis.", icon: <Crown color={palette.gold} size={15} /> },
+    { id: "bodyGear", title: "Body Gear", eyebrow: "Step 07", hint: "Select armor, jackets, pads, or other body gear.", icon: <Shirt color={palette.cyan} size={15} /> },
+    { id: "footwear", title: "Footwear", eyebrow: "Step 08", hint: "Choose how the lower chassis is finished.", icon: <Footprints color={palette.success} size={15} /> },
+    { id: "accessories", title: "Accessories", eyebrow: "Step 09", hint: "Add premium details that do not replace the EAGOH frame.", icon: <Gem color={palette.violet} size={15} /> },
+    { id: "notes", title: "Additional Notes", eyebrow: "Step 10", hint: "Optional style, material, and attitude notes.", icon: <SlidersHorizontal color={palette.gold} size={15} /> },
+    { id: "cybernetic", title: "Cybernetic Intensity", eyebrow: "Step 11", hint: "Set how mechanical and activated the EAGOH feels.", icon: <Cpu color={palette.ember} size={15} /> },
+    { id: "pose", title: "Fixed Pose", eyebrow: "Step 12", hint: "Pick the final full-body stance used for generation.", icon: <ScanFace color={palette.cyan} size={15} /> },
+    { id: "dna", title: "DNA Archetypes", eyebrow: "Step 13", hint: "Optional personality signals layered into the chassis.", icon: <Sparkles color={palette.violet} size={15} /> },
+    { id: "teams", title: "Fanatic Teams", eyebrow: "Step 14", hint: "Optional mock faction affinity — no real logos or marks.", icon: <Heart color={palette.ember} size={15} /> },
+    { id: "sportLab", title: "Sport & Lab", eyebrow: "Step 15", hint: "Finalize the sport signal and forge lab environment.", icon: <Zap color={palette.gold} size={15} /> },
+  ], []);
+
+  const currentStep = wizardSteps[currentStepIndex];
+  const isLastStep = currentStepIndex === wizardSteps.length - 1;
+  const progressPercent = ((currentStepIndex + 1) / wizardSteps.length) * 100;
 
   const draft: EagohDraft = useMemo(() => ({
     name,
@@ -410,24 +372,72 @@ export default function ForgeScreen(): JSX.Element {
     lab,
   }), [name, sport, gender, domain, bodyType, faceFeatures, styleNotes, dna, teams, appearance, cyberneticIntensity, pose, lab]);
 
+  const setAppearanceField = useCallback((category: string, optionId: string): void => {
+    setAppearance((prev) => ({ ...prev, [category]: optionId }));
+  }, []);
+
+  const toggleDna = useCallback((id: string): void => {
+    setDna((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
+  }, []);
+
+  const toggleTeams = useCallback((id: string): void => {
+    setTeams((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
+  }, []);
+
+  const validateCurrentStep = useCallback((): boolean => {
+    if (currentStep.id === "name" && !name.trim()) {
+      setForgeError("Name your EAGOH first.");
+      return false;
+    }
+    if (currentStep.id === "domain" && domain.length === 0) {
+      setForgeError("Select an intelligence domain.");
+      return false;
+    }
+    setForgeError(null);
+    return true;
+  }, [currentStep.id, domain.length, name]);
+
+  const goNext = useCallback((): void => {
+    if (!validateCurrentStep()) return;
+    Haptics.selectionAsync().catch(() => undefined);
+    setCurrentStepIndex((prev) => Math.min(prev + 1, wizardSteps.length - 1));
+  }, [validateCurrentStep, wizardSteps.length]);
+
+  const goBack = useCallback((): void => {
+    Haptics.selectionAsync().catch(() => undefined);
+    setForgeError(null);
+    setCurrentStepIndex((prev) => Math.max(prev - 1, 0));
+  }, []);
+
+  const goToStep = useCallback((index: number): void => {
+    Haptics.selectionAsync().catch(() => undefined);
+    setForgeError(null);
+    setCurrentStepIndex(index);
+  }, []);
+
   const handleForge = useCallback((): void => {
     if (!name.trim()) {
       setForgeError("Name your EAGOH first.");
+      setCurrentStepIndex(0);
       return;
     }
     if (domain.length === 0) {
       setForgeError("Select an intelligence domain.");
+      setCurrentStepIndex(1);
       return;
     }
     setForgeError(null);
     prepareForge(draft, "initial");
-  }, [draft, prepareForge, name, domain]);
+  }, [domain.length, draft, name, prepareForge]);
+
+  const handlePrimaryAction = useCallback((): void => {
+    if (isLastStep) handleForge();
+    else goNext();
+  }, [goNext, handleForge, isLastStep]);
 
   const handleConfirm = useCallback((): void => {
     confirmForge().then((result) => {
-      if (!result.ok) {
-        setForgeError(result.error);
-      }
+      if (!result.ok) setForgeError(result.error);
     }).catch((err: Error) => {
       setForgeError(err?.message ?? "Forge failed.");
     });
@@ -437,14 +447,148 @@ export default function ForgeScreen(): JSX.Element {
     cancelForge();
   }, [cancelForge]);
 
-  // Preview height: ~40% of screen, capped
-  const previewHeight = Math.min(windowHeight * 0.40, 380);
+  const renderStepContent = useCallback((): JSX.Element => {
+    if (currentStep.id === "name") {
+      return (
+        <TextInput
+          value={name}
+          onChangeText={setName}
+          placeholder="Enter EAGOH name…"
+          placeholderTextColor={palette.muted}
+          style={styles.input}
+          returnKeyType="next"
+          onSubmitEditing={goNext}
+        />
+      );
+    }
+
+    if (currentStep.id === "domain") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Each EAGOH answers only within its chosen domain.</Text>
+          <View style={styles.optionsGrid}>
+            {INTELLIGENCE_DOMAINS.map((d) => (
+              <OptionChip
+                key={d.id}
+                option={{ id: d.id, label: d.label, detail: d.description.slice(0, 48), tone: d.tone }}
+                selected={domain === d.id}
+                onPress={setDomain}
+              />
+            ))}
+          </View>
+        </>
+      );
+    }
+
+    if (currentStep.id === "gender") {
+      return <>{genders.map((opt) => <OptionChip key={opt.id} option={opt} selected={gender === opt.id} onPress={setGender} />)}</>;
+    }
+
+    if (currentStep.id === "bodyType") {
+      return <>{bodyTypes.map((opt) => <OptionChip key={opt.id} option={opt} selected={bodyType === opt.id} onPress={setBodyType} />)}</>;
+    }
+
+    if (currentStep.id === "face") {
+      return (
+        <TextInput
+          value={faceFeatures}
+          onChangeText={setFaceFeatures}
+          placeholder="e.g. angular jaw, neon optic visor…"
+          placeholderTextColor={palette.muted}
+          style={[styles.input, styles.textArea]}
+          multiline
+        />
+      );
+    }
+
+    if (currentStep.id === "headwear") {
+      return <>{headwearOptions.map((opt) => <OptionChip key={opt.id} option={opt} selected={appearance.headwear === opt.id} onPress={(id) => setAppearanceField("headwear", id)} />)}</>;
+    }
+
+    if (currentStep.id === "bodyGear") {
+      return <>{bodyGearOptions.map((opt) => <OptionChip key={opt.id} option={opt} selected={appearance.body === opt.id} onPress={(id) => setAppearanceField("body", id)} />)}</>;
+    }
+
+    if (currentStep.id === "footwear") {
+      return <>{footwearOptions.map((opt) => <OptionChip key={opt.id} option={opt} selected={appearance.footwear === opt.id} onPress={(id) => setAppearanceField("footwear", id)} />)}</>;
+    }
+
+    if (currentStep.id === "accessories") {
+      return <>{accessoryOptions.map((opt) => <OptionChip key={opt.id} option={opt} selected={appearance.accessories === opt.id} onPress={(id) => setAppearanceField("accessories", id)} />)}</>;
+    }
+
+    if (currentStep.id === "notes") {
+      return (
+        <TextInput
+          value={styleNotes}
+          onChangeText={setStyleNotes}
+          placeholder="e.g. matte black finish, gold trim…"
+          placeholderTextColor={palette.muted}
+          style={[styles.input, styles.textArea]}
+          multiline
+        />
+      );
+    }
+
+    if (currentStep.id === "cybernetic") {
+      return <>{intensities.map((opt) => <OptionChip key={opt.id} option={opt} selected={cyberneticIntensity === opt.id} onPress={setCyberneticIntensity} />)}</>;
+    }
+
+    if (currentStep.id === "pose") {
+      return <>{poses.map((opt) => <OptionChip key={opt.id} option={opt} selected={pose === opt.id} onPress={setPose} />)}</>;
+    }
+
+    if (currentStep.id === "dna") {
+      return <>{archetypes.map((opt) => <OptionChip key={opt.id} option={opt} selected={dna.includes(opt.id)} onPress={toggleDna} />)}</>;
+    }
+
+    if (currentStep.id === "teams") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Mock faction affinity only — no real team logos or marks.</Text>
+          {fanaticTeams.map((opt) => <OptionChip key={opt.id} option={opt} selected={teams.includes(opt.id)} onPress={toggleTeams} />)}
+        </>
+      );
+    }
+
+    return (
+      <>
+        <Text style={styles.sectionHint}>Primary sport</Text>
+        {sports.map((opt) => <OptionChip key={opt.id} option={opt} selected={sport === opt.id} onPress={setSport} />)}
+        <Text style={[styles.sectionHint, styles.labHint]}>Forge lab</Text>
+        {labs.map((opt) => <OptionChip key={opt.id} option={opt} selected={lab === opt.id} onPress={setLab} />)}
+      </>
+    );
+  }, [
+    appearance.accessories,
+    appearance.body,
+    appearance.footwear,
+    appearance.headwear,
+    bodyType,
+    currentStep.id,
+    cyberneticIntensity,
+    dna,
+    domain,
+    faceFeatures,
+    gender,
+    goNext,
+    lab,
+    name,
+    pose,
+    setAppearanceField,
+    sport,
+    styleNotes,
+    teams,
+    toggleDna,
+    toggleTeams,
+  ]);
+
+  const previewHeight = Math.min(windowHeight * 0.36, 330);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <View style={styles.root}>
-        {/* ── Hero Preview (top 40%) ── */}
-        <View style={[styles.previewArea, { height: previewHeight }]}>
+      <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <View style={[styles.previewArea, { height: previewHeight }]}> 
           <ForgePreview
             name={name}
             sport={sport}
@@ -454,308 +598,101 @@ export default function ForgeScreen(): JSX.Element {
             pose={pose}
             tier={currentTier}
           />
-          {/* Tier chip floating on preview */}
           <View style={[styles.tierChipFloat, currentTier !== "free" && styles.tierChipFloatPaid]}>
             <Zap color={currentTier !== "free" ? palette.cyan : palette.muted} size={11} />
-            <Text style={[styles.tierChipFloatText, currentTier !== "free" && { color: palette.cyan }]}>
+            <Text style={[styles.tierChipFloatText, currentTier !== "free" && { color: palette.cyan }]}> 
               {currentTier.replace("_", " ").toUpperCase()}
             </Text>
           </View>
         </View>
 
-        {/* ── Info strip ── */}
         <View style={styles.infoStrip}>
           <Text style={styles.infoName} numberOfLines={1}>{name || "Unnamed EAGOH"}</Text>
           <View style={styles.infoMeta}>
             <Text style={styles.infoDomain}>{domainLabel}</Text>
             <View style={styles.infoDot} />
-            <Text style={styles.infoShell}>
-              {currentTier === "free" ? "DORMANT SHELL" : "ACTIVATED CHASSIS"}
-            </Text>
+            <Text style={styles.infoShell}>{currentTier === "free" ? "DORMANT SHELL" : "ACTIVATED CHASSIS"}</Text>
             <View style={styles.infoDot} />
             <Text style={styles.infoSlots}>{remaining}/{maxEagohs} slots</Text>
+            {multiplier > 0 ? <Text style={styles.multiplier}>{multiplier.toFixed(1)}x</Text> : null}
           </View>
         </View>
 
-        {/* ── Scrollable sections ── */}
+        <View style={styles.stepperBar}>
+          <View style={styles.stepperTopRow}>
+            <Text style={styles.stepCounter}>{currentStepIndex + 1}/{wizardSteps.length}</Text>
+            <Text style={styles.stepMiniTitle} numberOfLines={1}>{currentStep.title}</Text>
+          </View>
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${progressPercent}%` }]} />
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stepDotsContent}>
+            {wizardSteps.map((step, index) => {
+              const isActive = index === currentStepIndex;
+              const isComplete = index < currentStepIndex;
+              return (
+                <Pressable key={step.id} onPress={() => goToStep(index)} style={[styles.stepDot, isActive && styles.stepDotActive, isComplete && styles.stepDotComplete]}>
+                  <Text style={[styles.stepDotText, (isActive || isComplete) && styles.stepDotTextActive]}>{index + 1}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+
         <ScrollView
-          style={styles.sectionsScroll}
-          contentContainerStyle={styles.sectionsContent}
+          style={styles.wizardScroll}
+          contentContainerStyle={styles.wizardContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Name */}
-          <CollapsibleSection
-            id="name"
-            title="EAGOH Name"
-            icon={<Crown color={palette.gold} size={14} />}
-            expanded={isExpanded("name")}
-            onToggle={toggleSection}
-          >
-            <TextInput
-              value={name}
-              onChangeText={setName}
-              placeholder="Enter EAGOH name…"
-              placeholderTextColor={palette.muted}
-              style={styles.input}
-            />
-          </CollapsibleSection>
-
-          {/* Intelligence Domain */}
-          <CollapsibleSection
-            id="domain"
-            title="Intelligence Domain"
-            icon={<BrainCircuit color={palette.violet} size={14} />}
-            expanded={isExpanded("domain")}
-            onToggle={toggleSection}
-          >
-            <Text style={styles.sectionHint}>Each EAGOH answers only within its chosen domain.</Text>
-            <View style={styles.optionsGrid}>
-              {INTELLIGENCE_DOMAINS.map((d) => (
-                <OptionChip
-                  key={d.id}
-                  option={{ id: d.id, label: d.label, detail: d.description.slice(0, 48), tone: d.tone }}
-                  selected={domain === d.id}
-                  onPress={setDomain}
-                />
-              ))}
+          <View style={styles.wizardCard}>
+            <LinearGradient colors={["rgba(54,245,255,0.08)", "rgba(10,18,30,0.78)"]} style={StyleSheet.absoluteFill} />
+            <View style={styles.wizardHeader}>
+              <View style={styles.wizardIcon}>{currentStep.icon}</View>
+              <View style={styles.wizardHeaderCopy}>
+                <Text style={styles.wizardEyebrow}>{currentStep.eyebrow}</Text>
+                <Text style={styles.wizardTitle}>{currentStep.title}</Text>
+              </View>
             </View>
-          </CollapsibleSection>
+            <Text style={styles.wizardHint}>{currentStep.hint}</Text>
+            <View style={styles.stepContent}>{renderStepContent()}</View>
+          </View>
 
-          {/* Gender */}
-          <CollapsibleSection
-            id="gender"
-            title="Gender"
-            icon={<ScanFace color={palette.cyan} size={14} />}
-            expanded={isExpanded("gender")}
-            onToggle={toggleSection}
-          >
-            {genders.map((opt) => (
-              <OptionChip key={opt.id} option={opt} selected={gender === opt.id} onPress={setGender} />
-            ))}
-          </CollapsibleSection>
-
-          {/* Body Type */}
-          <CollapsibleSection
-            id="bodyType"
-            title="Body Type"
-            icon={<Shirt color={palette.ember} size={14} />}
-            expanded={isExpanded("bodyType")}
-            onToggle={toggleSection}
-          >
-            {bodyTypes.map((opt) => (
-              <OptionChip key={opt.id} option={opt} selected={bodyType === opt.id} onPress={setBodyType} />
-            ))}
-          </CollapsibleSection>
-
-          {/* Face & Features */}
-          <CollapsibleSection
-            id="face"
-            title="Face & Features"
-            icon={<Eye color={palette.success} size={14} />}
-            expanded={isExpanded("face")}
-            onToggle={toggleSection}
-          >
-            <Text style={styles.sectionHint}>Distinctive facial traits, expression, or visor configuration.</Text>
-            <TextInput
-              value={faceFeatures}
-              onChangeText={setFaceFeatures}
-              placeholder="e.g. angular jaw, neon optic visor…"
-              placeholderTextColor={palette.muted}
-              style={styles.input}
-              multiline
-            />
-          </CollapsibleSection>
-
-          {/* Headwear */}
-          <CollapsibleSection
-            id="headwear"
-            title="Headwear"
-            icon={<Crown color={palette.gold} size={14} />}
-            expanded={isExpanded("headwear")}
-            onToggle={toggleSection}
-          >
-            {headwearOptions.map((opt) => (
-              <OptionChip key={opt.id} option={opt} selected={appearance.headwear === opt.id} onPress={(id) => setAppearanceField("headwear", id)} />
-            ))}
-          </CollapsibleSection>
-
-          {/* Body Gear */}
-          <CollapsibleSection
-            id="body"
-            title="Body Gear"
-            icon={<Shirt color={palette.cyan} size={14} />}
-            expanded={isExpanded("body")}
-            onToggle={toggleSection}
-          >
-            {bodyGearOptions.map((opt) => (
-              <OptionChip key={opt.id} option={opt} selected={appearance.body === opt.id} onPress={(id) => setAppearanceField("body", id)} />
-            ))}
-          </CollapsibleSection>
-
-          {/* Footwear */}
-          <CollapsibleSection
-            id="footwear"
-            title="Footwear"
-            icon={<Footprints color={palette.success} size={14} />}
-            expanded={isExpanded("footwear")}
-            onToggle={toggleSection}
-          >
-            {footwearOptions.map((opt) => (
-              <OptionChip key={opt.id} option={opt} selected={appearance.footwear === opt.id} onPress={(id) => setAppearanceField("footwear", id)} />
-            ))}
-          </CollapsibleSection>
-
-          {/* Accessories */}
-          <CollapsibleSection
-            id="accessories"
-            title="Accessories"
-            icon={<Gem color={palette.violet} size={14} />}
-            expanded={isExpanded("accessories")}
-            onToggle={toggleSection}
-          >
-            {accessoryOptions.map((opt) => (
-              <OptionChip key={opt.id} option={opt} selected={appearance.accessories === opt.id} onPress={(id) => setAppearanceField("accessories", id)} />
-            ))}
-          </CollapsibleSection>
-
-          {/* Additional Notes */}
-          <CollapsibleSection
-            id="styleNotes"
-            title="Additional Notes"
-            icon={<SlidersHorizontal color={palette.gold} size={14} />}
-            expanded={isExpanded("styleNotes")}
-            onToggle={toggleSection}
-          >
-            <Text style={styles.sectionHint}>Extra cues — color hints, material notes, attitude.</Text>
-            <TextInput
-              value={styleNotes}
-              onChangeText={setStyleNotes}
-              placeholder="e.g. matte black finish, gold trim…"
-              placeholderTextColor={palette.muted}
-              style={styles.input}
-              multiline
-            />
-          </CollapsibleSection>
-
-          {/* Cybernetic Intensity — near bottom of sections */}
-          <CollapsibleSection
-            id="cybernetic"
-            title="Cybernetic Intensity"
-            icon={<Cpu color={palette.ember} size={14} />}
-            expanded={isExpanded("cybernetic")}
-            onToggle={toggleSection}
-          >
-            {intensities.map((opt) => (
-              <OptionChip key={opt.id} option={opt} selected={cyberneticIntensity === opt.id} onPress={setCyberneticIntensity} />
-            ))}
-          </CollapsibleSection>
-
-          {/* Fixed Pose */}
-          <CollapsibleSection
-            id="pose"
-            title="Fixed Pose"
-            icon={<ScanFace color={palette.cyan} size={14} />}
-            expanded={isExpanded("pose")}
-            onToggle={toggleSection}
-          >
-            {poses.map((opt) => (
-              <OptionChip key={opt.id} option={opt} selected={pose === opt.id} onPress={setPose} />
-            ))}
-          </CollapsibleSection>
-
-          {/* DNA Archetypes */}
-          <CollapsibleSection
-            id="dna"
-            title="DNA Archetypes"
-            icon={<Sparkles color={palette.violet} size={14} />}
-            expanded={isExpanded("dna")}
-            onToggle={toggleSection}
-          >
-            {archetypes.map((opt) => (
-              <OptionChip key={opt.id} option={opt} selected={dna.includes(opt.id)} onPress={toggleDna} />
-            ))}
-          </CollapsibleSection>
-
-          {/* Fanatic Teams */}
-          <CollapsibleSection
-            id="teams"
-            title="Fanatic Teams"
-            icon={<Heart color={palette.ember} size={14} />}
-            expanded={isExpanded("teams")}
-            onToggle={toggleSection}
-          >
-            <Text style={styles.sectionHint}>Mock faction affinity — no real team logos or marks.</Text>
-            {fanaticTeams.map((opt) => (
-              <OptionChip key={opt.id} option={opt} selected={teams.includes(opt.id)} onPress={toggleTeams} />
-            ))}
-          </CollapsibleSection>
-
-          {/* Sport & Lab */}
-          <CollapsibleSection
-            id="sport"
-            title="Sport & Lab"
-            icon={<Zap color={palette.gold} size={14} />}
-            expanded={isExpanded("sport")}
-            onToggle={toggleSection}
-          >
-            <Text style={styles.sectionHint}>Primary sport</Text>
-            {sports.map((opt) => (
-              <OptionChip key={opt.id} option={opt} selected={sport === opt.id} onPress={setSport} />
-            ))}
-            <Text style={[styles.sectionHint, { marginTop: 10 }]}>Forge lab</Text>
-            {labs.map((opt) => (
-              <OptionChip key={opt.id} option={opt} selected={lab === opt.id} onPress={setLab} />
-            ))}
-          </CollapsibleSection>
-
-          {/* Error */}
           {forgeError ? <Text style={styles.errorText}>{forgeError}</Text> : null}
 
-          {/* Forge cost — above CTA */}
           <View style={styles.costPreview}>
             <Zap color={palette.gold} size={16} />
-            <Text style={styles.costPreviewLabel}>Forge Cost</Text>
+            <Text style={styles.costPreviewLabel}>{isLastStep ? "Forge Cost" : "Final Forge Cost"}</Text>
             <Text style={styles.costPreviewValue}>{forgeCost} Edge</Text>
           </View>
 
           <View style={styles.bottomSpacer} />
         </ScrollView>
 
-        {/* ── Sticky CTA ── */}
         <View style={styles.ctaContainer}>
-          <LinearGradient
-            colors={["rgba(2,4,10,0.0)", "rgba(2,4,10,0.92)", palette.void]}
-            style={styles.ctaFade}
-            pointerEvents="none"
-          />
-          <Pressable
-            onPress={handleForge}
-            disabled={isGenerating || !canCreate}
-            style={({ pressed }) => [
-              styles.ctaButton,
-              (!canCreate || isGenerating) && styles.disabledButton,
-              pressed && styles.pressed,
-            ]}
-          >
-            <LinearGradient
-              colors={[palette.cyan, "rgba(61,165,255,0.85)"]}
-              style={StyleSheet.absoluteFill}
-            />
-            {isGenerating ? (
-              <ActivityIndicator color={palette.void} />
-            ) : (
-              <>
-                <Sparkles color={palette.void} size={18} />
-                <Text style={styles.ctaButtonText}>
-                  {canCreate ? "REVIEW & CONFIRM" : `Tier limit (${maxEagohs} max)`}
-                </Text>
-              </>
-            )}
-          </Pressable>
+          <LinearGradient colors={["rgba(2,4,10,0.0)", "rgba(2,4,10,0.92)", palette.void]} style={styles.ctaFade} pointerEvents="none" />
+          <View style={styles.ctaRow}>
+            <Pressable onPress={goBack} disabled={currentStepIndex === 0 || isGenerating} style={({ pressed }) => [styles.backButton, (currentStepIndex === 0 || isGenerating) && styles.disabledButton, pressed && styles.pressed]}>
+              <Text style={styles.backButtonText}>Back</Text>
+            </Pressable>
+            <Pressable
+              onPress={handlePrimaryAction}
+              disabled={isGenerating || !canCreate}
+              style={({ pressed }) => [styles.ctaButton, (!canCreate || isGenerating) && styles.disabledButton, pressed && styles.pressed]}
+            >
+              <LinearGradient colors={[palette.cyan, "rgba(61,165,255,0.85)"]} style={StyleSheet.absoluteFill} />
+              {isGenerating ? (
+                <ActivityIndicator color={palette.void} />
+              ) : (
+                <>
+                  <Sparkles color={palette.void} size={18} />
+                  <Text style={styles.ctaButtonText}>{!canCreate ? `Tier limit (${maxEagohs} max)` : isLastStep ? "REVIEW & CONFIRM" : "NEXT"}</Text>
+                </>
+              )}
+            </Pressable>
+          </View>
         </View>
 
-        {/* Confirmation overlay */}
         {pending ? (
           <ConfirmationSheet
             pending={pending}
@@ -765,7 +702,7 @@ export default function ForgeScreen(): JSX.Element {
             canAfford={edgeTotal >= pending.edgeCost}
           />
         ) : null}
-      </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -773,13 +710,7 @@ export default function ForgeScreen(): JSX.Element {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.void },
   root: { flex: 1, backgroundColor: palette.void },
-
-  // ── Preview area ──
-  previewArea: {
-    position: "relative",
-    marginHorizontal: 12,
-    marginTop: 6,
-  },
+  previewArea: { position: "relative", marginHorizontal: 12, marginTop: 6 },
   previewStage: {
     flex: 1,
     borderRadius: 5,
@@ -790,13 +721,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(3,6,11,0.6)",
   },
-  stageRing: {
-    position: "absolute",
-    width: "92%",
-    height: "88%",
-    borderRadius: 5,
-    borderWidth: 1,
-  },
+  stageRing: { position: "absolute", width: "92%", height: "88%", borderRadius: 5, borderWidth: 1 },
   glassDome: {
     width: 110,
     height: 120,
@@ -809,25 +734,17 @@ const styles = StyleSheet.create({
   },
   glassDomeInner: { width: 84, height: 90, borderRadius: 5, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   brainCore: { width: 54, height: 54, borderRadius: 5, alignItems: "center", justifyContent: "center" },
-  crack: { position: "absolute", top: 10, left: 12, width: 28, height: 2, transform: [{ rotate: "-28deg" }] },
-  crack2: { position: "absolute", bottom: 16, right: 10, width: 22, height: 2, transform: [{ rotate: "15deg" }] },
-  bodyFrame: {
-    width: 150,
-    height: 160,
-    borderRadius: 5,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-  },
+  crack: { position: "absolute", top: 10, left: 12, width: 28, height: 2, backgroundColor: "#4B5563", transform: [{ rotate: "-28deg" }] },
+  crack2: { position: "absolute", bottom: 16, right: 10, width: 22, height: 2, backgroundColor: "#4B5563", transform: [{ rotate: "15deg" }] },
+  bodyFrame: { width: 150, height: 160, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   neckConnector: { position: "absolute", top: -5, width: 20, height: 12, backgroundColor: "rgba(255,255,255,0.14)", borderRadius: 5 },
   shoulderLeft: { position: "absolute", top: 12, left: -16, width: 32, height: 68, borderRadius: 5 },
   shoulderRight: { position: "absolute", top: 12, right: -16, width: 32, height: 68, borderRadius: 5 },
   torsoCore: { width: 96, height: 100, borderRadius: 5, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   legLeft: { position: "absolute", bottom: -32, left: 32, width: 26, height: 56, borderRadius: 5 },
   legRight: { position: "absolute", bottom: -32, right: 32, width: 26, height: 56, borderRadius: 5 },
-  exposedWire: { position: "absolute", bottom: 34, left: 10, width: 16, height: 2, transform: [{ rotate: "35deg" }] },
-  exposedWire2: { position: "absolute", top: 44, right: 8, width: 12, height: 1.5, transform: [{ rotate: "-20deg" }] },
+  exposedWire: { position: "absolute", bottom: 34, left: 10, width: 16, height: 2, backgroundColor: "#4B5563", transform: [{ rotate: "35deg" }] },
+  exposedWire2: { position: "absolute", top: 44, right: 8, width: 12, height: 1.5, backgroundColor: "#4B5563", transform: [{ rotate: "-20deg" }] },
   tierChipFloat: {
     position: "absolute",
     top: 10,
@@ -842,55 +759,69 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.10)",
   },
-  tierChipFloatPaid: {
-    borderColor: "rgba(108,230,255,0.28)",
-    backgroundColor: "rgba(8,20,35,0.75)",
-  },
+  tierChipFloatPaid: { borderColor: "rgba(108,230,255,0.28)", backgroundColor: "rgba(8,20,35,0.75)" },
   tierChipFloatText: { color: palette.muted, fontSize: 9, fontWeight: "900", letterSpacing: 1.2 },
-
-  // ── Info strip ──
-  infoStrip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: palette.line,
-  },
+  infoStrip: { paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: palette.line },
   infoName: { color: palette.text, fontSize: 18, fontWeight: "900", letterSpacing: 0.6 },
-  infoMeta: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 },
+  infoMeta: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4, flexWrap: "wrap" },
   infoDomain: { color: palette.cyan, fontSize: 11, fontWeight: "800" },
   infoDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: palette.muted },
   infoShell: { color: palette.muted, fontSize: 10, fontWeight: "800", letterSpacing: 0.8 },
   infoSlots: { color: palette.muted, fontSize: 10, fontWeight: "700" },
-
-  // ── Sections ──
-  sectionsScroll: { flex: 1 },
-  sectionsContent: { paddingHorizontal: 12, paddingTop: 6, gap: 5 },
-  section: {
-    borderRadius: 5,
+  multiplier: { color: palette.gold, fontSize: 10, fontWeight: "900" },
+  stepperBar: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.06)" },
+  stepperTopRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 7 },
+  stepCounter: { color: palette.cyan, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
+  stepMiniTitle: { color: palette.text, fontSize: 12, fontWeight: "800", flex: 1 },
+  progressTrack: { height: 4, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.08)", overflow: "hidden" },
+  progressFill: { height: 4, borderRadius: 2, backgroundColor: palette.cyan },
+  stepDotsContent: { gap: 6, paddingTop: 8, paddingRight: 12 },
+  stepDot: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
     borderWidth: 1,
     borderColor: palette.line,
-    backgroundColor: "rgba(10,18,30,0.55)",
+    backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  stepDotActive: { borderColor: palette.cyan, backgroundColor: "rgba(54,245,255,0.16)" },
+  stepDotComplete: { borderColor: "rgba(43,214,127,0.45)", backgroundColor: "rgba(43,214,127,0.10)" },
+  stepDotText: { color: palette.muted, fontSize: 10, fontWeight: "900" },
+  stepDotTextActive: { color: palette.text },
+  wizardScroll: { flex: 1 },
+  wizardContent: { paddingHorizontal: 12, paddingTop: 8, gap: 8 },
+  wizardCard: {
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "rgba(54,245,255,0.18)",
+    backgroundColor: "rgba(10,18,30,0.62)",
     overflow: "hidden",
+    padding: 12,
   },
-  sectionHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  wizardHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
+  wizardIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 5,
     alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 11,
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.06)",
   },
-  sectionHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 8 },
-  sectionTitle: { color: palette.text, fontSize: 13, fontWeight: "800", letterSpacing: 0.2 },
-  sectionBody: { paddingHorizontal: 12, paddingBottom: 10, gap: 5 },
-  sectionHint: { color: palette.muted, fontSize: 10, fontWeight: "700", marginBottom: 2 },
-
-  // ── Options ──
+  wizardHeaderCopy: { flex: 1 },
+  wizardEyebrow: { color: palette.cyan, fontSize: 10, fontWeight: "900", letterSpacing: 1.6 },
+  wizardTitle: { color: palette.text, fontSize: 18, fontWeight: "900", letterSpacing: 0.4, marginTop: 1 },
+  wizardHint: { color: palette.muted, fontSize: 11, fontWeight: "700", lineHeight: 16, marginTop: 8 },
+  stepContent: { marginTop: 10, gap: 5 },
   optionsGrid: { gap: 4 },
   optionChip: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    minHeight: 40,
+    minHeight: 42,
     borderRadius: 5,
     paddingHorizontal: 10,
     paddingVertical: 6,
@@ -903,8 +834,8 @@ const styles = StyleSheet.create({
   optionCopy: { flex: 1 },
   optionLabel: { color: palette.text, fontSize: 12, fontWeight: "800" },
   optionDetail: { color: palette.muted, fontSize: 9, marginTop: 1 },
-
-  // ── Input ──
+  sectionHint: { color: palette.muted, fontSize: 10, fontWeight: "700", marginBottom: 2 },
+  labHint: { marginTop: 10 },
   input: {
     color: palette.text,
     fontSize: 13,
@@ -915,38 +846,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 9,
     backgroundColor: "rgba(3,6,11,0.35)",
-    minHeight: 40,
+    minHeight: 44,
   },
-
-  // ── Error ──
+  textArea: { minHeight: 92, textAlignVertical: "top" },
   errorText: { color: palette.ember, fontSize: 11, fontWeight: "800", textAlign: "center", paddingVertical: 4 },
-
-  // ── Cost preview (above CTA) ──
-  costPreview: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 4,
-    marginTop: 4,
-  },
+  costPreview: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8, paddingHorizontal: 4, marginTop: 2 },
   costPreviewLabel: { color: palette.muted, fontSize: 12, fontWeight: "800", flex: 1 },
   costPreviewValue: { color: palette.gold, fontSize: 16, fontWeight: "900" },
-
-  // ── Sticky CTA ──
-  ctaContainer: {
-    paddingHorizontal: 12,
-    paddingBottom: 12,
-    paddingTop: 0,
+  ctaContainer: { paddingHorizontal: 12, paddingBottom: 12, paddingTop: 0 },
+  ctaFade: { position: "absolute", top: -20, left: 0, right: 0, height: 20 },
+  ctaRow: { flexDirection: "row", gap: 10 },
+  backButton: {
+    width: 88,
+    minHeight: 54,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  ctaFade: {
-    position: "absolute",
-    top: -20,
-    left: 0,
-    right: 0,
-    height: 20,
-  },
+  backButtonText: { color: palette.muted, fontSize: 13, fontWeight: "900", letterSpacing: 0.8 },
   ctaButton: {
+    flex: 1,
     minHeight: 54,
     borderRadius: 5,
     overflow: "hidden",
@@ -963,8 +885,6 @@ const styles = StyleSheet.create({
   disabledButton: { opacity: 0.45 },
   pressed: { transform: [{ scale: 0.985 }], opacity: 0.88 },
   bottomSpacer: { height: 8 },
-
-  // ── Confirmation overlay ──
   confirmOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(2,4,10,0.90)",

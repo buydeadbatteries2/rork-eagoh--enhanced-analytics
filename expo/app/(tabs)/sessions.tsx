@@ -42,7 +42,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useEagohs } from "@/providers/EagohProvider";
-import { INTELLIGENCE_DOMAINS, isPromptInDomain, getDomainRejection } from "@/services/domains";
+import { INTELLIGENCE_DOMAINS, getDomainColor } from "@/services/domains";
+import { guardDomainRequest } from "@/services/domainGuard";
 import { getQuickCheckCost, runQuickCheck, type AnalystRequestKind } from "@/services/analyst";
 import type { EagohRecord } from "@/services/eagohs";
 
@@ -278,7 +279,8 @@ function SessionSetup({
   const cost = session.id === "quick-check" && prompt ? getQuickCheckCost(prompt) : session.minCost;
   const { total: edgeTotal } = useEdge();
   const canAfford = edgeTotal >= cost;
-  const isDomainMatch = !prompt || !selectedEagoh?.domain || isPromptInDomain(prompt, selectedEagoh.domain);
+  const domainGuardResult = !prompt || !selectedEagoh?.domain ? null : guardDomainRequest(selectedEagoh.domain, prompt);
+  const isDomainMatch = !domainGuardResult || domainGuardResult.ok;
 
   const handleStart = useCallback((): void => {
     if (!selectedEagohId || !prompt.trim()) return;
@@ -335,12 +337,12 @@ function SessionSetup({
 
       {/* Domain check */}
       {selectedEagoh && domain ? (
-        <View style={[styles.domainBanner, { borderColor: `${toneColor(domain.tone)}33`, backgroundColor: `${toneColor(domain.tone)}0A` }]}>
-          <BrainCircuit color={toneColor(domain.tone)} size={14} />
+        <View style={[styles.domainBanner, { borderColor: isDomainMatch ? "rgba(0,255,178,0.30)" : "rgba(255,107,53,0.30)", backgroundColor: isDomainMatch ? "rgba(0,255,178,0.06)" : "rgba(255,107,53,0.06)" }]}>
+          <BrainCircuit color={isDomainMatch ? palette.success : palette.ember} size={14} />
           <View style={styles.domainBannerText}>
-            <Text style={[styles.domainBannerTitle, { color: toneColor(domain.tone) }]}>{domain.label}</Text>
+            <Text style={[styles.domainBannerTitle, { color: isDomainMatch ? palette.success : palette.ember }]}>{domain.label}</Text>
             <Text style={styles.domainBannerDesc}>
-              {isDomainMatch ? "Within domain." : getDomainRejection(selectedEagoh.domain ?? "")}
+              {isDomainMatch ? "Within domain — ready." : (domainGuardResult && !domainGuardResult.ok ? domainGuardResult.rejectionMessage : "Domain mismatch.")}
             </Text>
           </View>
         </View>
@@ -402,11 +404,12 @@ function ActiveChat({
         return;
       }
 
-      if (eagoh.domain && !isPromptInDomain(prompt, eagoh.domain)) {
+      const domainCheck = guardDomainRequest(eagoh.domain, prompt);
+      if (!domainCheck.ok) {
         setMessages((prev) => [...prev, {
           id: `a-domain-${Date.now()}`,
           sender: "analyst",
-          text: getDomainRejection(eagoh.domain ?? ""),
+          text: domainCheck.rejectionMessage,
           confidence: 0,
         }]);
         setIsTyping(false);
@@ -440,6 +443,21 @@ function ActiveChat({
       }
       setIsTyping(false);
       return;
+    }
+
+    // Domain guard check for non-Quick-Check sessions too
+    if (eagoh.domain) {
+      const domainCheck = guardDomainRequest(eagoh.domain, prompt);
+      if (!domainCheck.ok) {
+        setMessages((prev) => [...prev, {
+          id: `a-domain-${Date.now()}`,
+          sender: "analyst",
+          text: domainCheck.rejectionMessage,
+          confidence: 0,
+        }]);
+        setIsTyping(false);
+        return;
+      }
     }
 
     setMessages((prev) => [...prev, {

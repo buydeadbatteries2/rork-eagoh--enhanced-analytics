@@ -4,6 +4,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import { Activity, Award, BadgeCheck, BarChart3, BrainCircuit, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Shield, Sparkles, Swords, TrendingUp, Trophy, WalletCards, Zap } from "lucide-react-native";
+import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -289,6 +290,37 @@ export default function ProfileScreen(): JSX.Element {
       return (
         <View>
           <View style={styles.statGrid}>{reputationStats.map((stat) => <StatCard key={stat.label} item={stat} />)}</View>
+          {/* Domain breakdown */}
+          {eagohs.length > 0 && (
+            <View style={styles.domainPanel}>
+              <SectionTitle eyebrow="DOMAIN SPECIALIZATION" title="My Intelligence Domains" />
+              <View style={styles.domainGrid}>
+                {(() => {
+                  const domainCounts = new Map<string, number>();
+                  const domainMap = new Map<string, typeof INTELLIGENCE_DOMAINS[number]>();
+                  eagohs.forEach((e) => {
+                    const d = e.domain ?? "unknown";
+                    domainCounts.set(d, (domainCounts.get(d) ?? 0) + 1);
+                    if (!domainMap.has(d)) {
+                      const info = INTELLIGENCE_DOMAINS.find((di) => di.id === d);
+                      if (info) domainMap.set(d, info);
+                    }
+                  });
+                  return Array.from(domainCounts.entries()).map(([domainId, count]) => {
+                    const info = domainMap.get(domainId);
+                    const color = info?.color ?? palette.muted;
+                    return (
+                      <View key={domainId} style={[styles.domainChip, { borderColor: `${color}44`, backgroundColor: `${color}16` }]}>
+                        <View style={[styles.domainDot, { backgroundColor: color }]} />
+                        <Text style={[styles.domainChipLabel, { color }]}>{info?.label ?? domainId}</Text>
+                        <Text style={styles.domainChipCount}>{count} EAGOH{count > 1 ? "s" : ""}</Text>
+                      </View>
+                    );
+                  });
+                })()}
+              </View>
+            </View>
+          )}
           {/* Expanded reputation breakdown */}
           {reputation && (
             <View style={styles.reputationPanel}>
@@ -644,6 +676,13 @@ const styles = StyleSheet.create({
   badgeName: { color: palette.gold, fontSize: 13, fontWeight: "900" as const },
   badgeDesc: { color: palette.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
   signOutButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 14, paddingVertical: 12, borderRadius: 5, borderWidth: 1, borderColor: "rgba(255,107,53,0.32)", backgroundColor: "rgba(255,107,53,0.08)" },
+  // Domain breakdown
+  domainPanel: { borderRadius: 5, padding: 14, marginTop: 14, backgroundColor: "rgba(10,18,30,0.82)", borderWidth: 1, borderColor: "rgba(54,245,255,0.18)", gap: 10 },
+  domainGrid: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: 8 },
+  domainChip: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 5, borderWidth: 1 },
+  domainDot: { width: 8, height: 8, borderRadius: 4 },
+  domainChipLabel: { fontSize: 11, fontWeight: "900" as const },
+  domainChipCount: { color: palette.muted, fontSize: 10, fontWeight: "800" as const, marginLeft: 2 },
   signOutText: { color: palette.ember, fontWeight: "900", fontSize: 13, letterSpacing: 1.2 },
   // Rankings
   rankingsSection: { marginTop: 8, paddingTop: 10, borderTopWidth: 1, borderTopColor: palette.line },

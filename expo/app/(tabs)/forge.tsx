@@ -465,7 +465,11 @@ export default function ForgeScreen(): JSX.Element {
     if (currentStep.id === "domain") {
       return (
         <>
-          <Text style={styles.sectionHint}>Each EAGOH answers only within its chosen domain.</Text>
+          <Text style={styles.sectionHint}>Each EAGOH is a domain specialist. This choice is permanent after Forge — you cannot change it later. To cover another domain, forge a new EAGOH.</Text>
+          <View style={styles.permanenceNote}>
+            <Text style={styles.permanenceIcon}>!</Text>
+            <Text style={styles.permanenceText}>Domain Lock: Permanent after Forge. One EAGOH = One Domain.</Text>
+          </View>
           <View style={styles.optionsGrid}>
             {INTELLIGENCE_DOMAINS.map((d) => (
               <OptionChip
@@ -835,6 +839,9 @@ const styles = StyleSheet.create({
   optionLabel: { color: palette.text, fontSize: 12, fontWeight: "800" },
   optionDetail: { color: palette.muted, fontSize: 9, marginTop: 1 },
   sectionHint: { color: palette.muted, fontSize: 10, fontWeight: "700", marginBottom: 2 },
+  permanenceNote: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 5, backgroundColor: "rgba(255,184,77,0.12)", borderWidth: 1, borderColor: "rgba(255,184,77,0.30)", marginBottom: 4 },
+  permanenceIcon: { color: palette.gold, fontSize: 16, fontWeight: "900" },
+  permanenceText: { color: palette.gold, fontSize: 10, fontWeight: "800", flex: 1 },
   labHint: { marginTop: 10 },
   input: {
     color: palette.text,

@@ -3,6 +3,7 @@ import * as Haptics from "expo-haptics";
 import {
   Award,
   BarChart3,
+  BrainCircuit,
   Calendar,
   ChevronRight,
   Coins,
@@ -34,6 +35,7 @@ import { useAuth } from "@/providers/AuthProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useEagohs } from "@/providers/EagohProvider";
 import { useProfile } from "@/providers/ProfileProvider";
+import { INTELLIGENCE_DOMAINS, getDomainColor } from "@/services/domains";
 import {
   computeBannerCost,
   getActiveBanners,
@@ -50,7 +52,7 @@ import type { ReputationRow } from "@/services/reputation";
 
 type Phase = "loading" | "onboarding" | "auth" | "app";
 type CardTone = "cyan" | "gold" | "violet" | "ember" | "success";
-type HomeSection = { id: string; kind: "hero" | "sponsored" | "trending" | "feed" | "analyst" | "quickcheck" | "recent" | "favorites" | "labs" | "factions" | "leaderboards" };
+type HomeSection = { id: string; kind: "hero" | "sponsored" | "trending" | "feed" | "analyst" | "quickcheck" | "recent" | "favorites" | "labs" | "factions" | "leaderboards" | "domains" };
 type CardProps = { title: string; subtitle: string; meta?: string; tone?: "cyan" | "gold" | "violet"; icon?: React.ReactNode };
 
 type EagohItem = { id: string; name: string; metric: string; trend: string; accent: CardTone };
@@ -72,6 +74,7 @@ const stats = [
 const homeSections: HomeSection[] = [
   { id: "hero", kind: "hero" },
   { id: "sponsored", kind: "sponsored" },
+  { id: "domains", kind: "domains" },
   { id: "leaderboards", kind: "leaderboards" },
   { id: "labs", kind: "labs" },
   { id: "trending", kind: "trending" },
@@ -626,10 +629,50 @@ const LeaderboardsFeatureCard = React.memo(function LeaderboardsFeatureCard(): J
   );
 });
 
+function HomeDomainsSection(): JSX.Element {
+  const { eagohs } = useEagohs();
+  if (!eagohs || eagohs.length === 0) {
+    return (
+      <View>
+        <SectionHeader eyebrow="MY DOMAINS" title="Domain Coverage" action="Forge first" />
+        <View style={styles.emptyBannerCard}>
+          <BrainCircuit color={palette.muted} size={28} />
+          <Text style={styles.emptyBannerText}>Forge an EAGOH to unlock domain intelligence. Each EAGOH specializes in one domain.</Text>
+        </View>
+      </View>
+    );
+  }
+  const domainCounts = new Map<string, number>();
+  eagohs.forEach((e) => {
+    const d = e.domain ?? "unknown";
+    domainCounts.set(d, (domainCounts.get(d) ?? 0) + 1);
+  });
+  return (
+    <View>
+      <SectionHeader eyebrow="MY DOMAINS" title="Domain Coverage" action={`${eagohs.length} EAGOHs`} />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.domainRail} {...HORIZONTAL_LIST_PERFORMANCE_PROPS}>
+        {Array.from(domainCounts.entries()).map(([domainId, count]) => {
+          const info = INTELLIGENCE_DOMAINS.find((d) => d.id === domainId);
+          const color = info?.color ?? palette.muted;
+          return (
+            <View key={domainId} style={[styles.domainCard, { borderColor: `${color}44` }]}>
+              <View style={[styles.domainCardGlow, { backgroundColor: `${color}18` }]} />
+              <View style={[styles.domainCardDot, { backgroundColor: color }]} />
+              <Text style={[styles.domainCardLabel, { color }]}>{info?.label ?? domainId}</Text>
+              <Text style={styles.domainCardCount}>{count}</Text>
+            </View>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+}
+
 function HomeApp({ userId, onPromote }: { userId: string | null; onPromote: () => void }): JSX.Element {
   const renderSection = useCallback(({ item }: { item: HomeSection }) => {
     if (item.kind === "hero") return <HeroSection />;
     if (item.kind === "sponsored") return <SponsoredSection userId={userId} />;
+    if (item.kind === "domains") return <HomeDomainsSection />;
     if (item.kind === "leaderboards") return <View><SectionHeader eyebrow="RANKINGS" title="EAGOH Leaderboards" action="View all" /><LeaderboardsFeatureCard /></View>;
     if (item.kind === "trending") return <View><SectionHeader eyebrow="MARKET HEAT" title="Trending EAGOHs" action="Mock" /><EagohRail items={trendingEagohs} /></View>;
     if (item.kind === "feed") return <ActivityFeed />;
@@ -998,6 +1041,13 @@ const styles = StyleSheet.create({
   loadingRow: { minHeight: 80, alignItems: "center", justifyContent: "center" },
   emptyBannerCard: { minHeight: 88, borderRadius: 5, borderWidth: 1, borderColor: palette.line, borderStyle: "dashed", alignItems: "center", justifyContent: "center", gap: 8, padding: 16 },
   emptyBannerText: { color: palette.muted, fontSize: 13, textAlign: "center", lineHeight: 18, fontWeight: "700" },
+  // Domain cards
+  domainRail: { gap: 10, paddingRight: 18, paddingVertical: 4 },
+  domainCard: { borderRadius: 5, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: "rgba(10,20,35,0.55)", alignItems: "center", gap: 4, minWidth: 72, overflow: "hidden" as const },
+  domainCardGlow: { position: "absolute" as const, top: 0, left: 0, right: 0, bottom: 0 },
+  domainCardDot: { width: 8, height: 8, borderRadius: 4 },
+  domainCardLabel: { fontSize: 11, fontWeight: "900" as const },
+  domainCardCount: { color: palette.muted, fontSize: 20, fontWeight: "900" as const },
   promoteBannerButton: {
     marginTop: 4,
     minHeight: 48,

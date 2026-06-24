@@ -35,7 +35,7 @@ import {
   type MemberStatus,
   type FactionRole,
 } from "@/services/factions";
-import { INTELLIGENCE_DOMAINS } from "@/services/domains";
+import { INTELLIGENCE_DOMAINS, getDomainColor } from "@/services/domains";
 import { getBulkReputations, rankColor as repRankColor, RANK_TIERS, type RankTier } from "@/services/reputation";
 import type { ReputationRow } from "@/services/reputation";
 import { supabase } from "@/lib/supabase";
@@ -323,7 +323,15 @@ function FactionCard({
       <View style={styles.metricRow}>
         <Metric label="Members" value={`${faction.current_members}/${faction.max_members}`} />
         <Metric label="Influence" value={`${faction.influence_score}`} />
-        <Metric label="Domain" value={faction.intelligence_domain} />
+        <View style={styles.domainMetric}>
+          <Text style={styles.domainMetricLabel}>Domain</Text>
+          <View style={[styles.domainBadgeSmall, { backgroundColor: `${getDomainColor(faction.intelligence_domain)}18`, borderColor: `${getDomainColor(faction.intelligence_domain)}33` }]}>
+            <View style={[styles.domainDotSmall, { backgroundColor: getDomainColor(faction.intelligence_domain) }]} />
+            <Text style={[styles.domainBadgeSmallText, { color: getDomainColor(faction.intelligence_domain) }]}>
+              {INTELLIGENCE_DOMAINS.find((d) => d.id === faction.intelligence_domain)?.label ?? faction.intelligence_domain}
+            </Text>
+          </View>
+        </View>
       </View>
 
       {status && (
@@ -1298,6 +1306,12 @@ const styles = StyleSheet.create({
   factionTitleWrap: { flex: 1, gap: 3 },
   factionName: { color: palette.text, fontSize: 17, fontWeight: "900" as const },
   factionMotto: { color: palette.muted, fontSize: 11, fontWeight: "700" as const, fontStyle: "italic" as const },
+  // Domain display
+  domainMetric: { paddingVertical: 8 },
+  domainMetricLabel: { color: palette.muted, fontSize: 10, fontWeight: "900" as const, marginBottom: 4 },
+  domainBadgeSmall: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 5, borderWidth: 1, alignSelf: "flex-start" as const },
+  domainDotSmall: { width: 6, height: 6, borderRadius: 3 },
+  domainBadgeSmallText: { fontSize: 11, fontWeight: "900" as const },
   roleBadge: {
     alignSelf: "flex-start",
     paddingHorizontal: 8,

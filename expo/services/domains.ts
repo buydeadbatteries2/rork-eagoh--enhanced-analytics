@@ -13,19 +13,20 @@ export type IntelligenceDomain = {
   description: string;
   icon: string; // lucide icon name for UI rendering
   tone: "cyan" | "gold" | "violet" | "ember" | "success";
+  color: string; // brand-accent hex for domain badges / accents
 };
 
 export const INTELLIGENCE_DOMAINS: IntelligenceDomain[] = [
-  { id: "sports", label: "Sports", description: "Game analysis, player performance, tactical breakdowns, and athletic intelligence.", icon: "Trophy", tone: "gold" },
-  { id: "music", label: "Music", description: "Genre analysis, artist insights, production techniques, and sound culture.", icon: "Music", tone: "violet" },
-  { id: "film-tv", label: "Film & Television", description: "Screen analysis, narrative structure, character study, and visual storytelling.", icon: "Film", tone: "ember" },
-  { id: "fashion", label: "Fashion", description: "Style analysis, trend forecasting, design language, and aesthetic intelligence.", icon: "Shirt", tone: "cyan" },
-  { id: "education", label: "Education", description: "Learning systems, curriculum design, knowledge transfer, and academic strategy.", icon: "GraduationCap", tone: "success" },
-  { id: "gaming", label: "Gaming", description: "Game mechanics, meta analysis, esports strategy, and interactive design.", icon: "Gamepad2", tone: "violet" },
-  { id: "business", label: "Business", description: "Market strategy, operations, entrepreneurship, and commercial intelligence.", icon: "Briefcase", tone: "gold" },
-  { id: "finance", label: "Finance", description: "Market analysis, investment strategy, risk assessment, and economic insight.", icon: "LineChart", tone: "success" },
-  { id: "technology", label: "Technology", description: "Software architecture, hardware analysis, emerging tech, and digital strategy.", icon: "Cpu", tone: "cyan" },
-  { id: "health-fitness", label: "Health & Fitness", description: "Training science, nutrition strategy, biometric analysis, and wellness intelligence.", icon: "Heart", tone: "ember" },
+  { id: "sports", label: "Sports", description: "Game analysis, player performance, tactical breakdowns, and athletic intelligence.", icon: "Trophy", tone: "gold", color: "#3B82F6" },
+  { id: "music", label: "Music", description: "Genre analysis, artist insights, production techniques, and sound culture.", icon: "Music", tone: "violet", color: "#A855F7" },
+  { id: "film-tv", label: "Film & Television", description: "Screen analysis, narrative structure, character study, and visual storytelling.", icon: "Film", tone: "ember", color: "#EF4444" },
+  { id: "fashion", label: "Fashion", description: "Style analysis, trend forecasting, design language, and aesthetic intelligence.", icon: "Shirt", tone: "cyan", color: "#F59E0B" },
+  { id: "education", label: "Education", description: "Learning systems, curriculum design, knowledge transfer, and academic strategy.", icon: "GraduationCap", tone: "success", color: "#22C55E" },
+  { id: "gaming", label: "Gaming", description: "Game mechanics, meta analysis, esports strategy, and interactive design.", icon: "Gamepad2", tone: "violet", color: "#06B6D4" },
+  { id: "business", label: "Business", description: "Market strategy, operations, entrepreneurship, and commercial intelligence.", icon: "Briefcase", tone: "gold", color: "#94A3B8" },
+  { id: "finance", label: "Finance", description: "Market analysis, investment strategy, risk assessment, and economic insight.", icon: "LineChart", tone: "success", color: "#10B981" },
+  { id: "technology", label: "Technology", description: "Software architecture, hardware analysis, emerging tech, and digital strategy.", icon: "Cpu", tone: "cyan", color: "#0EA5E9" },
+  { id: "health-fitness", label: "Health & Fitness", description: "Training science, nutrition strategy, biometric analysis, and wellness intelligence.", icon: "Heart", tone: "ember", color: "#F97316" },
 ];
 
 /** Look up a domain by id. Returns undefined for unknown ids. */
@@ -46,6 +47,12 @@ export function isPromptInDomain(prompt: string, domainId: string): boolean {
   if (keywords.length === 0) return true; // unknown domain → allow
 
   return keywords.some((kw) => lower.includes(kw));
+}
+
+/** Get the brand-accent hex color for a domain. */
+export function getDomainColor(domainId: string): string {
+  const domain = getDomain(domainId);
+  return domain?.color ?? "#6B7280";
 }
 
 /** Generate a polite out-of-domain rejection message. */

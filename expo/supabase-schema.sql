@@ -442,6 +442,112 @@ create policy "fsp_self_insert" on public.faction_slot_purchases
   for insert with check (auth.uid() = user_id);
 
 -- =====================================================================
+-- MARKETPLACE LISTINGS (EAGOHs listed for sync sale by vendors)
+-- =====================================================================
+create table if not exists public.marketplace_listings (
+  id uuid primary key default gen_random_uuid(),
+  vendor_id uuid not null references auth.users(id) on delete cascade,
+  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
+  active boolean not null default true,
+  price_25_per_day int not null default 0,
+  price_50_per_day int not null default 0,
+  price_75_per_day int not null default 0,
+  price_100_per_day int not null default 0,
+  description text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists ml_vendor_idx on public.marketplace_listings(vendor_id);
+create index if not exists ml_eagoh_idx on public.marketplace_listings(eagoh_id);
+create index if not exists ml_active_idx on public.marketplace_listings(active) where active = true;
+
+alter table public.marketplace_listings enable row level security;
+
+drop policy if exists "ml_select_all" on public.marketplace_listings;
+drop policy if exists "ml_vendor_insert" on public.marketplace_listings;
+drop policy if exists "ml_vendor_update" on public.marketplace_listings;
+drop policy if exists "ml_vendor_delete" on public.marketplace_listings;
+
+create policy "ml_select_all" on public.marketplace_listings
+  for select using (active = true or auth.uid() = vendor_id);
+
+create policy "ml_vendor_insert" on public.marketplace_listings
+  for insert with check (auth.uid() = vendor_id);
+
+create policy "ml_vendor_update" on public.marketplace_listings
+  for update using (auth.uid() = vendor_id);
+
+create policy "ml_vendor_delete" on public.marketplace_listings
+  for delete using (auth.uid() = vendor_id);
+
+-- =====================================================================
+-- MARKETPLACE SYNC PURCHASES
+-- =====================================================================
+create table if not exists public.marketplace_sync_purchases (
+  id uuid primary key default gen_random_uuid(),
+  listing_id uuid not null references public.marketplace_listings(id) on delete cascade,
+  buyer_id uuid not null references auth.users(id) on delete cascade,
+  vendor_id uuid not null references auth.users(id) on delete cascade,
+  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
+  sync_level text not null check (sync_level in ('25%', '50%', '75%', '100%')),
+  days int not null check (days between 1 and 5),
+  edge_cost int not null,
+  started_at timestamptz default now(),
+  expires_at timestamptz not null,
+  active boolean not null default true,
+  created_at timestamptz default now()
+);
+
+create index if not exists msp_buyer_idx on public.marketplace_sync_purchases(buyer_id, created_at desc);
+create index if not exists msp_vendor_idx on public.marketplace_sync_purchases(vendor_id, created_at desc);
+create index if not exists msp_expires_idx on public.marketplace_sync_purchases(expires_at) where active = true;
+create index if not exists msp_active_idx on public.marketplace_sync_purchases(buyer_id, eagoh_id, active);
+
+alter table public.marketplace_sync_purchases enable row level security;
+
+drop policy if exists "msp_self_select" on public.marketplace_sync_purchases;
+drop policy if exists "msp_self_insert" on public.marketplace_sync_purchases;
+
+create policy "msp_self_select" on public.marketplace_sync_purchases
+  for select using (auth.uid() = buyer_id or auth.uid() = vendor_id);
+
+create policy "msp_self_insert" on public.marketplace_sync_purchases
+  for insert with check (auth.uid() = buyer_id);
+
+-- =====================================================================
+-- MARKETPLACE VENDOR STATS
+-- =====================================================================
+create table if not exists public.marketplace_vendor_stats (
+  vendor_id uuid primary key references auth.users(id) on delete cascade,
+  total_listings int default 0,
+  active_listings int default 0,
+  total_sales int default 0,
+  total_edge_earned int default 0,
+  edge_earned_this_month int default 0,
+  edge_earned_last_month int default 0,
+  month_key text not null default '',
+  sync_success_score int default 0,
+  avg_quality_score int default 0,
+  rank text default 'UNRANKED',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists mvs_rank_idx on public.marketplace_vendor_stats(rank);
+
+alter table public.marketplace_vendor_stats enable row level security;
+
+drop policy if exists "mvs_select_all" on public.marketplace_vendor_stats;
+drop policy if exists "mvs_vendor_insert" on public.marketplace_vendor_stats;
+
+create policy "mvs_select_all" on public.marketplace_vendor_stats
+  for select using (true);
+
+create policy "mvs_vendor_insert" on public.marketplace_vendor_stats
+  for insert with check (auth.uid() = vendor_id);
+
+-- =====================================================================
 -- STORAGE BUCKET: eagoh-renders (public read, owner write)
 -- Optional: rendered images are already CDN-hosted; the bucket is here
 -- for projects that want to mirror copies into Supabase Storage.
@@ -449,3 +555,110 @@ create policy "fsp_self_insert" on public.faction_slot_purchases
 insert into storage.buckets (id, name, public)
   values ('eagoh-renders', 'eagoh-renders', true)
   on conflict (id) do nothing;
+
+-- =====================================================================
+-- MARKETPLACE LISTINGS (EAGOHs listed for sync sale by vendors)
+-- =====================================================================
+create table if not exists public.marketplace_listings (
+  id uuid primary key default gen_random_uuid(),
+  vendor_id uuid not null references auth.users(id) on delete cascade,
+  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
+  active boolean not null default true,
+  price_25_per_day int not null default 0,
+  price_50_per_day int not null default 0,
+  price_75_per_day int not null default 0,
+  price_100_per_day int not null default 0,
+  description text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists ml_vendor_idx on public.marketplace_listings(vendor_id);
+create index if not exists ml_eagoh_idx on public.marketplace_listings(eagoh_id);
+create index if not exists ml_active_idx on public.marketplace_listings(active) where active = true;
+
+-- Allow anyone to browse active listings, but only vendors can modify theirs.
+alter table public.marketplace_listings enable row level security;
+
+drop policy if exists "ml_select_all" on public.marketplace_listings;
+drop policy if exists "ml_vendor_insert" on public.marketplace_listings;
+drop policy if exists "ml_vendor_update" on public.marketplace_listings;
+drop policy if exists "ml_vendor_delete" on public.marketplace_listings;
+
+create policy "ml_select_all" on public.marketplace_listings
+  for select using (active = true or auth.uid() = vendor_id);
+
+create policy "ml_vendor_insert" on public.marketplace_listings
+  for insert with check (auth.uid() = vendor_id);
+
+create policy "ml_vendor_update" on public.marketplace_listings
+  for update using (auth.uid() = vendor_id);
+
+create policy "ml_vendor_delete" on public.marketplace_listings
+  for delete using (auth.uid() = vendor_id);
+
+-- =====================================================================
+-- MARKETPLACE SYNC PURCHASES (buyer syncs vendor EAGOH)
+-- =====================================================================
+create table if not exists public.marketplace_sync_purchases (
+  id uuid primary key default gen_random_uuid(),
+  listing_id uuid not null references public.marketplace_listings(id) on delete cascade,
+  buyer_id uuid not null references auth.users(id) on delete cascade,
+  vendor_id uuid not null references auth.users(id) on delete cascade,
+  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
+  sync_level text not null check (sync_level in ('25%', '50%', '75%', '100%')),
+  days int not null check (days between 1 and 5),
+  edge_cost int not null,
+  started_at timestamptz default now(),
+  expires_at timestamptz not null,
+  active boolean not null default true,
+  created_at timestamptz default now()
+);
+
+create index if not exists msp_buyer_idx on public.marketplace_sync_purchases(buyer_id, created_at desc);
+create index if not exists msp_vendor_idx on public.marketplace_sync_purchases(vendor_id, created_at desc);
+create index if not exists msp_expires_idx on public.marketplace_sync_purchases(expires_at) where active = true;
+create index if not exists msp_active_idx on public.marketplace_sync_purchases(buyer_id, eagoh_id, active);
+
+alter table public.marketplace_sync_purchases enable row level security;
+
+drop policy if exists "msp_self_select" on public.marketplace_sync_purchases;
+drop policy if exists "msp_self_insert" on public.marketplace_sync_purchases;
+
+create policy "msp_self_select" on public.marketplace_sync_purchases
+  for select using (auth.uid() = buyer_id or auth.uid() = vendor_id);
+
+create policy "msp_self_insert" on public.marketplace_sync_purchases
+  for insert with check (auth.uid() = buyer_id);
+
+-- =====================================================================
+-- MARKETPLACE VENDOR STATS (aggregated vendor metrics)
+-- =====================================================================
+create table if not exists public.marketplace_vendor_stats (
+  vendor_id uuid primary key references auth.users(id) on delete cascade,
+  total_listings int default 0,
+  active_listings int default 0,
+  total_sales int default 0,
+  total_edge_earned int default 0,
+  edge_earned_this_month int default 0,
+  edge_earned_last_month int default 0,
+  month_key text not null default '',
+  sync_success_score int default 0,
+  avg_quality_score int default 0,
+  rank text default 'UNRANKED',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists mvs_rank_idx on public.marketplace_vendor_stats(rank);
+
+alter table public.marketplace_vendor_stats enable row level security;
+
+drop policy if exists "mvs_select_all" on public.marketplace_vendor_stats;
+drop policy if exists "mvs_vendor_insert" on public.marketplace_vendor_stats;
+
+create policy "mvs_select_all" on public.marketplace_vendor_stats
+  for select using (true);
+
+create policy "mvs_vendor_insert" on public.marketplace_vendor_stats
+  for insert with check (auth.uid() = vendor_id);

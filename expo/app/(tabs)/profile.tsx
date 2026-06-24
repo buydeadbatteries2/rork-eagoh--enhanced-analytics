@@ -2,6 +2,7 @@ import { palette } from "@/constants/colors";
 import { LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/components/PerformancePrimitives";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
+import { useRouter } from "expo-router";
 import { Activity, BadgeCheck, BarChart3, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Shield, Sparkles, Swords, TrendingUp, WalletCards, Zap } from "lucide-react-native";
 import React, { memo, useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
@@ -199,6 +200,7 @@ const LabCard = memo(function LabCard({ item, selected, onPress }: { item: LabEn
 
 export default function ProfileScreen(): JSX.Element {
   const { user, signOut, signOutState } = useAuth();
+  const router = useRouter();
   const handleSignOut = useCallback((): void => {
     Haptics.selectionAsync().catch(() => undefined);
     signOut().catch((e) => console.warn("[auth] signOut failed", e));
@@ -229,10 +231,18 @@ export default function ProfileScreen(): JSX.Element {
       return <View style={styles.statGrid}>{stats.map((stat) => <StatCard key={stat.label} item={stat} />)}</View>;
     }
     if (item.kind === "features") {
+      const handleLabsPress = (): void => {
+        Haptics.selectionAsync().catch(() => undefined);
+        router.push("/(tabs)/labs" as never);
+      };
+      const handleFactionsPress = (): void => {
+        Haptics.selectionAsync().catch(() => undefined);
+        router.push("/(tabs)/factions" as never);
+      };
       return (
         <View style={styles.panel}>
           <SectionTitle eyebrow="FEATURES" title="Labs & Factions" />
-          <View style={styles.featureCard}>
+          <Pressable onPress={handleLabsPress} style={({ pressed }) => [styles.featureCard, pressed && { opacity: 0.8 }]}>
             <View style={[styles.featureIconWrap, { borderColor: "rgba(108,230,255,0.4)" }]}>
               <FlaskConical color={palette.cyan} size={20} />
             </View>
@@ -240,8 +250,8 @@ export default function ProfileScreen(): JSX.Element {
               <Text style={styles.featureTitle}>EAGOH Forge & Labs</Text>
               <Text style={styles.featureDesc}>Create EAGOHs with brain-in-glass-dome, full-body cybernetic chassis, domain intelligence tuning, and open intelligence observation feeds.</Text>
             </View>
-          </View>
-          <View style={styles.featureCard}>
+          </Pressable>
+          <Pressable onPress={handleFactionsPress} style={({ pressed }) => [styles.featureCard, pressed && { opacity: 0.8 }]}>
             <View style={[styles.featureIconWrap, { borderColor: "rgba(138,92,255,0.4)" }]}>
               <Shield color={palette.violet} size={20} />
             </View>
@@ -249,7 +259,7 @@ export default function ProfileScreen(): JSX.Element {
               <Text style={styles.featureTitle}>Faction Network</Text>
               <Text style={styles.featureDesc}>Align with intelligence syndicates, pool observations, earn reputation badges, and climb the faction influence ladder.</Text>
             </View>
-          </View>
+          </Pressable>
         </View>
       );
     }

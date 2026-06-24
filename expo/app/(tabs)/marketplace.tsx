@@ -4,6 +4,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import {
   ArrowRightLeft,
+  Award,
   Clock,
   Coins,
   Crown,
@@ -17,6 +18,7 @@ import {
   Signal,
   SlidersHorizontal,
   Sparkles,
+  Star,
   Tag,
   UserCheck,
   Megaphone,
@@ -67,12 +69,16 @@ import {
   recordBannerTapHold,
   type EnrichedBanner,
 } from "@/services/sponsoredBanners";
+import { getBulkReputations, rankColor as repRankColor, RANK_TIERS, type RankTier } from "@/services/reputation";
+import type { ReputationRow } from "@/services/reputation";
 
 // ── Constants ──────────────────────────────────────────────────────────
 
 const SYNC_LEVELS: SyncLevel[] = ["25%", "50%", "75%", "100%"];
 const DAYS = [1, 2, 3, 4, 5];
-const RANKS = ["Any Rank", "S-TIER", "ELITE", "PRO", "RISING"];
+const RANKS = ["Any Rank", "Syndicate Prime", "Oracle", "Diamond", "Platinum", "Gold", "Silver", "Bronze", "Activated"];
+
+const RANK_FILTER_OPTIONS = ["Any Rank", "Syndicate Prime", "Oracle", "Diamond", "Platinum", "Gold", "Silver", "Bronze", "Activated"];
 
 const SYNC_DESCRIPTIONS: Record<SyncLevel, string> = {
   "25%": "Basic surface-level intelligence signals",
@@ -97,7 +103,17 @@ function timeLeft(expiresAt: string): string {
   return `${days}d ${remainHours}h left`;
 }
 
+function rankEmoji(rank: string): string {
+  if (rank === "Syndicate Prime") return "★";
+  if (rank === "Oracle") return "◆";
+  if (rank === "Diamond") return "◇";
+  if (rank === "Platinum") return "●";
+  if (rank === "Gold") return "⬡";
+  return "";
+}
+
 function rankColor(rank: string): string {
+  if (RANK_TIERS.includes(rank as RankTier)) return repRankColor(rank as RankTier);
   switch (rank) {
     case "S-TIER": return palette.gold;
     case "ELITE": return palette.cyan;
@@ -269,10 +285,12 @@ const ListingCard = memo(function ListingCard({
   item,
   isPaid,
   onPurchase,
+  reputation,
 }: {
   item: EnrichedListing;
   isPaid: boolean;
   onPurchase: (listing: EnrichedListing) => void;
+  reputation: ReputationRow | undefined;
 }): JSX.Element {
   const eagoh = item.eagoh;
   const domain = eagoh?.domain ?? eagoh?.sport ?? "Unknown";
@@ -280,14 +298,18 @@ const ListingCard = memo(function ListingCard({
     .filter((p) => p > 0)
     .sort((a, b) => a - b)[0];
 
+  const eagohRank: RankTier = (reputation?.rank as RankTier) ?? "Dormant";
+  const repScore = reputation?.reputation_score ?? 0;
+  const rkColor = rankColor(eagohRank);
+
   return (
     <View style={styles.listingCard}>
-      <View style={[styles.cardGlow, { backgroundColor: rankColor(item.vendor_rank) }]} />
+      <View style={[styles.cardGlow, { backgroundColor: rkColor }]} />
       <View style={styles.listingTop}>
         <View style={styles.listingImageWrap}>
           {eagoh?.image_thumb_url ? (
             <OptimizedEagohImage
-              tone={item.vendor_rank === "S-TIER" ? "gold" : item.vendor_rank === "ELITE" ? "cyan" : "violet"}
+              tone={eagohRank === "Syndicate Prime" || eagohRank === "Oracle" ? "gold" : eagohRank === "Diamond" ? "cyan" : "violet"}
               label={eagoh.name}
               size="banner"
             />
@@ -296,13 +318,19 @@ const ListingCard = memo(function ListingCard({
               <Dna color={palette.muted} size={28} />
             </View>
           )}
-          <View style={[styles.rankPillSmall, { backgroundColor: `${rankColor(item.vendor_rank)}1F`, borderColor: `${rankColor(item.vendor_rank)}44` }]}>
-            <Text style={[styles.rankPillSmallText, { color: rankColor(item.vendor_rank) }]}>{item.vendor_rank}</Text>
+          <View style={[styles.rankPillSmall, { backgroundColor: `${rkColor}1F`, borderColor: `${rkColor}44` }]}>
+            <Text style={[styles.rankPillSmallText, { color: rkColor }]}>{rankEmoji(eagohRank)} {eagohRank}</Text>
           </View>
         </View>
         <View style={styles.listingInfo}>
           <View style={styles.nameRow}>
             <Text style={styles.listingName} numberOfLines={1}>{eagoh?.name ?? "Unnamed"}</Text>
+            {repScore > 0 && (
+              <View style={[styles.repScoreBadge, { borderColor: rkColor }]}>
+                <Star color={rkColor} size={11} />
+                <Text style={[styles.repScoreText, { color: rkColor }]}>{repScore}</Text>
+              </View>
+            )}
           </View>
           <Text style={styles.listingDomain}>{domainLabel(domain)}</Text>
           <View style={styles.listingDna}>
@@ -318,7 +346,7 @@ const ListingCard = memo(function ListingCard({
           <View style={styles.metricGrid}>
             <View style={styles.metricRow}>
               <Signal color={palette.success} size={12} />
-              <Text style={styles.metric}>Sync Score: {item.sync_success_score}</Text>
+              <Text style={styles.metric}>Sync: {item.sync_success_score}</Text>
             </View>
             <View style={styles.metricRow}>
               <Sparkles color={palette.cyan} size={12} />
@@ -334,6 +362,13 @@ const ListingCard = memo(function ListingCard({
       <View style={styles.vendorStrip}>
         <UserCheck color={palette.muted} size={14} />
         <Text style={styles.vendorText}>{item.vendor_username ?? "Anonymous"}</Text>
+        {reputation && (
+          <>
+            <View style={styles.vendorDivider} />
+            <Shield color={rkColor} size={12} />
+            <Text style={[styles.vendorRepText, { color: rkColor }]}>Trust: {reputation.marketplace_trust}</Text>
+          </>
+        )}
       </View>
       <Text style={styles.pricePreview}>
         From {minPrice ?? "—"} EC/day
@@ -664,11 +699,15 @@ const MyListingCard = memo(function MyListingCard({
   item,
   onToggle,
   onRecalc,
+  reputation,
 }: {
   item: EnrichedListing;
   onToggle: (id: string, active: boolean) => void;
   onRecalc: () => void;
+  reputation: ReputationRow | undefined;
 }): JSX.Element {
+  const eagohRank: RankTier = (reputation?.rank as RankTier) ?? "Dormant";
+  const rkColor = rankColor(eagohRank);
   return (
     <View style={[styles.myListingCard, !item.active && styles.myListingCardInactive]}>
       <View style={styles.myListingTop}>
@@ -696,14 +735,24 @@ const MyListingCard = memo(function MyListingCard({
           </Text>
         </Pressable>
       </View>
+      {reputation && (
+        <View style={styles.myListingRepRow}>
+          <Award color={rkColor} size={13} />
+          <Text style={[styles.myListingRepText, { color: rkColor }]}>
+            {eagohRank} · Rep: {reputation.reputation_score}
+          </Text>
+        </View>
+      )}
     </View>
   );
 });
 
 // ── Marketplace Sponsored Banner Carousel ──────────────────────────────
 
-const MktSponsoredBanner = memo(function MktSponsoredBanner({ item, userId }: { item: EnrichedBanner; userId: string | null }): JSX.Element {
-  const accent = item.vendor_rank === "S-TIER" ? palette.gold : item.vendor_rank === "ELITE" ? palette.cyan : palette.violet;
+const MktSponsoredBanner = memo(function MktSponsoredBanner({ item, userId, reputation }: { item: EnrichedBanner; userId: string | null; reputation: ReputationRow | undefined }): JSX.Element {
+  const eagohRank: RankTier = (reputation?.rank as RankTier) ?? "Dormant";
+  const repScore = reputation?.reputation_score ?? 0;
+  const accent = repScore > 0 ? rankColor(eagohRank) : (item.vendor_rank === "S-TIER" ? palette.gold : item.vendor_rank === "ELITE" ? palette.cyan : palette.violet);
   const domainLabel: string = item.eagoh_domain.charAt(0).toUpperCase() + item.eagoh_domain.slice(1).replace(/_/g, " ");
 
   useEffect(() => {
@@ -738,6 +787,12 @@ const MktSponsoredBanner = memo(function MktSponsoredBanner({ item, userId }: { 
       <View style={styles.mktBannerInfo}>
         <Text style={styles.mktBannerName} numberOfLines={1}>{item.eagoh_name}</Text>
         <Text style={styles.mktBannerDomain}>{domainLabel}</Text>
+        {repScore > 0 && (
+          <View style={[styles.mktBannerRankRow, { borderColor: `${accent}33`, backgroundColor: `${accent}10` }]}>
+            <Award color={accent} size={11} />
+            <Text style={[styles.mktBannerRankText, { color: accent }]}>{rankEmoji(eagohRank)} {eagohRank} · {repScore}</Text>
+          </View>
+        )}
         <View style={styles.mktBannerMeta}>
           <Text style={styles.mktBannerScore}>Q: {item.quality_score}</Text>
           <Text style={styles.mktBannerSync}>Sync: {item.sync_score}</Text>
@@ -750,11 +805,19 @@ const MktSponsoredBanner = memo(function MktSponsoredBanner({ item, userId }: { 
 const MktSponsoredCarousel = memo(function MktSponsoredCarousel({ userId }: { userId: string | null }): JSX.Element | null {
   const [banners, setBanners] = useState<EnrichedBanner[]>([]);
   const [loading, setLoading] = useState(true);
+  const [bannerRepMap, setBannerRepMap] = useState<Map<string, ReputationRow>>(new Map());
 
   useEffect(() => {
     setLoading(true);
     getActiveBanners("marketplace")
-      .then((b) => { setBanners(b); setLoading(false); })
+      .then((b) => {
+        setBanners(b);
+        setLoading(false);
+        const eagohIds = [...new Set(b.map((bb) => bb.eagoh_id))];
+        if (eagohIds.length > 0) {
+          getBulkReputations(eagohIds).then(setBannerRepMap).catch(() => undefined);
+        }
+      })
       .catch(() => setLoading(false));
   }, []);
 
@@ -772,7 +835,7 @@ const MktSponsoredCarousel = memo(function MktSponsoredCarousel({ userId }: { us
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 16 }} {...HORIZONTAL_LIST_PERFORMANCE_PROPS}>
         {banners.map((b) => (
-          <MktSponsoredBanner key={b.id} item={b} userId={userId} />
+          <MktSponsoredBanner key={b.id} item={b} userId={userId} reputation={bannerRepMap.get(b.eagoh_id)} />
         ))}
       </ScrollView>
     </View>
@@ -794,6 +857,7 @@ export default function MarketplaceScreen(): JSX.Element {
   const [filterMeta, setFilterMeta] = useState<{ domains: string[]; sports: string[]; ranks: string[] }>({ domains: [], sports: [], ranks: [] });
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"browse" | "my-listings" | "my-syncs" | "my-purchases">("browse");
+  const [repMap, setRepMap] = useState<Map<string, ReputationRow>>(new Map());
 
   const [purchaseModal, setPurchaseModal] = useState<EnrichedListing | null>(null);
   const [purchasing, setPurchasing] = useState(false);
@@ -818,6 +882,11 @@ export default function MarketplaceScreen(): JSX.Element {
       setActiveSyncsState(syncs);
       setMyListings(myList);
       setPurchases(myPurch);
+      // Load reputations for all listings
+      const allEagohIds = [...new Set(l.map((li) => li.eagoh_id))];
+      if (allEagohIds.length > 0) {
+        getBulkReputations(allEagohIds).then(setRepMap).catch(() => undefined);
+      }
     } catch (err) {
       console.warn("[marketplace] load error", err);
     } finally {
@@ -948,6 +1017,7 @@ export default function MarketplaceScreen(): JSX.Element {
               item={item}
               isPaid={isPaid}
               onPurchase={(l) => setPurchaseModal(l)}
+              reputation={repMap.get(item.eagoh_id)}
             />
           ))}
         </View>
@@ -976,6 +1046,7 @@ export default function MarketplaceScreen(): JSX.Element {
               item={item}
               onToggle={handleToggleListing}
               onRecalc={loadData}
+              reputation={repMap.get(item.eagoh_id)}
             />
           ))}
         </View>
@@ -1546,6 +1617,12 @@ const styles = StyleSheet.create({
     textAlignVertical: "top",
   },
 
+  repScoreBadge: { flexDirection: "row" as const, alignItems: "center" as const, gap: 3, borderWidth: 1, borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 },
+  repScoreText: { fontSize: 10, fontWeight: "900" as const },
+  vendorDivider: { width: 1, height: 12, backgroundColor: palette.line },
+  vendorRepText: { fontSize: 11, fontWeight: "800" as const },
+  myListingRepRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6, marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: palette.line },
+  myListingRepText: { fontSize: 11, fontWeight: "800" as const },
   pressed: { opacity: 0.72, transform: [{ scale: 0.99 }] },
 
   // Marketplace sponsored banner carousel
@@ -1585,4 +1662,6 @@ const styles = StyleSheet.create({
   mktBannerMeta: { flexDirection: "row", gap: 10, marginTop: 2 },
   mktBannerScore: { color: palette.gold, fontSize: 11, fontWeight: "900" },
   mktBannerSync: { color: palette.violet, fontSize: 11, fontWeight: "900" },
+  mktBannerRankRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 4, borderRadius: 5, borderWidth: 1, paddingHorizontal: 6, paddingVertical: 3, marginTop: 2 },
+  mktBannerRankText: { fontSize: 10, fontWeight: "900" as const },
 });

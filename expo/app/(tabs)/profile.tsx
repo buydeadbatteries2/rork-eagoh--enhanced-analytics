@@ -3,11 +3,21 @@ import { LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/components/Pe
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
-import { Activity, BadgeCheck, BarChart3, BrainCircuit, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Shield, Sparkles, Swords, TrendingUp, WalletCards, Zap } from "lucide-react-native";
-import React, { memo, useCallback, useMemo, useState } from "react";
+import { Activity, Award, BadgeCheck, BarChart3, BrainCircuit, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Shield, Sparkles, Swords, TrendingUp, WalletCards, Zap } from "lucide-react-native";
+import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/providers/AuthProvider";
+import { useEagohs } from "@/providers/EagohProvider";
+import {
+  getEagohReputationDisplay,
+  computeRank,
+  rankColor as repRankColor,
+  RANK_TIERS,
+  BADGE_DEFINITIONS,
+  type EagohReputationDisplay,
+  type RankTier,
+} from "@/services/reputation";
 
 type LabTone = "cyan" | "gold" | "violet" | "ember" | "success";
 type LabEnvironment = {
@@ -62,12 +72,7 @@ const labs: LabEnvironment[] = [
   { id: "void", name: "Void Mirror Lab", theme: "Dark reflective chamber and identity doubles", cost: 25, premium: true, tone: "violet", grid: "MIRROR" },
 ];
 
-const stats: Stat[] = [
-  { label: "Rank", value: "Apex IV", detail: "analyst class", tone: "gold" },
-  { label: "Observation", value: "94.8", detail: "score", tone: "cyan" },
-  { label: "Sync Success", value: "87%", detail: "last 30 checks", tone: "success" },
-  { label: "Reputation", value: "A-", detail: "marketplace", tone: "violet" },
-];
+
 
 const dna = ["Predictive Vision", "Pressure Mapping", "Fanatic Memory", "Market Instinct"];
 const teams = ["Metro Ultras", "Austin Fanatics", "North End Loyal"];
@@ -98,6 +103,22 @@ function toneColor(tone: LabTone): string {
   if (tone === "success") return palette.success;
   return palette.cyan;
 }
+
+const RepMetric = memo(function RepMetric({ label, value, max, tone }: { label: string; value: number; max: number; tone: LabTone }): JSX.Element {
+  const accent = toneColor(tone);
+  const pct = Math.min(1, value / (max || 1));
+  return (
+    <View style={styles.repMetricCard}>
+      <View style={styles.repMetricHeader}>
+        <Text style={styles.repMetricLabel}>{label}</Text>
+        <Text style={[styles.repMetricValue, { color: accent }]}>{value}</Text>
+      </View>
+      <View style={styles.repProgressTrack}>
+        <View style={[styles.repProgressFill, { width: `${pct * 100}%`, backgroundColor: accent }]} />
+      </View>
+    </View>
+  );
+});
 
 function SectionTitle({ eyebrow, title }: { eyebrow: string; title: string }): JSX.Element {
   return (
@@ -200,6 +221,7 @@ const LabCard = memo(function LabCard({ item, selected, onPress }: { item: LabEn
 
 export default function ProfileScreen(): JSX.Element {
   const { user, signOut, signOutState } = useAuth();
+  const { eagohs } = useEagohs();
   const router = useRouter();
   const handleSignOut = useCallback((): void => {
     Haptics.selectionAsync().catch(() => undefined);
@@ -208,6 +230,33 @@ export default function ProfileScreen(): JSX.Element {
   const displayAlias = (user?.user_metadata as { username?: string } | undefined)?.username ?? user?.email ?? "EAGOH operator";
   const [selectedLabId, setSelectedLabId] = useState<string>("neon");
   const selectedLab = useMemo<LabEnvironment>(() => labs.find((lab) => lab.id === selectedLabId) ?? labs[0], [selectedLabId]);
+
+  // ── Reputation for primary EAGOH ────────────────────────────────────
+  const [reputation, setReputation] = useState<EagohReputationDisplay | null>(null);
+  const primaryEagoh = (eagohs ?? [])[0];
+  useEffect(() => {
+    if (!primaryEagoh?.id || !user?.id) return;
+    getEagohReputationDisplay(primaryEagoh.id, user.id)
+      .then(setReputation)
+      .catch(() => undefined);
+  }, [primaryEagoh?.id, user?.id]);
+
+  const reputationStats: Stat[] = useMemo<Stat[]>(() => {
+    if (!reputation) {
+      return [
+        { label: "Rank", value: "—", detail: "No EAGOH active", tone: "cyan" },
+        { label: "Reputation", value: "—", detail: "Forge an EAGOH first", tone: "gold" },
+        { label: "Quality", value: "—", detail: "intelligence score", tone: "violet" },
+        { label: "Trust", value: "—", detail: "marketplace", tone: "success" },
+      ];
+    }
+    return [
+      { label: "Rank", value: reputation.rank, detail: `${reputation.reputationScore}/100`, tone: "gold" },
+      { label: "Reputation", value: `${reputation.reputationScore}`, detail: "total score", tone: "gold" },
+      { label: "Quality", value: `${reputation.intelligenceQuality}`, detail: `${reputation.totalObservations} obs`, tone: "cyan" },
+      { label: "Trust", value: `${reputation.marketplaceTrust}`, detail: `${reputation.marketplaceSales} sales`, tone: "success" },
+    ];
+  }, [reputation]);
 
   const handleLabPress = useCallback((id: string): void => {
     setSelectedLabId(id);
@@ -218,7 +267,7 @@ export default function ProfileScreen(): JSX.Element {
     if (item.kind === "hero") {
       return (
         <View>
-          <View style={styles.topline}><View><Text style={styles.kicker}>PROFILE CHAMBER</Text><Text style={styles.title} numberOfLines={1}>{displayAlias}</Text></View><View style={styles.rankPill}><Crown color={palette.gold} size={16} /><Text style={styles.rankText}>Apex IV</Text></View></View>
+          <View style={styles.topline}><View><Text style={styles.kicker}>PROFILE CHAMBER</Text><Text style={styles.title} numberOfLines={1}>{displayAlias}</Text></View><View style={[styles.rankPill, reputation ? { borderColor: `${repRankColor(reputation.rank)}66`, backgroundColor: `${repRankColor(reputation.rank)}22` } : undefined]}><Crown color={reputation ? repRankColor(reputation.rank) : palette.gold} size={16} /><Text style={[styles.rankText, reputation ? { color: repRankColor(reputation.rank) } : undefined]}>{reputation?.rank ?? "No Rank"}</Text></View></View>
           <ProfileChamber lab={selectedLab} />
           <Pressable onPress={handleSignOut} disabled={signOutState.isPending} style={({ pressed }) => [styles.signOutButton, pressed && { opacity: 0.85 }]}>
             {signOutState.isPending ? <ActivityIndicator color={palette.ember} /> : <LogOut color={palette.ember} size={16} />}
@@ -228,7 +277,57 @@ export default function ProfileScreen(): JSX.Element {
       );
     }
     if (item.kind === "stats") {
-      return <View style={styles.statGrid}>{stats.map((stat) => <StatCard key={stat.label} item={stat} />)}</View>;
+      return (
+        <View>
+          <View style={styles.statGrid}>{reputationStats.map((stat) => <StatCard key={stat.label} item={stat} />)}</View>
+          {/* Expanded reputation breakdown */}
+          {reputation && (
+            <View style={styles.reputationPanel}>
+              <SectionTitle eyebrow="REPUTATION BREAKDOWN" title="EAGOH Rank & Trust" />
+              <View style={styles.repGrid}>
+                <RepMetric label="Intelligence Quality" value={reputation.intelligenceQuality} max={25} tone="cyan" />
+                <RepMetric label="Marketplace Trust" value={reputation.marketplaceTrust} max={20} tone="violet" />
+                <RepMetric label="Faction Influence" value={reputation.factionInfluence} max={20} tone="gold" />
+                <RepMetric label="Sync Success" value={reputation.syncSuccess} max={100} tone="success" />
+                <RepMetric label="Activity Level" value={reputation.activityLevel} max={10} tone="cyan" />
+                <RepMetric label="Fanatic Strength" value={reputation.fanaticTeamStrength} max={10} tone="ember" />
+              </View>
+              {/* Rank progression bar */}
+              <View style={styles.rankProgression}>
+                <Text style={styles.repDetailLabel}>Rank Progression</Text>
+                <View style={styles.rankBarTrack}>
+                  {RANK_TIERS.map((tier) => {
+                    const threshold = { Dormant: 0, Activated: 1, Bronze: 15, Silver: 30, Gold: 45, Platinum: 60, Diamond: 75, Oracle: 88, "Syndicate Prime": 96 }[tier];
+                    const achieved = reputation.reputationScore >= threshold;
+                    return (
+                      <View key={tier} style={[styles.rankBarStep, achieved && { backgroundColor: repRankColor(tier) }]}>
+                        <View style={[styles.rankBarStepDot, achieved && { backgroundColor: repRankColor(tier), borderColor: repRankColor(tier) }]} />
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+              {/* Badges */}
+              {reputation.badges.length > 0 && (
+                <View style={styles.badgesSection}>
+                  <Text style={styles.repDetailLabel}>Earned Badges</Text>
+                  <View style={styles.badgesGrid}>
+                    {reputation.badges.map((badge) => (
+                      <View key={badge.id} style={styles.badgeCard}>
+                        <Award color={palette.gold} size={18} />
+                        <View style={styles.badgeInfo}>
+                          <Text style={styles.badgeName}>{badge.badge_name}</Text>
+                          <Text style={styles.badgeDesc} numberOfLines={2}>{badge.badge_description}</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+            </View>
+          )}
+        </View>
+      );
     }
     if (item.kind === "features") {
       const handleLabsPress = (): void => {
@@ -338,7 +437,7 @@ export default function ProfileScreen(): JSX.Element {
         <FlatList data={labs} keyExtractor={(lab) => lab.id} renderItem={({ item: lab }) => <LabCard item={lab} selected={lab.id === selectedLabId} onPress={handleLabPress} />} scrollEnabled={false} {...LIST_PERFORMANCE_PROPS} />
       </View>
     );
-  }, [handleLabPress, selectedLab, selectedLabId]);
+  }, [handleLabPress, selectedLab, selectedLabId, reputationStats, reputation]);
 
   return (
     <LinearGradient colors={["#020409", "#07111D", "#03060B"]} style={styles.root}>
@@ -461,6 +560,25 @@ const styles = StyleSheet.create({
   labMetaRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 7 },
   labCost: { fontWeight: "900", fontSize: 12 },
   selectedText: { fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  reputationPanel: { borderRadius: 5, padding: 14, marginTop: 14, backgroundColor: "rgba(10,18,30,0.82)", borderWidth: 1, borderColor: "rgba(255,184,77,0.20)", gap: 10 },
+  repGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  repMetricCard: { width: "48%", padding: 10, borderRadius: 5, backgroundColor: "rgba(16,27,42,0.64)", borderWidth: 1, borderColor: palette.line },
+  repMetricHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 7 },
+  repMetricLabel: { color: palette.muted, fontSize: 11, fontWeight: "900" as const, flex: 1 },
+  repMetricValue: { fontSize: 16, fontWeight: "900" as const },
+  repProgressTrack: { height: 5, borderRadius: 5, backgroundColor: "rgba(141,162,181,0.14)", overflow: "hidden" as const },
+  repProgressFill: { height: "100%", borderRadius: 5 },
+  repDetailLabel: { color: palette.text, fontSize: 13, fontWeight: "900" as const, marginBottom: 8 },
+  rankProgression: { marginTop: 4 },
+  rankBarTrack: { flexDirection: "row" as const, gap: 3, alignItems: "flex-end" as const, height: 28 },
+  rankBarStep: { flex: 1, height: 8, borderRadius: 5, backgroundColor: "rgba(141,162,181,0.16)" },
+  rankBarStepDot: { width: 12, height: 12, borderRadius: 6, alignSelf: "center" as const, marginTop: 12, borderWidth: 1, borderColor: "rgba(141,162,181,0.3)", backgroundColor: "rgba(3,6,11,0.8)" },
+  badgesSection: { marginTop: 4 },
+  badgesGrid: { gap: 8 },
+  badgeCard: { flexDirection: "row" as const, alignItems: "flex-start" as const, gap: 10, padding: 10, borderRadius: 5, backgroundColor: palette.goldSoft, borderWidth: 1, borderColor: "rgba(255,184,77,0.18)" },
+  badgeInfo: { flex: 1 },
+  badgeName: { color: palette.gold, fontSize: 13, fontWeight: "900" as const },
+  badgeDesc: { color: palette.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
   signOutButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 14, paddingVertical: 12, borderRadius: 5, borderWidth: 1, borderColor: "rgba(255,107,53,0.32)", backgroundColor: "rgba(255,107,53,0.08)" },
   signOutText: { color: palette.ember, fontWeight: "900", fontSize: 13, letterSpacing: 1.2 },
   featureCard: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 5, padding: 13, backgroundColor: "rgba(14,24,37,0.64)", borderWidth: 1, borderColor: palette.line, marginBottom: 8 },

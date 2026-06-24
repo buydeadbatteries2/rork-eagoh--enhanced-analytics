@@ -36,6 +36,9 @@ import {
   type FactionRole,
 } from "@/services/factions";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
+import { getBulkReputations, rankColor as repRankColor, RANK_TIERS, type RankTier } from "@/services/reputation";
+import type { ReputationRow } from "@/services/reputation";
+import { supabase } from "@/lib/supabase";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -53,13 +56,14 @@ import {
   UserPlus,
   AlertTriangle,
   Brain,
+  Crown,
   Target,
   Swords,
   LogOut,
   Star,
   ArrowUp,
 } from "lucide-react-native";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -380,6 +384,35 @@ function FactionDetail({
   const [inviteUserId, setInviteUserId] = useState("");
   const [promoteTarget, setPromoteTarget] = useState<string | null>(null);
   const [promoteRole, setPromoteRole] = useState<FactionRole>("strategist");
+  const [memberRepMap, setMemberRepMap] = useState<Map<string, ReputationRow>>(new Map());
+  const [userToEagohMap, setUserToEagohMap] = useState<Map<string, string>>(new Map());
+
+  // Load reputations for member EAGOHs
+  useEffect(() => {
+    if (!full?.members || full.members.length === 0) return;
+    Promise.all(
+      full.members.map((m) =>
+        supabase.from("eagohs").select("id").eq("user_id", m.user_id).maybeSingle()
+      )
+    ).then((results) => {
+      const eagohIds: string[] = [];
+      const userToEid = new Map<string, string>();
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        if (r.data) {
+          const eid = (r.data as { id: string }).id;
+          eagohIds.push(eid);
+          userToEid.set(full.members[i].user_id, eid);
+        }
+      }
+      setUserToEagohMap(userToEid);
+      if (eagohIds.length > 0) {
+        getBulkReputations(eagohIds).then(setMemberRepMap).catch(() => undefined);
+      }
+    }).catch(() => undefined);
+  }, [full?.members]);
+
+  const eagohIdForMember = (userId: string): string => userToEagohMap.get(userId) ?? "";
 
   // ── Handlers ────────────────────────────────────────────────────────
 
@@ -498,6 +531,55 @@ function FactionDetail({
           ) : null}
         </View>
       </View>
+
+      {/* ── Top Ranked EAGOHs ────────────────────────────────────────── */}
+      {memberRepMap.size > 0 && (
+        <View style={styles.reputationSection}>
+          <SectionHeader eyebrow="REPUTATION" title="Top Ranked Analysts" />
+          <View style={styles.topRankedGrid}>
+            {members
+              .filter((m) => m.status === "active")
+              .sort((a, b) => {
+                const repA = memberRepMap.get(eagohIdForMember(a.user_id))?.reputation_score ?? 0;
+                const repB = memberRepMap.get(eagohIdForMember(b.user_id))?.reputation_score ?? 0;
+                return repB - repA;
+              })
+              .slice(0, 5)
+              .map((m, i) => {
+                const rep = memberRepMap.get(eagohIdForMember(m.user_id));
+                if (!rep) return null;
+                const rk = rep.rank as RankTier;
+                const rc = repRankColor(rk);
+                return (
+                  <View key={m.id} style={[styles.topRankedRow, { borderColor: `${rc}22` }]}>
+                    <Text style={[styles.topRankedNum, { color: i < 3 ? palette.gold : palette.muted }]}>#{i + 1}</Text>
+                    <Crown color={rc} size={14} />
+                    <Text style={styles.topRankedRole}>{getRoleLabel(m.role)}</Text>
+                    <Text style={[styles.topRankedRank, { color: rc }]}>{rk}</Text>
+                    <Text style={[styles.topRankedScore, { color: rc }]}>{rep.reputation_score}</Text>
+                  </View>
+                );
+              })
+              .filter(Boolean)}
+          </View>
+          {/* Faction average reputation */}
+          {(() => {
+            const activeReps = members
+              .filter((m) => m.status === "active")
+              .map((m) => memberRepMap.get(eagohIdForMember(m.user_id)))
+              .filter(Boolean) as ReputationRow[];
+            if (activeReps.length === 0) return null;
+            const avgRep = Math.round(activeReps.reduce((s, r) => s + r.reputation_score, 0) / activeReps.length);
+            return (
+              <View style={styles.factionAvgRep}>
+                <Star color={palette.gold} size={14} />
+                <Text style={styles.factionAvgRepLabel}>Faction Avg Reputation:</Text>
+                <Text style={styles.factionAvgRepValue}>{avgRep}</Text>
+              </View>
+            );
+          })()}
+        </View>
+      )}
 
       {/* ── Members Roster ───────────────────────────────────────────── */}
       <SectionHeader eyebrow="ROSTER" title={`Members (${faction.current_members}/${faction.max_members})`} />
@@ -1517,4 +1599,16 @@ const styles = StyleSheet.create({
   createBtnText: { color: palette.void, fontSize: 14, fontWeight: "900" as const, letterSpacing: 1.4 },
 
   pressed: { transform: [{ scale: 0.985 }], opacity: 0.86 },
+
+  // Reputation section
+  reputationSection: { marginTop: 4 },
+  topRankedGrid: { gap: 6 },
+  topRankedRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 5, borderWidth: 1, backgroundColor: "rgba(10,18,30,0.48)" },
+  topRankedNum: { fontSize: 11, fontWeight: "900" as const, minWidth: 22 },
+  topRankedRole: { color: palette.text, fontSize: 12, fontWeight: "800" as const, flex: 1 },
+  topRankedRank: { fontSize: 11, fontWeight: "900" as const },
+  topRankedScore: { fontSize: 11, fontWeight: "900" as const },
+  factionAvgRep: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 5, backgroundColor: palette.goldSoft, borderWidth: 1, borderColor: "rgba(255,184,77,0.18)", marginTop: 8 },
+  factionAvgRepLabel: { color: palette.muted, fontSize: 12, fontWeight: "800" as const, flex: 1 },
+  factionAvgRepValue: { color: palette.gold, fontSize: 16, fontWeight: "900" as const },
 });

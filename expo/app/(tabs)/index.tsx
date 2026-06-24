@@ -1,6 +1,7 @@
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import {
+  Award,
   BarChart3,
   Calendar,
   ChevronRight,
@@ -42,6 +43,8 @@ import {
 } from "@/services/sponsoredBanners";
 import { canTransact } from "@/services/marketplace";
 import type { EagohRecord } from "@/services/eagohs";
+import { getBulkReputations, rankColor as repRankColor, rankEmoji, RANK_TIERS, type RankTier } from "@/services/reputation";
+import type { ReputationRow } from "@/services/reputation";
 
 type Phase = "loading" | "onboarding" | "auth" | "app";
 type CardTone = "cyan" | "gold" | "violet" | "ember" | "success";
@@ -153,9 +156,11 @@ const MiniImage = React.memo(function MiniImage({ accent, label }: { accent: Car
   return <OptimizedEagohImage tone={accent} label={label} size="compact" />;
 });
 
-const SponsoredBanner = React.memo(function SponsoredBanner({ item, userId }: { item: EnrichedBanner; userId: string | null }): JSX.Element {
+const SponsoredBanner = React.memo(function SponsoredBanner({ item, userId, reputation }: { item: EnrichedBanner; userId: string | null; reputation: ReputationRow | undefined }): JSX.Element {
   const [expanded, setExpanded] = useState<boolean>(false);
-  const accent = item.vendor_rank === "S-TIER" ? palette.gold : item.vendor_rank === "ELITE" ? palette.cyan : palette.violet;
+  const eagohRank: RankTier = (reputation?.rank as RankTier) ?? "Dormant";
+  const repScore = reputation?.reputation_score ?? 0;
+  const accent = repScore > 0 ? repRankColor(eagohRank) : (item.vendor_rank === "S-TIER" ? palette.gold : item.vendor_rank === "ELITE" ? palette.cyan : palette.violet);
   const domainLabel: string = item.eagoh_domain.charAt(0).toUpperCase() + item.eagoh_domain.slice(1).replace(/_/g, " ");
 
   // Record impression on mount
@@ -195,13 +200,19 @@ const SponsoredBanner = React.memo(function SponsoredBanner({ item, userId }: { 
       <View style={styles.sponsoredContent}>
         <View style={styles.sponsoredTopline}>
           <Text style={[styles.meta, { color: accent }]}>SPONSORED</Text>
+          {repScore > 0 && (
+            <View style={[styles.sponsoredRankRow, { borderColor: `${accent}33`, backgroundColor: `${accent}10` }]}>
+              <Award color={accent} size={10} />
+              <Text style={[styles.sponsoredRankText, { color: accent }]}>{rankEmoji(eagohRank)} {eagohRank} · {repScore}</Text>
+            </View>
+          )}
           <Text style={styles.score}>{item.quality_score}</Text>
         </View>
         <Text style={styles.sponsoredTitle}>{item.eagoh_name}</Text>
         <Text style={styles.sponsoredAnalytics}>{domainLabel} · Sync Score: {item.sync_score}</Text>
         <Text numberOfLines={expanded ? 3 : 1} style={styles.sponsoredDetail}>
           {expanded
-            ? `Vendor: ${item.vendor_username ?? "Anonymous"} · Rank: ${item.vendor_rank} · Quality: ${item.quality_score} · Sync: ${item.sync_score}`
+            ? `Vendor: ${item.vendor_username ?? "Anonymous"} · Rank: ${eagohRank} · Quality: ${item.quality_score} · Sync: ${item.sync_score}`
             : "Hold to view full details"}
         </Text>
       </View>
@@ -225,18 +236,26 @@ const HeroSection = React.memo(function HeroSection(): JSX.Element {
 
 const SponsoredSection = React.memo(function SponsoredSection({ userId }: { userId: string | null }): JSX.Element {
   const [banners, setBanners] = useState<EnrichedBanner[]>([]);
+  const [bannerRepMap, setBannerRepMap] = useState<Map<string, ReputationRow>>(new Map());
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
     getActiveBanners("home")
-      .then((b) => { setBanners(b); setLoading(false); })
+      .then((b) => {
+        setBanners(b);
+        setLoading(false);
+        const eagohIds = [...new Set(b.map((bb) => bb.eagoh_id))];
+        if (eagohIds.length > 0) {
+          getBulkReputations(eagohIds).then(setBannerRepMap).catch(() => undefined);
+        }
+      })
       .catch(() => setLoading(false));
   }, []);
 
   const renderItem = useCallback(
-    ({ item }: { item: EnrichedBanner }) => <SponsoredBanner item={item} userId={userId} />,
-    [userId],
+    ({ item }: { item: EnrichedBanner }) => <SponsoredBanner item={item} userId={userId} reputation={bannerRepMap.get(item.eagoh_id)} />,
+    [userId, bannerRepMap],
   );
 
   if (loading) {
@@ -1084,4 +1103,7 @@ const styles = StyleSheet.create({
   confirmButtonText: { color: palette.void, fontSize: 15, fontWeight: "900" },
   // Modal close
   modalCloseBtn: { width: 38, height: 38, borderRadius: 5, alignItems: "center", justifyContent: "center" },
+  // Sponsored banner reputation
+  sponsoredRankRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 3, borderRadius: 5, borderWidth: 1, paddingHorizontal: 6, paddingVertical: 2 },
+  sponsoredRankText: { fontSize: 9, fontWeight: "900" as const },
 });

@@ -648,6 +648,104 @@ create policy "ba_owner_select" on public.banner_analytics
   );
 
 -- =====================================================================
+-- EAGOH REPUTATION (per-EAGOH reputation score with component breakdown)
+-- =====================================================================
+create table if not exists public.eagoh_reputation (
+  eagoh_id uuid primary key references public.eagohs(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  reputation_score int not null default 0,
+  rank text not null default 'Dormant',
+  intelligence_quality int not null default 0,
+  marketplace_trust int not null default 0,
+  faction_influence int not null default 0,
+  sync_success int not null default 0,
+  activity_level int not null default 0,
+  fanatic_team_strength int not null default 0,
+  total_observations int not null default 0,
+  total_validated int not null default 0,
+  marketplace_sales int not null default 0,
+  banner_impressions int not null default 0,
+  last_calculated_at timestamptz default now(),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists er_user_id_idx on public.eagoh_reputation(user_id);
+create index if not exists er_rank_idx on public.eagoh_reputation(rank);
+create index if not exists er_score_idx on public.eagoh_reputation(reputation_score desc);
+
+alter table public.eagoh_reputation enable row level security;
+
+drop policy if exists "er_select_all" on public.eagoh_reputation;
+drop policy if exists "er_owner_insert" on public.eagoh_reputation;
+drop policy if exists "er_owner_update" on public.eagoh_reputation;
+
+create policy "er_select_all" on public.eagoh_reputation
+  for select using (true);
+
+create policy "er_owner_insert" on public.eagoh_reputation
+  for insert with check (auth.uid() = user_id);
+
+create policy "er_owner_update" on public.eagoh_reputation
+  for update using (auth.uid() = user_id);
+
+-- =====================================================================
+-- EAGOH RANK HISTORY (tracks rank promotions/demotions over time)
+-- =====================================================================
+create table if not exists public.eagoh_rank_history (
+  id uuid primary key default gen_random_uuid(),
+  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  previous_rank text,
+  new_rank text not null,
+  reputation_score int not null default 0,
+  reason text,
+  created_at timestamptz default now()
+);
+
+create index if not exists erh_eagoh_idx on public.eagoh_rank_history(eagoh_id, created_at desc);
+create index if not exists erh_user_idx on public.eagoh_rank_history(user_id, created_at desc);
+
+alter table public.eagoh_rank_history enable row level security;
+
+drop policy if exists "erh_select_all" on public.eagoh_rank_history;
+drop policy if exists "erh_owner_insert" on public.eagoh_rank_history;
+
+create policy "erh_select_all" on public.eagoh_rank_history
+  for select using (true);
+
+create policy "erh_owner_insert" on public.eagoh_rank_history
+  for insert with check (auth.uid() = user_id);
+
+-- =====================================================================
+-- EAGOH BADGES (earned profile badges per EAGOH)
+-- =====================================================================
+create table if not exists public.eagoh_badges (
+  id uuid primary key default gen_random_uuid(),
+  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  badge_id text not null,
+  badge_name text not null,
+  badge_description text,
+  earned_at timestamptz default now(),
+  unique(eagoh_id, badge_id)
+);
+
+create index if not exists eb_eagoh_idx on public.eagoh_badges(eagoh_id);
+create index if not exists eb_user_idx on public.eagoh_badges(user_id);
+
+alter table public.eagoh_badges enable row level security;
+
+drop policy if exists "eb_select_all" on public.eagoh_badges;
+drop policy if exists "eb_owner_insert" on public.eagoh_badges;
+
+create policy "eb_select_all" on public.eagoh_badges
+  for select using (true);
+
+create policy "eb_owner_insert" on public.eagoh_badges
+  for insert with check (auth.uid() = user_id);
+
+-- =====================================================================
 -- STORAGE BUCKET: eagoh-renders (public read, owner write)
 -- Optional: rendered images are already CDN-hosted; the bucket is here
 -- for projects that want to mirror copies into Supabase Storage.

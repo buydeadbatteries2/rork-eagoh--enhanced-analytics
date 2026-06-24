@@ -14,10 +14,10 @@ export const TIER_FACTION_LIMITS: Record<
   SubscriptionTier,
   { maxFactions: number; includedSlots: number; maxMembers: number; canCreate: boolean; canJoin: boolean }
 > = {
-  free:        { maxFactions: 0, includedSlots: 0, maxMembers: 0,  canCreate: false, canJoin: false },
-  pro:         { maxFactions: 1, includedSlots: 3, maxMembers: 10,  canCreate: true,  canJoin: true },
-  oracle_elite:{ maxFactions: 2, includedSlots: 5, maxMembers: 25,  canCreate: true,  canJoin: true },
-  syndicate:  { maxFactions: 3, includedSlots: 10, maxMembers: 100, canCreate: true,  canJoin: true },
+  free:         { maxFactions: 0, includedSlots: 0, maxMembers: 0,   canCreate: false, canJoin: false },
+  pro:          { maxFactions: 1, includedSlots: 3, maxMembers: 10,  canCreate: true,  canJoin: true },
+  oracle_elite: { maxFactions: 2, includedSlots: 5, maxMembers: 25,  canCreate: true,  canJoin: true },
+  syndicate:    { maxFactions: 3, includedSlots: 10, maxMembers: 100, canCreate: true,  canJoin: true },
 };
 
 /** Slot expansion Edge costs */
@@ -27,6 +27,14 @@ export const SLOT_EXPANSION_COSTS: { slots: number; cost: number }[] = [
   { slots: 10, cost: 175 },
 ];
 
+// ── Validation constants ───────────────────────────────────────────────
+
+export const FACTION_VALIDATION = {
+  nameMax: 40,
+  descriptionMax: 250,
+  mottoMax: 80,
+} as const;
+
 // ── DB Row types ───────────────────────────────────────────────────────
 
 export type FactionRow = {
@@ -34,6 +42,8 @@ export type FactionRow = {
   commander_id: string;
   name: string;
   description: string | null;
+  motto: string | null;
+  fanatic_team_focus: string | null;
   emblem: string | null;
   intelligence_domain: string;
   included_members: number;
@@ -103,6 +113,50 @@ export type FactionMemberDisplay = FactionMemberRow & {
   username?: string | null;
 };
 
+// ── Activity event descriptions ────────────────────────────────────────
+
+const ACTIVITY_LABELS: Record<string, string> = {
+  faction_created: "Faction founded",
+  member_joined: "joined the Faction",
+  member_left: "left the Faction",
+  member_dormant: "entered dormant status",
+  grace_period_started: "entered 7-day grace period",
+  grace_period_ended: "grace period expired",
+  invite_sent: "sent an invitation",
+  invite_accepted: "accepted an invitation",
+  invite_declined: "declined an invitation",
+  role_changed: "role changed",
+  intel_shared: "shared new intelligence",
+  slots_expanded: "expanded member slots",
+  faction_updated: "updated faction details",
+};
+
+export function describeActivity(row: FactionActivityRow): string {
+  const base = ACTIVITY_LABELS[row.kind] ?? row.kind.replace(/_/g, " ");
+  const details = row.details as Record<string, unknown> | undefined;
+
+  switch (row.kind) {
+    case "invite_sent":
+      return `Commander sent an invitation`;
+    case "invite_accepted":
+      return `${details?.username ?? "An analyst"} joined via invite`;
+    case "member_joined":
+      return `${details?.username ?? "An analyst"} joined the Faction`;
+    case "intel_shared":
+      return `${details?.username ?? "A member"} contributed new intelligence`;
+    case "role_changed":
+      return `${details?.username ?? "Member"} promoted to ${details?.new_role ?? "new role"}`;
+    case "slots_expanded":
+      return `Commander purchased +${details?.slots ?? "?"} slots (${details?.cost ?? "?"} Edge)`;
+    case "member_dormant":
+      return `${details?.username ?? "A member"} became dormant — subscription expired`;
+    case "grace_period_started":
+      return `${details?.username ?? "A member"} entered grace period (${details?.days ?? 7} days)`;
+    default:
+      return base;
+  }
+}
+
 // ── Faction Intelligence Score ─────────────────────────────────────────
 
 export interface FactionIntelScore {
@@ -128,16 +182,9 @@ export function computeFactionIntelScore(
   avgQualityScore: number,
   recentActivityCount: number,
 ): FactionIntelScore {
-  // Active members: cap at 20 for scoring saturation
   const memberScore = Math.min(35, Math.round((activePaidMembers / 20) * 35));
-
-  // Shared entries: cap at 50 for saturation
   const entryScore = Math.min(30, Math.round((sharedEntryCount / 50) * 30));
-
-  // Average quality: 0–100 scaled to 0–25
   const qualityScore = Math.round((avgQualityScore / 100) * 25);
-
-  // Recent activity (last 7 days): cap at 30 for saturation
   const activityScore = Math.min(10, Math.round((recentActivityCount / 30) * 10));
 
   const score = Math.max(0, Math.min(100, memberScore + entryScore + qualityScore + activityScore));
@@ -157,10 +204,21 @@ export function getFactionLimit(tier: SubscriptionTier): typeof TIER_FACTION_LIM
   return TIER_FACTION_LIMITS[tier] ?? TIER_FACTION_LIMITS.free;
 }
 
-/** Whether the user can create/join ANY faction based on their tier */
 export function canParticipateInFactions(tier: SubscriptionTier): boolean {
   const limits = getFactionLimit(tier);
   return limits.canCreate || limits.canJoin;
+}
+
+// ── Member count enforcement ───────────────────────────────────────────
+
+/** Count how many factions a user is already a member of (any status). */
+export async function countUserFactionMemberships(userId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from("faction_members")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId);
+  if (error) throw error;
+  return count ?? 0;
 }
 
 // ── CRUD: Factions ─────────────────────────────────────────────────────
@@ -170,6 +228,8 @@ export type CreateFactionInput = {
   profile: UserProfile;
   name: string;
   description?: string;
+  motto?: string;
+  fanaticTeamFocus?: string;
   emblem?: string;
   intelligence_domain: string;
 };
@@ -186,6 +246,21 @@ export async function createFaction(input: CreateFactionInput): Promise<CreateFa
     return { ok: false, error: "Free users cannot create Factions. Upgrade to Pro, Oracle Elite, or Syndicate to lead an alliance." };
   }
 
+  // Validate lengths
+  const name = input.name.trim();
+  if (!name) return { ok: false, error: "Faction name is required." };
+  if (name.length > FACTION_VALIDATION.nameMax) {
+    return { ok: false, error: `Faction name must be ${FACTION_VALIDATION.nameMax} characters or fewer.` };
+  }
+  const description = (input.description ?? "").trim();
+  if (description.length > FACTION_VALIDATION.descriptionMax) {
+    return { ok: false, error: `Description must be ${FACTION_VALIDATION.descriptionMax} characters or fewer.` };
+  }
+  const motto = (input.motto ?? "").trim();
+  if (motto.length > FACTION_VALIDATION.mottoMax) {
+    return { ok: false, error: `Motto must be ${FACTION_VALIDATION.mottoMax} characters or fewer.` };
+  }
+
   // Count how many factions this user commands
   const { count, error: countErr } = await supabase
     .from("factions")
@@ -198,8 +273,10 @@ export async function createFaction(input: CreateFactionInput): Promise<CreateFa
 
   const payload = {
     commander_id: input.userId,
-    name: input.name.trim(),
-    description: input.description ?? null,
+    name,
+    description: description || null,
+    motto: motto || null,
+    fanatic_team_focus: input.fanaticTeamFocus?.trim() || null,
     emblem: input.emblem ?? null,
     intelligence_domain: input.intelligence_domain,
     included_members: limits.includedSlots,
@@ -244,7 +321,7 @@ export async function getFactionFull(factionId: string): Promise<FactionFull | n
     .maybeSingle();
   if (error || !faction) return null;
 
-  const [members, invites, recentActivity, sharedEntries] = await Promise.all([
+  const [membersRes, invitesRes, recentActivityRes, sharedEntriesRes] = await Promise.all([
     supabase.from("faction_members").select("*").eq("faction_id", factionId),
     supabase.from("faction_invites").select("*").eq("faction_id", factionId).eq("status", "pending"),
     supabase.from("faction_activity").select("*").eq("faction_id", factionId).order("created_at", { ascending: false }).limit(30),
@@ -253,15 +330,14 @@ export async function getFactionFull(factionId: string): Promise<FactionFull | n
 
   return {
     ...(faction as FactionRow),
-    members: (members.data ?? []) as FactionMemberRow[],
-    invites: (invites.data ?? []) as FactionInviteRow[],
-    recentActivity: (recentActivity.data ?? []) as FactionActivityRow[],
-    sharedEntries: (sharedEntries.data ?? []) as FactionSharedIntelRow[],
+    members: (membersRes.data ?? []) as FactionMemberRow[],
+    invites: (invitesRes.data ?? []) as FactionInviteRow[],
+    recentActivity: (recentActivityRes.data ?? []) as FactionActivityRow[],
+    sharedEntries: (sharedEntriesRes.data ?? []) as FactionSharedIntelRow[],
   };
 }
 
 export async function listUserFactions(userId: string): Promise<FactionRow[]> {
-  // Factions where the user is a member
   const { data: memberRows, error: memberErr } = await supabase
     .from("faction_members")
     .select("faction_id")
@@ -307,6 +383,12 @@ export async function joinFaction(
     return { ok: false, error: "Free users cannot join Factions. Upgrade to a paid tier to become an Analyst." };
   }
 
+  // Enforce member count per tier
+  const currentCount = await countUserFactionMemberships(userId);
+  if (currentCount >= limits.maxFactions) {
+    return { ok: false, error: `Your ${profile.subscription_tier} tier allows only ${limits.maxFactions} Faction${limits.maxFactions === 1 ? "" : "s"}. Leave one first.` };
+  }
+
   // Check if already a member
   const { data: existing } = await supabase
     .from("faction_members")
@@ -319,12 +401,12 @@ export async function joinFaction(
   // Check faction capacity
   const { data: faction } = await supabase
     .from("factions")
-    .select("max_members,current_members,commander_id")
+    .select("max_members,current_members,commander_id,name")
     .eq("id", factionId)
     .maybeSingle();
   if (!faction) return { ok: false, error: "Faction not found." };
 
-  const f = faction as { max_members: number; current_members: number; commander_id: string };
+  const f = faction as { max_members: number; current_members: number; commander_id: string; name: string };
   if (f.current_members >= f.max_members) {
     return { ok: false, error: "Faction is at maximum capacity." };
   }
@@ -351,19 +433,74 @@ export async function joinFaction(
     faction_id: factionId,
     user_id: userId,
     kind: "member_joined",
-    details: { role },
+    details: { role, faction_name: f.name },
   });
 
   return { ok: true, member: member as FactionMemberRow };
 }
 
+// ── Leave faction ──────────────────────────────────────────────────────
+
+export async function leaveFaction(
+  factionId: string,
+  userId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  // Commander cannot leave — must transfer or disband
+  const { data: faction } = await supabase
+    .from("factions")
+    .select("commander_id")
+    .eq("id", factionId)
+    .maybeSingle();
+  if (!faction) return { ok: false, error: "Faction not found." };
+
+  const f = faction as { commander_id: string };
+  if (f.commander_id === userId) {
+    return { ok: false, error: "Commanders cannot leave their Faction. Transfer command or disband instead." };
+  }
+
+  // Remove member
+  await supabase
+    .from("faction_members")
+    .delete()
+    .eq("faction_id", factionId)
+    .eq("user_id", userId);
+
+  // Remove shared intelligence from this member
+  await supabase
+    .from("faction_shared_intelligence")
+    .delete()
+    .eq("faction_id", factionId)
+    .eq("user_id", userId);
+
+  // Update member count
+  const { data: current } = await supabase
+    .from("factions")
+    .select("current_members")
+    .eq("id", factionId)
+    .maybeSingle();
+  if (current) {
+    const c = current as { current_members: number };
+    await supabase
+      .from("factions")
+      .update({ current_members: Math.max(0, c.current_members - 1) })
+      .eq("id", factionId);
+  }
+
+  // Log activity
+  await supabase.from("faction_activity").insert({
+    faction_id: factionId,
+    user_id: userId,
+    kind: "member_left",
+    details: {},
+  });
+
+  await recalculateFactionScore(factionId);
+
+  return { ok: true };
+}
+
 // ── Grace period & dormancy ────────────────────────────────────────────
 
-/**
- * Mark a member as dormant. Called when a paid user downgrades to free.
- * Their intelligence is removed from the shared pool but kept on their
- * personal EAGOH. They enter a 7-day grace period first.
- */
 export async function setMemberDormant(factionId: string, userId: string): Promise<void> {
   const now = new Date().toISOString();
   await supabase
@@ -386,9 +523,10 @@ export async function setMemberDormant(factionId: string, userId: string): Promi
     kind: "member_dormant",
     details: { reason: "Subscription downgraded" },
   });
+
+  await recalculateFactionScore(factionId);
 }
 
-/** Enter grace period (called immediately on downgrade) */
 export async function setMemberGracePeriod(factionId: string, userId: string): Promise<void> {
   const now = new Date().toISOString();
   await supabase
@@ -405,10 +543,6 @@ export async function setMemberGracePeriod(factionId: string, userId: string): P
   });
 }
 
-/**
- * Check and enforce grace period expiry. Should be called on app load
- * or periodically. If grace period has expired, member becomes dormant.
- */
 export async function enforceGracePeriods(userId: string): Promise<void> {
   const cutoff = new Date(Date.now() - GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
@@ -432,7 +566,6 @@ export type ShareIntelResult =
   | { ok: true; shared: FactionSharedIntelRow }
   | { ok: false; error: string };
 
-/** Share an Open Intelligence entry to a faction. Only active paid members can share. */
 export async function shareIntelToFaction(
   factionId: string,
   userId: string,
@@ -444,7 +577,6 @@ export async function shareIntelToFaction(
     return { ok: false, error: "Only paid subscribers can share intelligence inside Factions." };
   }
 
-  // Check member is active
   const { data: member } = await supabase
     .from("faction_members")
     .select("status")
@@ -458,7 +590,6 @@ export async function shareIntelToFaction(
     return { ok: false, error: "Only active members can share intelligence." };
   }
 
-  // Check entry belongs to user
   const { data: entry } = await supabase
     .from("open_intelligence")
     .select("id")
@@ -466,6 +597,15 @@ export async function shareIntelToFaction(
     .eq("user_id", userId)
     .maybeSingle();
   if (!entry) return { ok: false, error: "Intelligence entry not found." };
+
+  // Check not already shared
+  const { data: already } = await supabase
+    .from("faction_shared_intelligence")
+    .select("id")
+    .eq("faction_id", factionId)
+    .eq("oi_entry_id", oiEntryId)
+    .maybeSingle();
+  if (already) return { ok: false, error: "This entry is already shared to this Faction." };
 
   const { data: shared, error } = await supabase
     .from("faction_shared_intelligence")
@@ -483,7 +623,6 @@ export async function shareIntelToFaction(
     details: { oi_entry_id: oiEntryId },
   });
 
-  // Update faction influence score
   await recalculateFactionScore(factionId);
 
   return { ok: true, shared: shared as FactionSharedIntelRow };
@@ -495,10 +634,6 @@ export type PurchaseSlotsResult =
   | { ok: true; faction: FactionRow; remainingBalance: UserProfile }
   | { ok: false; error: string };
 
-/**
- * Purchase expansion slots for a faction using Edge.
- * Deducts subscription Edge first, then purchased.
- */
 export async function purchaseFactionSlots(
   factionId: string,
   userId: string,
@@ -515,7 +650,6 @@ export async function purchaseFactionSlots(
     return { ok: false, error: `Need ${costEntry.cost} Edge for +${slotsToBuy} slots. You have ${totalEdge}.` };
   }
 
-  // Check commander
   const { data: faction } = await supabase
     .from("factions")
     .select("*")
@@ -526,7 +660,6 @@ export async function purchaseFactionSlots(
 
   const f = faction as FactionRow;
 
-  // Deduct Edge
   let updatedProfile: UserProfile;
   try {
     updatedProfile = await spendEdge(
@@ -549,12 +682,10 @@ export async function purchaseFactionSlots(
     .single();
 
   if (updErr || !updated) {
-    // Edge was already deducted, but update failed — log and return gracefully
     console.warn("[factions] slot expansion update failed after edge deduction", updErr?.message);
     return { ok: false, error: "Slot expansion failed. Edge was deducted — contact support." };
   }
 
-  // Record purchase
   await supabase.from("faction_slot_purchases").insert({
     faction_id: factionId,
     user_id: userId,
@@ -562,7 +693,6 @@ export async function purchaseFactionSlots(
     edge_cost: costEntry.cost,
   });
 
-  // Log activity
   await supabase.from("faction_activity").insert({
     faction_id: factionId,
     user_id: userId,
@@ -581,19 +711,17 @@ export async function inviteToFaction(
   inviteeId: string,
   role: FactionRole = "analyst",
 ): Promise<{ ok: boolean; error?: string }> {
-  // Check faction capacity
   const { data: faction } = await supabase
     .from("factions")
-    .select("max_members,current_members,commander_id")
+    .select("max_members,current_members,commander_id,name")
     .eq("id", factionId)
     .maybeSingle();
   if (!faction) return { ok: false, error: "Faction not found." };
 
-  const f = faction as { max_members: number; current_members: number; commander_id: string };
+  const f = faction as { max_members: number; current_members: number; commander_id: string; name: string };
   if (f.commander_id !== inviterId) return { ok: false, error: "Only the Commander can send invites." };
   if (f.current_members >= f.max_members) return { ok: false, error: "Faction is at maximum capacity." };
 
-  // Check already invited or member
   const { data: existingMember } = await supabase
     .from("faction_members")
     .select("id")
@@ -620,7 +748,6 @@ export async function inviteToFaction(
 
   if (error) return { ok: false, error: error.message };
 
-  // Log activity
   await supabase.from("faction_activity").insert({
     faction_id: factionId,
     user_id: inviterId,
@@ -641,6 +768,12 @@ export async function acceptInvite(
     return { ok: false, error: "Free users cannot join Factions." };
   }
 
+  // Enforce member count per tier
+  const currentCount = await countUserFactionMemberships(userId);
+  if (currentCount >= limits.maxFactions) {
+    return { ok: false, error: `Your ${profile.subscription_tier} tier allows only ${limits.maxFactions} Faction${limits.maxFactions === 1 ? "" : "s"}. Leave one first.` };
+  }
+
   const { data: invite } = await supabase
     .from("faction_invites")
     .select("*")
@@ -652,35 +785,54 @@ export async function acceptInvite(
 
   const inv = invite as FactionInviteRow;
 
-  // Check expiry
   if (new Date(inv.expires_at) < new Date()) {
     await supabase.from("faction_invites").update({ status: "declined" }).eq("id", inviteId);
     return { ok: false, error: "This invite has expired." };
   }
 
-  // Join the faction
   const result = await joinFaction(userId, profile, inv.faction_id);
   if (!result.ok) return result;
 
-  // Mark invite as accepted
   await supabase.from("faction_invites").update({ status: "accepted" }).eq("id", inviteId);
 
-  // Update member role from invite
   await supabase
     .from("faction_members")
     .update({ role: inv.role })
     .eq("faction_id", inv.faction_id)
     .eq("user_id", userId);
 
+  await supabase.from("faction_activity").insert({
+    faction_id: inv.faction_id,
+    user_id: userId,
+    kind: "invite_accepted",
+    details: { role: inv.role },
+  });
+
   return result;
 }
 
 export async function declineInvite(inviteId: string, userId: string): Promise<void> {
+  const { data: invite } = await supabase
+    .from("faction_invites")
+    .select("faction_id")
+    .eq("id", inviteId)
+    .eq("invitee_id", userId)
+    .maybeSingle();
+
   await supabase
     .from("faction_invites")
     .update({ status: "declined" })
     .eq("id", inviteId)
     .eq("invitee_id", userId);
+
+  if (invite) {
+    await supabase.from("faction_activity").insert({
+      faction_id: (invite as { faction_id: string }).faction_id,
+      user_id: userId,
+      kind: "invite_declined",
+      details: {},
+    });
+  }
 }
 
 export async function listPendingInvites(userId: string): Promise<FactionInviteRow[]> {
@@ -726,7 +878,6 @@ export async function promoteMember(
 // ── Scoring recalculation ──────────────────────────────────────────────
 
 export async function recalculateFactionScore(factionId: string): Promise<void> {
-  // Count active paid members (non-dormant, non-grace-period)
   const { count: activeCount, error: countErr } = await supabase
     .from("faction_members")
     .select("id", { count: "exact", head: true })
@@ -734,14 +885,12 @@ export async function recalculateFactionScore(factionId: string): Promise<void> 
     .eq("status", "active");
   if (countErr) return;
 
-  // Count shared entries
   const { count: sharedCount, error: sharedErr } = await supabase
     .from("faction_shared_intelligence")
     .select("id", { count: "exact", head: true })
     .eq("faction_id", factionId);
   if (sharedErr) return;
 
-  // Get average quality score from linked open_intelligence entries
   const { data: sharedEntries } = await supabase
     .from("faction_shared_intelligence")
     .select("oi_entry_id")
@@ -759,7 +908,6 @@ export async function recalculateFactionScore(factionId: string): Promise<void> 
     }
   }
 
-  // Count recent activity (last 7 days)
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const { count: activityCount, error: actErr } = await supabase
     .from("faction_activity")

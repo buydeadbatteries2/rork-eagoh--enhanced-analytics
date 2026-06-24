@@ -244,6 +244,8 @@ create table if not exists public.factions (
   commander_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
   description text,
+  motto text,
+  fanatic_team_focus text,
   emblem text,
   intelligence_domain text not null default 'sports',
   included_members int not null default 3,
@@ -252,6 +254,9 @@ create table if not exists public.factions (
   influence_score int not null default 0,
   created_at timestamptz default now()
 );
+-- additive migrations
+alter table public.factions add column if not exists motto text;
+alter table public.factions add column if not exists fanatic_team_focus text;
 
 create index if not exists factions_commander_id_idx on public.factions(commander_id);
 

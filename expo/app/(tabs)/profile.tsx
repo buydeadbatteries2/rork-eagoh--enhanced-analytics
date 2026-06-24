@@ -233,11 +233,11 @@ export default function ProfileScreen(): JSX.Element {
     if (item.kind === "features") {
       const handleLabsPress = (): void => {
         Haptics.selectionAsync().catch(() => undefined);
-        router.push("/(tabs)/labs" as never);
+        router.push("/labs" as never);
       };
       const handleFactionsPress = (): void => {
         Haptics.selectionAsync().catch(() => undefined);
-        router.push("/(tabs)/factions" as never);
+        router.push("/factions" as never);
       };
       return (
         <View style={styles.panel}>

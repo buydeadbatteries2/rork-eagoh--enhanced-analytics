@@ -19,6 +19,14 @@ function RootLayoutNav(): JSX.Element {
   return (
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#03060B" } }}>
       <Stack.Screen name="(tabs)" />
+      <Stack.Screen
+        name="labs"
+        options={{ presentation: "modal", headerShown: false }}
+      />
+      <Stack.Screen
+        name="factions"
+        options={{ presentation: "modal", headerShown: false }}
+      />
     </Stack>
   );
 }

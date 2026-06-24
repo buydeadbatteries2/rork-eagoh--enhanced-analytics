@@ -27,6 +27,10 @@ function RootLayoutNav(): JSX.Element {
         name="factions"
         options={{ presentation: "modal", headerShown: false }}
       />
+      <Stack.Screen
+        name="open-intelligence"
+        options={{ presentation: "modal", headerShown: false }}
+      />
     </Stack>
   );
 }

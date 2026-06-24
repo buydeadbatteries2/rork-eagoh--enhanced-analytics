@@ -3,7 +3,7 @@ import { LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/components/Pe
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
-import { Activity, BadgeCheck, BarChart3, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Shield, Sparkles, Swords, TrendingUp, WalletCards, Zap } from "lucide-react-native";
+import { Activity, BadgeCheck, BarChart3, BrainCircuit, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Shield, Sparkles, Swords, TrendingUp, WalletCards, Zap } from "lucide-react-native";
 import React, { memo, useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -239,9 +239,13 @@ export default function ProfileScreen(): JSX.Element {
         Haptics.selectionAsync().catch(() => undefined);
         router.push("/factions" as never);
       };
+      const handleOpenIntelPress = (): void => {
+        Haptics.selectionAsync().catch(() => undefined);
+        router.push("/open-intelligence" as never);
+      };
       return (
         <View style={styles.panel}>
-          <SectionTitle eyebrow="FEATURES" title="Labs & Factions" />
+          <SectionTitle eyebrow="FEATURES" title="Labs, Factions & Intelligence" />
           <Pressable onPress={handleLabsPress} style={({ pressed }) => [styles.featureCard, pressed && { opacity: 0.8 }]}>
             <View style={[styles.featureIconWrap, { borderColor: "rgba(108,230,255,0.4)" }]}>
               <FlaskConical color={palette.cyan} size={20} />
@@ -249,6 +253,15 @@ export default function ProfileScreen(): JSX.Element {
             <View style={styles.featureInfo}>
               <Text style={styles.featureTitle}>EAGOH Forge & Labs</Text>
               <Text style={styles.featureDesc}>Create EAGOHs with brain-in-glass-dome, full-body cybernetic chassis, domain intelligence tuning, and open intelligence observation feeds.</Text>
+            </View>
+          </Pressable>
+          <Pressable onPress={handleOpenIntelPress} style={({ pressed }) => [styles.featureCard, pressed && { opacity: 0.8 }]}>
+            <View style={[styles.featureIconWrap, { borderColor: "rgba(255,181,71,0.4)" }]}>
+              <BrainCircuit color={palette.gold} size={20} />
+            </View>
+            <View style={styles.featureInfo}>
+              <Text style={styles.featureTitle}>Open Intelligence</Text>
+              <Text style={styles.featureDesc}>Feed observations into your EAGOHs. Select domain, entry depth, tag signals, and confidence levels. Quality-scored and Edge-gated.</Text>
             </View>
           </Pressable>
           <Pressable onPress={handleFactionsPress} style={({ pressed }) => [styles.featureCard, pressed && { opacity: 0.8 }]}>

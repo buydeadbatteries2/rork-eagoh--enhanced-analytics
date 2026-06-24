@@ -202,6 +202,41 @@ create policy "eagoh_image_generations_self_insert" on public.eagoh_image_genera
   for insert with check (auth.uid() = user_id);
 
 -- =====================================================================
+-- OPEN INTELLIGENCE (user-submitted observation entries per EAGOH)
+-- =====================================================================
+create table if not exists public.open_intelligence (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
+  intelligence_domain text not null,
+  entry_type text not null,
+  tag text not null,
+  content text not null,
+  character_count_no_spaces int not null default 0,
+  confidence_level text not null default 'moderate_confidence',
+  quality_score int not null default 0,
+  validation_status text not null default 'pending_review',
+  influence_score int not null default 0,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists oi_user_id_idx on public.open_intelligence(user_id, created_at desc);
+create index if not exists oi_eagoh_id_idx on public.open_intelligence(eagoh_id, created_at desc);
+create index if not exists oi_domain_idx on public.open_intelligence(intelligence_domain);
+
+alter table public.open_intelligence enable row level security;
+
+drop policy if exists "oi_self_select" on public.open_intelligence;
+drop policy if exists "oi_self_insert" on public.open_intelligence;
+
+create policy "oi_self_select" on public.open_intelligence
+  for select using (auth.uid() = user_id);
+
+create policy "oi_self_insert" on public.open_intelligence
+  for insert with check (auth.uid() = user_id);
+
+-- =====================================================================
 -- STORAGE BUCKET: eagoh-renders (public read, owner write)
 -- Optional: rendered images are already CDN-hosted; the bucket is here
 -- for projects that want to mirror copies into Supabase Storage.

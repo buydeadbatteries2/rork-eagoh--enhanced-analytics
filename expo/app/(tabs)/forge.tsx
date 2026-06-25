@@ -5,6 +5,11 @@
  * footwear, accessories, notes) are now free-text descriptions. Sport and
  * Fanatic Teams only appear when the selected domain is Sports. Forge Lab
  * is its own separate step.
+ *
+ * Keyboard handling: preview/header are fixed outside KeyboardAvoidingView.
+ * Only the wizard ScrollView is wrapped in KAV so keyboard avoidance resizes
+ * just the scrollable area. Focused inputs are scrolled into view via
+ * measureInWindow.
  */
 
 import { palette } from "@/constants/colors";
@@ -31,7 +36,7 @@ import {
   Sparkles,
   Zap,
 } from "lucide-react-native";
-import React, { memo, useCallback, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Keyboard,
@@ -306,8 +311,30 @@ export default function ForgeScreen(): JSX.Element {
   const [lab, setLab] = useState<string>("neon-vault");
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
   const [forgeError, setForgeError] = useState<string | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState<number>(0);
+
   const scrollViewRef = useRef<ScrollView>(null);
-  const inputLayouts = useRef<Record<string, number>>({});
+  const scrollYRef = useRef<number>(0);
+  /** Stores native TextInput refs keyed by the step id they belong to. */
+  const inputRefs = useRef<Record<string, TextInput | null>>({});
+
+  /** Track keyboard height so we know how much screen real estate is lost. */
+  useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const currentTier = profile?.subscription_tier ?? tier ?? "free";
   const multiplier = TIER_MULTIPLIER[currentTier] ?? 0;
@@ -418,14 +445,61 @@ export default function ForgeScreen(): JSX.Element {
     prepareForge(draft, "initial");
   }, [domain.length, draft, name, prepareForge]);
 
-  const handleInputFocus = useCallback((inputKey: string): void => {
-    const y = inputLayouts.current[inputKey];
-    if (y != null && scrollViewRef.current) {
-      setTimeout(() => {
-        scrollViewRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: true });
-      }, 120);
-    }
+  // ── Keyboard-aware scroll helpers ──────────────────────────────────
+
+  /** Callback ref factory — stores a native TextInput ref keyed by step id. */
+  const registerInputRef = useCallback(
+    (key: string) => (ref: TextInput | null): void => {
+      inputRefs.current[key] = ref;
+    },
+    [],
+  );
+
+  /** Track current scroll offset so we can add relative deltas. */
+  const handleScroll = useCallback((e: { nativeEvent: { contentOffset: { y: number } } }): void => {
+    scrollYRef.current = e.nativeEvent.contentOffset.y;
   }, []);
+
+  /**
+   * When a TextInput gains focus, measure its absolute screen position
+   * and scroll the wizard ScrollView so the input stays visible above
+   * the soft keyboard.
+   */
+  const scrollInputIntoView = useCallback(
+    (inputKey: string): void => {
+      const ref = inputRefs.current[inputKey];
+      if (!ref) return;
+
+      // Wait for the keyboard-avoidance layout to settle.
+      setTimeout(() => {
+        ref.measureInWindow((_x, inputY, _w, inputHeight) => {
+          // inputY is the absolute Y of the TextInput on-screen.
+          const inputBottom = inputY + inputHeight;
+
+          // CTA bar is ~66 px tall. Leave 12 px breathing room above it.
+          const ctaPad = 66 + 12;
+          const safeBottom = windowHeight - keyboardHeight - ctaPad;
+
+          if (inputBottom > safeBottom) {
+            const overflow = inputBottom - safeBottom;
+            scrollViewRef.current?.scrollTo({
+              y: scrollYRef.current + overflow + 16,
+              animated: true,
+            });
+          }
+        });
+      }, 180);
+    },
+    [keyboardHeight, windowHeight],
+  );
+
+  /** Convenience — store ref AND scroll into view on focus. */
+  const handleInputFocus = useCallback(
+    (inputKey: string): void => {
+      scrollInputIntoView(inputKey);
+    },
+    [scrollInputIntoView],
+  );
 
   const handlePrimaryAction = useCallback((): void => {
     if (isLastStep) handleForge();
@@ -444,13 +518,13 @@ export default function ForgeScreen(): JSX.Element {
     cancelForge();
   }, [cancelForge]);
 
-  const renderTextInput = useCallback((inputKey: string, value: string, onChange: (text: string) => void, placeholder: string): JSX.Element => (
-    <View
-      onLayout={(e): void => {
-        inputLayouts.current[inputKey] = e.nativeEvent.layout.y;
-      }}
-    >
+  // ── Step content renderers ─────────────────────────────────────────
+
+  /** Shared multiline TextInput for description fields (headwear, body gear, etc.). */
+  const renderTextInput = useCallback(
+    (inputKey: string, value: string, onChange: (text: string) => void, placeholder: string): JSX.Element => (
       <TextInput
+        ref={registerInputRef(inputKey)}
         value={value}
         onChangeText={onChange}
         onFocus={(): void => handleInputFocus(inputKey)}
@@ -461,28 +535,24 @@ export default function ForgeScreen(): JSX.Element {
         blurOnSubmit={false}
         returnKeyType="done"
       />
-    </View>
-  ), [handleInputFocus]);
+    ),
+    [handleInputFocus, registerInputRef],
+  );
 
   const renderStepContent = useCallback((): JSX.Element => {
     if (currentStep.id === "name") {
       return (
-        <View
-          onLayout={(e): void => {
-            inputLayouts.current.name = e.nativeEvent.layout.y;
-          }}
-        >
-          <TextInput
-            value={name}
-            onChangeText={setName}
-            onFocus={(): void => handleInputFocus("name")}
-            placeholder="Enter EAGOH name…"
-            placeholderTextColor={palette.muted}
-            style={styles.input}
-            returnKeyType="next"
-            onSubmitEditing={goNext}
-          />
-        </View>
+        <TextInput
+          ref={registerInputRef("name")}
+          value={name}
+          onChangeText={setName}
+          onFocus={(): void => handleInputFocus("name")}
+          placeholder="Enter EAGOH name…"
+          placeholderTextColor={palette.muted}
+          style={styles.input}
+          returnKeyType="next"
+          onSubmitEditing={goNext}
+        />
       );
     }
 
@@ -534,22 +604,17 @@ export default function ForgeScreen(): JSX.Element {
 
     if (currentStep.id === "notes") {
       return (
-        <View
-          onLayout={(e): void => {
-            inputLayouts.current.notes = e.nativeEvent.layout.y;
-          }}
-        >
-          <TextInput
-            value={styleNotes}
-            onChangeText={setStyleNotes}
-            onFocus={(): void => handleInputFocus("notes")}
-            placeholder="e.g. matte black finish, gold trim, holographic accents…"
-            placeholderTextColor={palette.muted}
-            style={[styles.input, styles.textArea]}
-            multiline
-            blurOnSubmit={false}
-          />
-        </View>
+        <TextInput
+          ref={registerInputRef("notes")}
+          value={styleNotes}
+          onChangeText={setStyleNotes}
+          onFocus={(): void => handleInputFocus("notes")}
+          placeholder="e.g. matte black finish, gold trim, holographic accents…"
+          placeholderTextColor={palette.muted}
+          style={[styles.input, styles.textArea]}
+          multiline
+          blurOnSubmit={false}
+        />
       );
     }
 
@@ -598,9 +663,11 @@ export default function ForgeScreen(): JSX.Element {
     domain,
     gender,
     goNext,
+    handleInputFocus,
     lab,
     name,
     pose,
+    registerInputRef,
     renderTextInput,
     setAppearanceField,
     sport,
@@ -612,67 +679,84 @@ export default function ForgeScreen(): JSX.Element {
 
   const previewHeight = Math.min(windowHeight * 0.36, 330);
 
+  // ══════════════════════════════════════════════════════════════════
+  //  LAYOUT
+  //
+  //  Preview, info strip, and stepper stay fixed outside the keyboard
+  //  avoidance zone. Only the wizard ScrollView is wrapped in
+  //  KeyboardAvoidingView so that keyboard resizing only affects the
+  //  scrollable content area. The CTA bar is pinned below the scroll.
+  // ══════════════════════════════════════════════════════════════════
+
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}>
-        <View style={[styles.previewArea, { height: previewHeight }]}>
-          <ForgePreview
-            name={name}
-            sport={sport}
-            gender={gender}
-            domain={domain}
-            cyberneticIntensity={cyberneticIntensity}
-            pose={pose}
-            tier={currentTier}
-          />
-          <View style={[styles.tierChipFloat, currentTier !== "free" && styles.tierChipFloatPaid]}>
-            <Zap color={currentTier !== "free" ? palette.cyan : palette.muted} size={11} />
-            <Text style={[styles.tierChipFloatText, currentTier !== "free" && { color: palette.cyan }]}>
-              {currentTier.replace("_", " ").toUpperCase()}
-            </Text>
-          </View>
+      {/* ── Fixed header: preview + info + stepper ───────────────── */}
+      <View style={[styles.previewArea, { height: previewHeight }]}>
+        <ForgePreview
+          name={name}
+          sport={sport}
+          gender={gender}
+          domain={domain}
+          cyberneticIntensity={cyberneticIntensity}
+          pose={pose}
+          tier={currentTier}
+        />
+        <View style={[styles.tierChipFloat, currentTier !== "free" && styles.tierChipFloatPaid]}>
+          <Zap color={currentTier !== "free" ? palette.cyan : palette.muted} size={11} />
+          <Text style={[styles.tierChipFloatText, currentTier !== "free" && { color: palette.cyan }]}>
+            {currentTier.replace("_", " ").toUpperCase()}
+          </Text>
         </View>
+      </View>
 
-        <View style={styles.infoStrip}>
-          <Text style={styles.infoName} numberOfLines={1}>{name || "Unnamed EAGOH"}</Text>
-          <View style={styles.infoMeta}>
-            <Text style={styles.infoDomain}>{domainLabel}</Text>
-            <View style={styles.infoDot} />
-            <Text style={styles.infoShell}>{currentTier === "free" ? "DORMANT SHELL" : "ACTIVATED CHASSIS"}</Text>
-            <View style={styles.infoDot} />
-            <Text style={styles.infoSlots}>{remaining}/{maxEagohs} slots</Text>
-            {multiplier > 0 ? <Text style={styles.multiplier}>{multiplier.toFixed(1)}x</Text> : null}
-          </View>
+      <View style={styles.infoStrip}>
+        <Text style={styles.infoName} numberOfLines={1}>{name || "Unnamed EAGOH"}</Text>
+        <View style={styles.infoMeta}>
+          <Text style={styles.infoDomain}>{domainLabel}</Text>
+          <View style={styles.infoDot} />
+          <Text style={styles.infoShell}>{currentTier === "free" ? "DORMANT SHELL" : "ACTIVATED CHASSIS"}</Text>
+          <View style={styles.infoDot} />
+          <Text style={styles.infoSlots}>{remaining}/{maxEagohs} slots</Text>
+          {multiplier > 0 ? <Text style={styles.multiplier}>{multiplier.toFixed(1)}x</Text> : null}
         </View>
+      </View>
 
-        <View style={styles.stepperBar}>
-          <View style={styles.stepperTopRow}>
-            <Text style={styles.stepCounter}>{currentStepIndex + 1}/{wizardSteps.length}</Text>
-            <Text style={styles.stepMiniTitle} numberOfLines={1}>{currentStep.title}</Text>
-          </View>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${progressPercent}%` }]} />
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stepDotsContent}>
-            {wizardSteps.map((step, index) => {
-              const isActive = index === currentStepIndex;
-              const isComplete = index < currentStepIndex;
-              return (
-                <Pressable key={step.id} onPress={() => goToStep(index)} style={[styles.stepDot, isActive && styles.stepDotActive, isComplete && styles.stepDotComplete]}>
-                  <Text style={[styles.stepDotText, (isActive || isComplete) && styles.stepDotTextActive]}>{index + 1}</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
+      <View style={styles.stepperBar}>
+        <View style={styles.stepperTopRow}>
+          <Text style={styles.stepCounter}>{currentStepIndex + 1}/{wizardSteps.length}</Text>
+          <Text style={styles.stepMiniTitle} numberOfLines={1}>{currentStep.title}</Text>
         </View>
+        <View style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${progressPercent}%` }]} />
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stepDotsContent}>
+          {wizardSteps.map((step, index) => {
+            const isActive = index === currentStepIndex;
+            const isComplete = index < currentStepIndex;
+            return (
+              <Pressable key={step.id} onPress={() => goToStep(index)} style={[styles.stepDot, isActive && styles.stepDotActive, isComplete && styles.stepDotComplete]}>
+                <Text style={[styles.stepDotText, (isActive || isComplete) && styles.stepDotTextActive]}>{index + 1}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
 
+      {/* ── Keyboard-avoided wizard scroll area ───────────────────── */}
+      <KeyboardAvoidingView
+        style={styles.scrollWrapper}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
+      >
         <ScrollView
           ref={scrollViewRef}
           style={styles.wizardScroll}
           contentContainerStyle={styles.wizardContent}
           showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="always"
+          keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
         >
           <View style={styles.wizardCard}>
             <LinearGradient colors={["rgba(54,245,255,0.08)", "rgba(10,18,30,0.78)"]} style={StyleSheet.absoluteFill} />
@@ -695,50 +779,52 @@ export default function ForgeScreen(): JSX.Element {
             <Text style={styles.costPreviewValue}>{forgeCost} Edge</Text>
           </View>
 
-          <View style={styles.bottomSpacer} />
+          {/* Extra bottom padding so content can scroll well above the CTA + keyboard */}
+          <View style={[styles.bottomSpacer, { height: keyboardHeight > 0 ? keyboardHeight + 48 : 24 }]} />
         </ScrollView>
-
-        <View style={styles.ctaContainer}>
-          <LinearGradient colors={["rgba(2,4,10,0.0)", "rgba(2,4,10,0.92)", palette.void]} style={styles.ctaFade} pointerEvents="none" />
-          <View style={styles.ctaRow}>
-            <Pressable onPress={goBack} disabled={currentStepIndex === 0 || isGenerating} style={({ pressed }) => [styles.backButton, (currentStepIndex === 0 || isGenerating) && styles.disabledButton, pressed && styles.pressed]}>
-              <Text style={styles.backButtonText}>Back</Text>
-            </Pressable>
-            <Pressable
-              onPress={handlePrimaryAction}
-              disabled={isGenerating || !canCreate}
-              style={({ pressed }) => [styles.ctaButton, (!canCreate || isGenerating) && styles.disabledButton, pressed && styles.pressed]}
-            >
-              <LinearGradient colors={[palette.cyan, "rgba(61,165,255,0.85)"]} style={StyleSheet.absoluteFill} />
-              {isGenerating ? (
-                <ActivityIndicator color={palette.void} />
-              ) : (
-                <>
-                  <Sparkles color={palette.void} size={18} />
-                  <Text style={styles.ctaButtonText}>{!canCreate ? `Tier limit (${maxEagohs} max)` : isLastStep ? "REVIEW & CONFIRM" : "NEXT"}</Text>
-                </>
-              )}
-            </Pressable>
-          </View>
-        </View>
-
-        {pending ? (
-          <ConfirmationSheet
-            pending={pending}
-            onConfirm={handleConfirm}
-            onCancel={handleCancel}
-            isGenerating={isGenerating}
-            canAfford={edgeTotal >= pending.edgeCost}
-          />
-        ) : null}
       </KeyboardAvoidingView>
+
+      {/* ── Fixed bottom CTA bar ──────────────────────────────────── */}
+      <View style={styles.ctaContainer}>
+        <LinearGradient colors={["rgba(2,4,10,0.0)", "rgba(2,4,10,0.92)", palette.void]} style={styles.ctaFade} pointerEvents="none" />
+        <View style={styles.ctaRow}>
+          <Pressable onPress={goBack} disabled={currentStepIndex === 0 || isGenerating} style={({ pressed }) => [styles.backButton, (currentStepIndex === 0 || isGenerating) && styles.disabledButton, pressed && styles.pressed]}>
+            <Text style={styles.backButtonText}>Back</Text>
+          </Pressable>
+          <Pressable
+            onPress={handlePrimaryAction}
+            disabled={isGenerating || !canCreate}
+            style={({ pressed }) => [styles.ctaButton, (!canCreate || isGenerating) && styles.disabledButton, pressed && styles.pressed]}
+          >
+            <LinearGradient colors={[palette.cyan, "rgba(61,165,255,0.85)"]} style={StyleSheet.absoluteFill} />
+            {isGenerating ? (
+              <ActivityIndicator color={palette.void} />
+            ) : (
+              <>
+                <Sparkles color={palette.void} size={18} />
+                <Text style={styles.ctaButtonText}>{!canCreate ? `Tier limit (${maxEagohs} max)` : isLastStep ? "REVIEW & CONFIRM" : "NEXT"}</Text>
+              </>
+            )}
+          </Pressable>
+        </View>
+      </View>
+
+      {/* ── Confirmation overlay (sits above everything) ──────────── */}
+      {pending ? (
+        <ConfirmationSheet
+          pending={pending}
+          onConfirm={handleConfirm}
+          onCancel={handleCancel}
+          isGenerating={isGenerating}
+          canAfford={edgeTotal >= pending.edgeCost}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.void },
-  root: { flex: 1, backgroundColor: palette.void },
   previewArea: { position: "relative", marginHorizontal: 12, marginTop: 6 },
   previewStage: {
     flex: 1,
@@ -819,6 +905,9 @@ const styles = StyleSheet.create({
   stepDotComplete: { borderColor: "rgba(43,214,127,0.45)", backgroundColor: "rgba(43,214,127,0.10)" },
   stepDotText: { color: palette.muted, fontSize: 10, fontWeight: "900" },
   stepDotTextActive: { color: palette.text },
+
+  // ── Scrollable wizard (inside KeyboardAvoidingView) ──────────────
+  scrollWrapper: { flex: 1 },
   wizardScroll: { flex: 1 },
   wizardContent: { paddingHorizontal: 12, paddingTop: 8, gap: 8 },
   wizardCard: {
@@ -884,6 +973,8 @@ const styles = StyleSheet.create({
   costPreview: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8, paddingHorizontal: 4, marginTop: 2 },
   costPreviewLabel: { color: palette.muted, fontSize: 12, fontWeight: "800", flex: 1 },
   costPreviewValue: { color: palette.gold, fontSize: 16, fontWeight: "900" },
+
+  // ── Fixed bottom CTA ────────────────────────────────────────────
   ctaContainer: { paddingHorizontal: 12, paddingBottom: 12, paddingTop: 0 },
   ctaFade: { position: "absolute", top: -20, left: 0, right: 0, height: 20 },
   ctaRow: { flexDirection: "row", gap: 10 },
@@ -915,7 +1006,9 @@ const styles = StyleSheet.create({
   ctaButtonText: { color: palette.void, fontSize: 15, fontWeight: "900", letterSpacing: 1.2 },
   disabledButton: { opacity: 0.45 },
   pressed: { transform: [{ scale: 0.985 }], opacity: 0.88 },
-  bottomSpacer: { height: 8 },
+  bottomSpacer: { height: 24 },
+
+  // ── Confirmation overlay ─────────────────────────────────────────
   confirmOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(2,4,10,0.90)",

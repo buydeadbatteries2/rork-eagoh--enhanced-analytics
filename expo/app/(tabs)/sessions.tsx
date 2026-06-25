@@ -30,6 +30,9 @@ import {
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -289,66 +292,83 @@ function SessionSetup({
   }, [selectedEagohId, prompt, onStart]);
 
   return (
-    <View style={styles.setupWrap}>
-      {/* Back */}
+    <KeyboardAvoidingView
+      style={styles.setupWrap}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
+    >
+      {/* Back — fixed above scroll */}
       <Pressable onPress={onBack} style={styles.backBtn}>
         <ArrowLeft color={palette.muted} size={18} />
         <Text style={styles.backText}>Sessions</Text>
       </Pressable>
 
-      {/* Session header */}
-      <View style={styles.setupHeader}>
-        <View style={[styles.setupIconRing, { borderColor: toneColor(session.tone) }]}>
-          {sessionIcon(session.id, toneColor(session.tone), 28)}
-        </View>
-        <Text style={styles.setupTitle}>{session.name}</Text>
-        <Text style={styles.setupSub}>{session.model} · {session.duration}</Text>
-      </View>
-
-      {/* Selected EAGOH */}
-      <View style={styles.setupBlock}>
-        <Text style={styles.setupLabel}>EAGOH</Text>
-        <Pressable onPress={onChangeEagoh} style={({ pressed }) => [styles.setupEagohRow, pressed && styles.pressed]}>
-          {selectedEagoh ? (
-            <>
-              <View style={[styles.setupEagohDot, { backgroundColor: domain ? toneColor(domain.tone) : palette.muted }]} />
-              <Text style={styles.setupEagohName}>{selectedEagoh.name}</Text>
-              <Text style={styles.setupEagohDomain}>{domain?.label ?? selectedEagoh.domain}</Text>
-            </>
-          ) : (
-            <Text style={styles.setupEagohPlaceholder}>Select an EAGOH…</Text>
-          )}
-          <ChevronDown color={palette.muted} size={16} />
-        </Pressable>
-      </View>
-
-      {/* Topic */}
-      <View style={styles.setupBlock}>
-        <Text style={styles.setupLabel}>Topic</Text>
-        <TextInput
-          value={prompt}
-          onChangeText={setPrompt}
-          placeholder="What intelligence do you need…"
-          placeholderTextColor={palette.muted}
-          multiline
-          style={styles.setupInput}
-        />
-      </View>
-
-      {/* Domain check */}
-      {selectedEagoh && domain ? (
-        <View style={[styles.domainBanner, { borderColor: isDomainMatch ? "rgba(0,255,178,0.30)" : "rgba(255,107,53,0.30)", backgroundColor: isDomainMatch ? "rgba(0,255,178,0.06)" : "rgba(255,107,53,0.06)" }]}>
-          <BrainCircuit color={isDomainMatch ? palette.success : palette.ember} size={14} />
-          <View style={styles.domainBannerText}>
-            <Text style={[styles.domainBannerTitle, { color: isDomainMatch ? palette.success : palette.ember }]}>{domain.label}</Text>
-            <Text style={styles.domainBannerDesc}>
-              {isDomainMatch ? "Within domain — ready." : (domainGuardResult && !domainGuardResult.ok ? domainGuardResult.rejectionMessage : "Domain mismatch.")}
-            </Text>
+      {/* Scrollable content */}
+      <ScrollView
+        style={styles.setupScroll}
+        contentContainerStyle={styles.setupScrollContent}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Session header */}
+        <View style={styles.setupHeader}>
+          <View style={[styles.setupIconRing, { borderColor: toneColor(session.tone) }]}>
+            {sessionIcon(session.id, toneColor(session.tone), 28)}
           </View>
+          <Text style={styles.setupTitle}>{session.name}</Text>
+          <Text style={styles.setupSub}>{session.model} · {session.duration}</Text>
         </View>
-      ) : null}
 
-      {/* Cost + Start */}
+        {/* Selected EAGOH */}
+        <View style={styles.setupBlock}>
+          <Text style={styles.setupLabel}>EAGOH</Text>
+          <Pressable onPress={onChangeEagoh} style={({ pressed }) => [styles.setupEagohRow, pressed && styles.pressed]}>
+            {selectedEagoh ? (
+              <>
+                <View style={[styles.setupEagohDot, { backgroundColor: domain ? toneColor(domain.tone) : palette.muted }]} />
+                <Text style={styles.setupEagohName}>{selectedEagoh.name}</Text>
+                <Text style={styles.setupEagohDomain}>{domain?.label ?? selectedEagoh.domain}</Text>
+              </>
+            ) : (
+              <Text style={styles.setupEagohPlaceholder}>Select an EAGOH…</Text>
+            )}
+            <ChevronDown color={palette.muted} size={16} />
+          </Pressable>
+        </View>
+
+        {/* Topic */}
+        <View style={styles.setupBlock}>
+          <Text style={styles.setupLabel}>Topic</Text>
+          <TextInput
+            value={prompt}
+            onChangeText={setPrompt}
+            placeholder="What intelligence do you need…"
+            placeholderTextColor={palette.muted}
+            multiline
+            style={styles.setupInput}
+            onFocus={() => { /* scroll handled by keyboardShouldPersistTaps */ }}
+          />
+        </View>
+
+        {/* Domain check */}
+        {selectedEagoh && domain ? (
+          <View style={[styles.domainBanner, { borderColor: isDomainMatch ? "rgba(0,255,178,0.30)" : "rgba(255,107,53,0.30)", backgroundColor: isDomainMatch ? "rgba(0,255,178,0.06)" : "rgba(255,107,53,0.06)" }]}>
+            <BrainCircuit color={isDomainMatch ? palette.success : palette.ember} size={14} />
+            <View style={styles.domainBannerText}>
+              <Text style={[styles.domainBannerTitle, { color: isDomainMatch ? palette.success : palette.ember }]}>{domain.label}</Text>
+              <Text style={styles.domainBannerDesc}>
+                {isDomainMatch ? "Within domain — ready." : (domainGuardResult && !domainGuardResult.ok ? domainGuardResult.rejectionMessage : "Domain mismatch.")}
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
+        {/* Extra padding so bottom content isn't hidden behind footer */}
+        <View style={{ height: 80 }} />
+      </ScrollView>
+
+      {/* Cost + Start — fixed below scroll, inside KAV */}
       <View style={styles.setupFooter}>
         <View style={styles.setupCostRow}>
           <Zap color={palette.gold} size={16} />
@@ -368,7 +388,7 @@ function SessionSetup({
           <Text style={styles.setupStartText}>Start Session</Text>
         </Pressable>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -770,7 +790,9 @@ const styles = StyleSheet.create({
   pressed: { transform: [{ scale: 0.985 }], opacity: 0.88 },
 
   // Setup
-  setupWrap: { flex: 1, backgroundColor: palette.void, padding: 14 },
+  setupWrap: { flex: 1, backgroundColor: palette.void },
+  setupScroll: { flex: 1 },
+  setupScrollContent: { padding: 14, paddingBottom: 0 },
   backBtn: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 12 },
   backText: { color: palette.muted, fontSize: 13, fontWeight: "800" },
   setupHeader: { alignItems: "center", gap: 6, marginBottom: 18 },
@@ -826,7 +848,7 @@ const styles = StyleSheet.create({
   domainBannerText: { flex: 1 },
   domainBannerTitle: { fontSize: 12, fontWeight: "900" },
   domainBannerDesc: { color: palette.muted, fontSize: 10, lineHeight: 15, marginTop: 2 },
-  setupFooter: { marginTop: "auto", gap: 10 },
+  setupFooter: { gap: 10, paddingHorizontal: 14, paddingBottom: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: palette.line, backgroundColor: palette.void },
   setupCostRow: {
     flexDirection: "row",
     alignItems: "center",

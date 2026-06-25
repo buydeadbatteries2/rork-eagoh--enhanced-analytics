@@ -12,6 +12,8 @@ type OptimizedEagohImageProps = {
   label: string;
   size?: "compact" | "banner" | "profile";
   highResolution?: boolean;
+  /** Actual EAGOH image URL (thumbnail or full). When provided, displays the real image as the primary visual. */
+  imageUrl?: string | null;
 };
 
 export const LIST_PERFORMANCE_PROPS = {
@@ -38,22 +40,42 @@ export function renderToneColor(tone: RenderTone): string {
   return palette.cyan;
 }
 
-/** Lightweight WebP-backed cosmetic render with thumbnail-first caching and no live 3D. */
-export const OptimizedEagohImage = memo(function OptimizedEagohImage({ tone, label, size = "compact", highResolution = false }: OptimizedEagohImageProps): JSX.Element {
+/** Lightweight image render. Displays the real EAGOH image when imageUrl is provided, otherwise shows a decorative cybernetic placeholder. */
+export const OptimizedEagohImage = memo(function OptimizedEagohImage({ tone, label, size = "compact", highResolution = false, imageUrl }: OptimizedEagohImageProps): JSX.Element {
   const color = renderToneColor(tone);
   const dimensions = size === "profile" ? styles.profile : size === "banner" ? styles.banner : styles.compact;
-  const webpUri = useMemo<string>(() => {
-    const bucket = highResolution ? "hires" : "thumb";
-    return `https://images.unsplash.com/photo-1518005020951-eccb494ad742?w=${highResolution ? 720 : 240}&q=${highResolution ? 72 : 35}&fm=webp&fit=crop&auto=format&sat=-70&blend=${color.replace("#", "")}&blend-mode=screen&blend-alpha=22&eagoh=${bucket}-${label}`;
+  const fallbackUri = useMemo<string>(() => {
+    return `https://images.unsplash.com/photo-1518005020951-eccb494ad742?w=${highResolution ? 720 : 240}&q=${highResolution ? 72 : 35}&fm=webp&fit=crop&auto=format&sat=-70&blend=${color.replace("#", "")}&blend-mode=screen&blend-alpha=22&eagoh=${highResolution ? "hires" : "thumb"}-${label}`;
   }, [color, highResolution, label]);
+
+  const hasRealImage = !!imageUrl;
 
   return (
     <View style={[styles.shell, dimensions]}>
-      <Image source={{ uri: webpUri }} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" transition={120} recyclingKey={`${tone}-${label}-${size}-${highResolution ? "hi" : "thumb"}`} placeholder={{ blurhash: "L03RUkfQfQfQfQfQfQfQfQfQfQfQ" }} />
-      <LinearGradient colors={[`${color}44`, "rgba(255,255,255,0.03)", "rgba(3,6,11,0.94)"]} style={StyleSheet.absoluteFill} />
-      <View style={[styles.ring, { borderColor: color }]} />
-      <Hexagon color={color} size={size === "profile" ? 58 : 38} strokeWidth={1.4} />
-      <Text style={[styles.label, { color }]}>{label}</Text>
+      <Image
+        source={{ uri: imageUrl ?? fallbackUri }}
+        style={StyleSheet.absoluteFill}
+        contentFit="cover"
+        cachePolicy="memory-disk"
+        transition={120}
+        recyclingKey={hasRealImage ? `img-${imageUrl?.slice(-24)}` : `${tone}-${label}-${size}`}
+        placeholder={{ blurhash: "L03RUkfQfQfQfQfQfQfQfQfQfQfQ" }}
+      />
+      {!hasRealImage && (
+        <>
+          <LinearGradient colors={[`${color}44`, "rgba(255,255,255,0.03)", "rgba(3,6,11,0.94)"]} style={StyleSheet.absoluteFill} />
+          <View style={[styles.ring, { borderColor: color }]} />
+          <Hexagon color={color} size={size === "profile" ? 58 : 38} strokeWidth={1.4} />
+          <Text style={[styles.label, { color }]}>{label}</Text>
+        </>
+      )}
+      {hasRealImage && (
+        <>
+          <LinearGradient colors={["rgba(3,6,11,0.0)", "rgba(3,6,11,0.65)"]} style={StyleSheet.absoluteFill} />
+          <Text style={[styles.label, { color: "#FFFFFF" }]}>{label}</Text>
+        </>
+      )}
+      <View style={[styles.ring, { borderColor: color, opacity: hasRealImage ? 0.45 : 0.72 }]} />
     </View>
   );
 });

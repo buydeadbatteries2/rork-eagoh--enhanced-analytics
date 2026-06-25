@@ -309,67 +309,67 @@ const ListingCard = memo(function ListingCard({
   const eagohRank: RankTier = (reputation?.rank as RankTier) ?? "Dormant";
   const repScore = reputation?.reputation_score ?? 0;
   const rkColor = rankColor(eagohRank);
+  const imageUrl = eagoh?.image_thumb_url ?? eagoh?.image_url ?? null;
 
   return (
     <View style={styles.listingCard}>
       <View style={[styles.cardGlow, { backgroundColor: rkColor }]} />
-      <View style={styles.listingTop}>
-        <View style={styles.listingImageWrap}>
-          {eagoh?.image_thumb_url ? (
-            <OptimizedEagohImage
-              tone={eagohRank === "Syndicate Prime" || eagohRank === "Oracle" ? "gold" : eagohRank === "Diamond" ? "cyan" : "violet"}
-              label={eagoh.name}
-              size="banner"
-            />
-          ) : (
-            <View style={styles.listingImagePlaceholder}>
-              <Dna color={palette.muted} size={28} />
-            </View>
-          )}
-          <View style={[styles.rankPillSmall, { backgroundColor: `${rkColor}1F`, borderColor: `${rkColor}44` }]}>
-            <Text style={[styles.rankPillSmallText, { color: rkColor }]}>{rankEmoji(eagohRank)} {eagohRank}</Text>
-          </View>
+
+      {/* Prominent centered EAGOH image */}
+      <View style={styles.listingImageArea}>
+        <OptimizedEagohImage
+          tone={eagohRank === "Syndicate Prime" || eagohRank === "Oracle" ? "gold" : eagohRank === "Diamond" ? "cyan" : "violet"}
+          label={eagoh?.name ?? "EAGOH"}
+          size="banner"
+          imageUrl={imageUrl}
+        />
+        <View style={[styles.rankPillSmall, { backgroundColor: `${rkColor}1F`, borderColor: `${rkColor}44` }]}>
+          <Text style={[styles.rankPillSmallText, { color: rkColor }]}>{rankEmoji(eagohRank)} {eagohRank}</Text>
         </View>
-        <View style={styles.listingInfo}>
-          <View style={styles.nameRow}>
-            <Text style={styles.listingName} numberOfLines={1}>{eagoh?.name ?? "Unnamed"}</Text>
-            {repScore > 0 && (
-              <View style={[styles.repScoreBadge, { borderColor: rkColor }]}>
-                <Star color={rkColor} size={11} />
-                <Text style={[styles.repScoreText, { color: rkColor }]}>{repScore}</Text>
-              </View>
-            )}
-          </View>
-          <Text style={styles.listingDomain}>{domainLabel(domain)}</Text>
-          <View style={styles.listingDna}>
-            {(eagoh?.dna ?? []).slice(0, 3).map((d) => (
-              <View key={d} style={styles.dnaTag}>
-                <Text style={styles.dnaTagText}>{d}</Text>
-              </View>
-            ))}
-          </View>
-          {(item.eagoh?.pro_team_focus_name || item.eagoh?.college_team_focus_name || item.fanatic_teams.length > 0) && (
-            <Text style={styles.teamText} numberOfLines={1}>
-              {[
-                item.eagoh?.pro_team_focus_name,
-                item.eagoh?.college_team_focus_name,
-                ...item.fanatic_teams.map((id: string) => getTeamById(id)?.display_name ?? id),
-              ].filter(Boolean).join(" · ")}
-            </Text>
+        <View style={styles.listingImageDomainBadge}>
+          <Text style={styles.listingImageDomainBadgeText}>{domainLabel(domain)}</Text>
+        </View>
+      </View>
+
+      {/* Info below image */}
+      <View style={styles.listingInfo}>
+        <View style={styles.nameRow}>
+          <Text style={styles.listingName} numberOfLines={1}>{eagoh?.name ?? "Unnamed"}</Text>
+          {repScore > 0 && (
+            <View style={[styles.repScoreBadge, { borderColor: rkColor }]}>
+              <Star color={rkColor} size={11} />
+              <Text style={[styles.repScoreText, { color: rkColor }]}>{repScore}</Text>
+            </View>
           )}
-          <View style={styles.metricGrid}>
-            <View style={styles.metricRow}>
-              <Signal color={palette.success} size={12} />
-              <Text style={styles.metric}>Sync: {item.sync_success_score}</Text>
+        </View>
+        <View style={styles.listingDna}>
+          {(eagoh?.dna ?? []).slice(0, 3).map((d) => (
+            <View key={d} style={styles.dnaTag}>
+              <Text style={styles.dnaTagText}>{d}</Text>
             </View>
-            <View style={styles.metricRow}>
-              <Sparkles color={palette.cyan} size={12} />
-              <Text style={styles.metric}>Quality: {item.avg_quality_score}</Text>
-            </View>
-            <View style={styles.metricRow}>
-              <Coins color={palette.gold} size={12} />
-              <Text style={styles.metric}>Earned: {item.edge_earned_this_month} EC/mo</Text>
-            </View>
+          ))}
+        </View>
+        {(item.eagoh?.pro_team_focus_name || item.eagoh?.college_team_focus_name || item.fanatic_teams.length > 0) && (
+          <Text style={styles.teamText} numberOfLines={1}>
+            {[
+              item.eagoh?.pro_team_focus_name,
+              item.eagoh?.college_team_focus_name,
+              ...item.fanatic_teams.map((id: string) => getTeamById(id)?.display_name ?? id),
+            ].filter(Boolean).join(" · ")}
+          </Text>
+        )}
+        <View style={styles.metricGrid}>
+          <View style={styles.metricRow}>
+            <Signal color={palette.success} size={12} />
+            <Text style={styles.metric}>Sync: {item.sync_success_score}</Text>
+          </View>
+          <View style={styles.metricRow}>
+            <Sparkles color={palette.cyan} size={12} />
+            <Text style={styles.metric}>Quality: {item.avg_quality_score}</Text>
+          </View>
+          <View style={styles.metricRow}>
+            <Coins color={palette.gold} size={12} />
+            <Text style={styles.metric}>Earned: {item.edge_earned_this_month} EC/mo</Text>
           </View>
         </View>
       </View>
@@ -448,7 +448,7 @@ function PurchaseModal({
           {/* EAGOH preview */}
           <View style={styles.modalEagohPreview}>
             <View style={styles.modalEagohImage}>
-              <OptimizedEagohImage tone="cyan" label={eagoh?.name ?? "EAGOH"} size="banner" />
+              <OptimizedEagohImage tone="cyan" label={eagoh?.name ?? "EAGOH"} size="banner" imageUrl={eagoh?.image_thumb_url ?? eagoh?.image_url ?? null} />
             </View>
             <View>
               <Text style={styles.modalEagohName}>{eagoh?.name}</Text>
@@ -771,13 +771,7 @@ function EditListingModal({
               {/* EAGOH preview */}
               <View style={styles.editEagohPreview}>
                 <View style={styles.editEagohImage}>
-                  {eagoh?.image_thumb_url ? (
-                    <OptimizedEagohImage tone="cyan" label={eagoh.name} size="banner" />
-                  ) : (
-                    <View style={styles.myListingImagePlaceholder}>
-                      <Dna color={palette.muted} size={24} />
-                    </View>
-                  )}
+                  <OptimizedEagohImage tone="cyan" label={eagoh?.name ?? "EAGOH"} size="banner" imageUrl={eagoh?.image_thumb_url ?? eagoh?.image_url ?? null} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.modalEagohName}>{eagoh?.name ?? "Unnamed"}</Text>
@@ -863,13 +857,7 @@ const CarouselListingCard = memo(function CarouselListingCard({
       ]}
     >
       <View style={styles.carouselCardImage}>
-        {eagoh?.image_thumb_url ? (
-          <OptimizedEagohImage tone="cyan" label={eagoh.name} size="compact" />
-        ) : (
-          <View style={styles.carouselImagePlaceholder}>
-            <Dna color={palette.muted} size={20} />
-          </View>
-        )}
+        <OptimizedEagohImage tone="cyan" label={eagoh?.name ?? "Unnamed"} size="compact" imageUrl={eagoh?.image_thumb_url ?? eagoh?.image_url ?? null} />
       </View>
       <View style={styles.carouselCardInfo}>
         <Text style={styles.carouselCardName} numberOfLines={1}>{eagoh?.name ?? "Unnamed"}</Text>
@@ -931,7 +919,7 @@ const ActiveSyncCard = memo(function ActiveSyncCard({ item }: { item: EnrichedPu
     <View style={styles.activeSyncCard}>
       <View style={styles.activeSyncLeft}>
         <View style={styles.activeSyncImage}>
-          <OptimizedEagohImage tone="cyan" label={item.eagoh_name} size="banner" />
+          <OptimizedEagohImage tone="cyan" label={item.eagoh_name} size="banner" imageUrl={item.eagoh_image_url} />
         </View>
         <View style={styles.activeSyncInfo}>
           <Text style={styles.activeSyncName} numberOfLines={1}>{item.eagoh_name}</Text>
@@ -980,17 +968,12 @@ const MyListingCard = memo(function MyListingCard({
       <View style={styles.myListingRow}>
         {/* EAGOH Image */}
         <View style={styles.myListingImageWrap}>
-          {eagoh?.image_thumb_url ? (
-            <OptimizedEagohImage
-              tone={eagohRank === "Syndicate Prime" || eagohRank === "Oracle" ? "gold" : eagohRank === "Diamond" ? "cyan" : "violet"}
-              label={eagoh.name}
-              size="banner"
-            />
-          ) : (
-            <View style={styles.myListingImagePlaceholder}>
-              <Dna color={palette.muted} size={22} />
-            </View>
-          )}
+          <OptimizedEagohImage
+            tone={eagohRank === "Syndicate Prime" || eagohRank === "Oracle" ? "gold" : eagohRank === "Diamond" ? "cyan" : "violet"}
+            label={eagoh?.name ?? "Unnamed"}
+            size="banner"
+            imageUrl={eagoh?.image_thumb_url ?? eagoh?.image_url ?? null}
+          />
         </View>
 
         {/* Info */}
@@ -1085,7 +1068,7 @@ const MktSponsoredBanner = memo(function MktSponsoredBanner({ item, userId, repu
         </View>
       )}
       <View style={styles.mktBannerImage}>
-        <OptimizedEagohImage tone={item.vendor_rank === "S-TIER" ? "gold" : item.vendor_rank === "ELITE" ? "cyan" : "violet"} label={item.eagoh_name.slice(0, 8).toUpperCase()} size="banner" />
+        <OptimizedEagohImage tone={item.vendor_rank === "S-TIER" ? "gold" : item.vendor_rank === "ELITE" ? "cyan" : "violet"} label={item.eagoh_name.slice(0, 8).toUpperCase()} size="banner" imageUrl={item.eagoh_image_url} />
       </View>
       <View style={styles.mktBannerInfo}>
         <Text style={styles.mktBannerName} numberOfLines={1}>{item.eagoh_name}</Text>
@@ -1714,19 +1697,30 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   cardGlow: { position: "absolute", width: 100, height: 100, borderRadius: 50, opacity: 0.10, right: -28, top: -30 },
-  listingTop: { flexDirection: "row", gap: 12 },
-  listingImageWrap: {
-    width: 90,
-    height: 110,
+
+  // Centered prominent image area (replaces listingTop row layout)
+  listingImageArea: {
+    width: "100%",
+    minHeight: 176,
     borderRadius: 5,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: palette.line,
     backgroundColor: palette.void,
-    alignItems: "center",
-    justifyContent: "center",
+    marginBottom: 10,
   },
-  listingImagePlaceholder: { alignItems: "center", justifyContent: "center", flex: 1 },
+  listingImageDomainBadge: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    backgroundColor: "rgba(3,6,11,0.82)",
+    borderWidth: 1,
+    borderColor: palette.line,
+    borderRadius: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  listingImageDomainBadgeText: { color: palette.cyan, fontSize: 10, fontWeight: "900" },
   rankPillSmall: {
     position: "absolute",
     bottom: 6,
@@ -1737,7 +1731,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   rankPillSmallText: { fontSize: 8, fontWeight: "900" },
-  listingInfo: { flex: 1, gap: 4 },
+  listingInfo: { gap: 4 },
   nameRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   listingName: { color: palette.text, fontSize: 17, fontWeight: "900", flex: 1 },
   listingDomain: { color: palette.cyan, fontSize: 12, fontWeight: "800" },

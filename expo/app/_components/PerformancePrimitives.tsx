@@ -61,7 +61,7 @@ export const OptimizedEagohImage = memo(function OptimizedEagohImage({ tone, lab
         cachePolicy="memory-disk"
         transition={120}
         recyclingKey={hasRealImage ? `img-${imageUrl?.slice(-24)}` : `${tone}-${label}-${size}`}
-        placeholder={{ blurhash: "L03RUkfQfQfQfQfQfQfQfQfQfQ" }}
+        placeholder={{ blurhash: "LEHV6nWB2yk8pyo0adR*.7kCMdnj" }}
       />
       {!hasRealImage && (
         <>

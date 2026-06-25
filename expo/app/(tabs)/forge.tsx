@@ -34,6 +34,7 @@ import { getTeamById, getSportCanonical } from "@/data/teams";
 import { MUSIC_GENRES, MUSIC_ROLES, getMusicGenre, getMusicRole } from "@/data/music";
 import { FILM_TV_CATEGORIES, FILM_TV_GENRES, FILM_TV_ROLES, getFilmTvCategory, getFilmTvGenre, getFilmTvRole } from "@/data/filmTv";
 import { FASHION_STYLE_CATEGORIES, FASHION_ROLES, getFashionStyleCategory, getFashionRole } from "@/data/fashion";
+import { EDUCATION_SUBJECTS, EDUCATION_ROLES, getEducationSubject, getEducationRole } from "@/data/education";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   AlertTriangle,
@@ -97,6 +98,8 @@ type WizardStepId =
   | "film_tv_role"
   | "fashion_style_category"
   | "fashion_role"
+  | "education_subject"
+  | "education_role"
   | "lab";
 
 type WizardStep = {
@@ -329,6 +332,8 @@ export default function ForgeScreen(): JSX.Element {
   const [filmTvRole, setFilmTvRole] = useState<string>("");
   const [fashionStyleCategory, setFashionStyleCategory] = useState<string>("");
   const [fashionRole, setFashionRole] = useState<string>("");
+  const [educationSubject, setEducationSubject] = useState<string>("");
+  const [educationRole, setEducationRole] = useState<string>("");
   const [appearance, setAppearance] = useState<Record<string, string>>({});
   const [cyberneticIntensity, setCyberneticIntensity] = useState<string>("moderate");
   const [pose, setPose] = useState<string>("calm-sentinel");
@@ -378,6 +383,8 @@ export default function ForgeScreen(): JSX.Element {
     setFilmTvRole(editingEagoh.film_tv_role ?? "");
     setFashionStyleCategory(editingEagoh.fashion_style_category ?? "");
     setFashionRole(editingEagoh.fashion_role ?? "");
+    setEducationSubject(editingEagoh.education_subject ?? "");
+    setEducationRole(editingEagoh.education_role ?? "");
     setAppearance(editingEagoh.appearance ?? {});
     setCyberneticIntensity(editingEagoh.cybernetic_intensity ?? "moderate");
     setPose(editingEagoh.pose ?? "calm-sentinel");
@@ -417,6 +424,7 @@ export default function ForgeScreen(): JSX.Element {
   const isMusicDomain = domain === "music";
   const isFilmTvDomain = domain === "film-tv";
   const isFashionDomain = domain === "fashion";
+  const isEducationDomain = domain === "education";
 
   const wizardSteps: WizardStep[] = useMemo(() => {
     const base: WizardStep[] = [
@@ -455,11 +463,16 @@ export default function ForgeScreen(): JSX.Element {
       base.push({ id: "fashion_role", title: "Fashion Role", eyebrow: "Step 14", hint: "Choose the role or perspective this EAGOH embodies in the fashion world.", icon: <Sparkles color={palette.cyan} size={15} /> });
     }
 
-    const hasSpecialization = isSportsDomain || isMusicDomain || isFilmTvDomain || isFashionDomain;
-    const labEyebrowNum = hasSpecialization ? (isFilmTvDomain ? "Step 16" : isFashionDomain ? "Step 15" : "Step 15") : "Step 13";
+    if (isEducationDomain) {
+      base.push({ id: "education_subject", title: "Education Subject", eyebrow: "Step 13", hint: "Select the primary subject this EAGOH specializes in — Mathematics, Science, History, or more.", icon: <Zap color={palette.success} size={15} /> });
+      base.push({ id: "education_role", title: "Education Role", eyebrow: "Step 14", hint: "Choose the role or perspective this EAGOH embodies in education.", icon: <Sparkles color={palette.success} size={15} /> });
+    }
+
+    const hasSpecialization = isSportsDomain || isMusicDomain || isFilmTvDomain || isFashionDomain || isEducationDomain;
+    const labEyebrowNum = hasSpecialization ? (isFilmTvDomain ? "Step 16" : (isFashionDomain || isEducationDomain) ? "Step 15" : "Step 15") : "Step 13";
     base.push({ id: "lab", title: "Forge Lab", eyebrow: labEyebrowNum, hint: "Select the lab environment for this EAGOH.", icon: <Cpu color={palette.cyan} size={15} /> });
     return base;
-  }, [isSportsDomain, isMusicDomain, isFilmTvDomain]);
+  }, [isSportsDomain, isMusicDomain, isFilmTvDomain, isFashionDomain, isEducationDomain]);
 
   const currentStep = wizardSteps[currentStepIndex];
   const isLastStep = currentStepIndex === wizardSteps.length - 1;
@@ -486,11 +499,13 @@ export default function ForgeScreen(): JSX.Element {
     filmTvRole,
     fashionStyleCategory,
     fashionRole,
+    educationSubject,
+    educationRole,
     appearance,
     cyberneticIntensity,
     pose,
     lab,
-  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, teamFocusMode, proTeamFocusId, proTeamFocusName, collegeTeamFocusId, collegeTeamFocusName, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole, appearance, cyberneticIntensity, pose, lab]);
+  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, teamFocusMode, proTeamFocusId, proTeamFocusName, collegeTeamFocusId, collegeTeamFocusName, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole, educationSubject, educationRole, appearance, cyberneticIntensity, pose, lab]);
 
   /** Dynamic reforge cost when editing — compares current form vs EAGOH's saved state. */
   const reforgeCost = useMemo(() => {
@@ -506,6 +521,8 @@ export default function ForgeScreen(): JSX.Element {
       filmTvRole: editingEagoh.film_tv_role ?? "",
       fashionStyleCategory: editingEagoh.fashion_style_category ?? "",
       fashionRole: editingEagoh.fashion_role ?? "",
+      educationSubject: editingEagoh.education_subject ?? "",
+      educationRole: editingEagoh.education_role ?? "",
     };
     const newState = {
       appearance,
@@ -518,9 +535,11 @@ export default function ForgeScreen(): JSX.Element {
       filmTvRole,
       fashionStyleCategory,
       fashionRole,
+      educationSubject,
+      educationRole,
     };
     return calculateReforgeCost(oldState, newState);
-  }, [isEditing, editingEagoh, appearance, styleNotes, pose, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole]);
+  }, [isEditing, editingEagoh, appearance, styleNotes, pose, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole, educationSubject, educationRole]);
 
   const setAppearanceField = useCallback((category: string, text: string): void => {
     setAppearance((prev) => ({ ...prev, [category]: text }));
@@ -1015,6 +1034,38 @@ export default function ForgeScreen(): JSX.Element {
       );
     }
 
+    if (currentStep.id === "education_subject") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Select the primary subject this EAGOH specializes in. This is used for filtering, Marketplace searches, and subject-specific intelligence.</Text>
+          {EDUCATION_SUBJECTS.map((s) => (
+            <OptionChip
+              key={s.id}
+              option={{ id: s.id, label: s.label, tone: "success" }}
+              selected={educationSubject === s.id}
+              onPress={setEducationSubject}
+            />
+          ))}
+        </>
+      );
+    }
+
+    if (currentStep.id === "education_role") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Choose the role or perspective this EAGOH embodies in education. This shapes its analysis style and marketplace discoverability.</Text>
+          {EDUCATION_ROLES.map((r) => (
+            <OptionChip
+              key={r.id}
+              option={{ id: r.id, label: r.label, tone: "success" }}
+              selected={educationRole === r.id}
+              onPress={setEducationRole}
+            />
+          ))}
+        </>
+      );
+    }
+
     if (currentStep.id === "teams") {
       const sportCanonical = getSportCanonical(sport);
       const hasTeams = sportCanonical !== undefined;
@@ -1168,6 +1219,10 @@ export default function ForgeScreen(): JSX.Element {
     setFilmTvCategory,
     setFilmTvGenre,
     setFilmTvRole,
+    educationSubject,
+    educationRole,
+    setEducationSubject,
+    setEducationRole,
   ]);
 
   const previewHeight = Math.min(windowHeight * 0.27, 248);
@@ -1394,6 +1449,15 @@ export default function ForgeScreen(): JSX.Element {
                     setProTeamFocusName("");
                     setCollegeTeamFocusId("");
                     setCollegeTeamFocusName("");
+                    setMusicGenre("");
+                    setMusicRole("");
+                    setFilmTvCategory("");
+                    setFilmTvGenre("");
+                    setFilmTvRole("");
+                    setFashionStyleCategory("");
+                    setFashionRole("");
+                    setEducationSubject("");
+                    setEducationRole("");
                     setAppearance({});
                     setCyberneticIntensity("moderate");
                     setPose("calm-sentinel");

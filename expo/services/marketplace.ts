@@ -102,6 +102,9 @@ export type ListingFilters = {
   /** Fashion domain filters (canonical IDs). */
   fashionStyleCategory?: string;
   fashionRole?: string;
+  /** Education domain filters (canonical IDs). */
+  educationSubject?: string;
+  educationRole?: string;
   syncLevel?: SyncLevel;
   maxPrice?: number;
   minPrice?: number;
@@ -380,6 +383,12 @@ export async function listActiveListings(
   if (filters.fashionRole) {
     result = result.filter((l) => l.eagoh?.fashion_role === filters.fashionRole);
   }
+  if (filters.educationSubject) {
+    result = result.filter((l) => l.eagoh?.education_subject === filters.educationSubject);
+  }
+  if (filters.educationRole) {
+    result = result.filter((l) => l.eagoh?.education_role === filters.educationRole);
+  }
   if (filters.team) {
     const teamQuery = filters.team!.toLowerCase();
     result = result.filter((l) => {
@@ -421,6 +430,8 @@ export async function listActiveListings(
         l.eagoh?.film_tv_role,
         l.eagoh?.fashion_style_category,
         l.eagoh?.fashion_role,
+        l.eagoh?.education_subject,
+        l.eagoh?.education_role,
         ...l.fanatic_teams,
       ].filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(q);

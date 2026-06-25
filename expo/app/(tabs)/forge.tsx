@@ -14,9 +14,10 @@
 
 import { palette } from "@/constants/colors";
 import { useEdge } from "@/providers/EdgeProvider";
-import { useEagohs } from "@/providers/EagohProvider";
+import { useEagohs, useEagohFull } from "@/providers/EagohProvider";
 import { useForge, type ForgePending } from "@/providers/ForgeProvider";
 import { useProfile } from "@/providers/ProfileProvider";
+import type { EagohFull, EagohRecord } from "@/services/eagohs";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import { TIER_MAX_EAGOHS, TIER_MULTIPLIER, getForgeCost } from "@/services/edge";
 import type { EagohDraft } from "@/services/eagohs";
@@ -25,11 +26,13 @@ import { LinearGradient } from "expo-linear-gradient";
 import {
   BrainCircuit,
   Check,
+  ChevronDown,
   Cpu,
   Crown,
   Footprints,
   Gem,
   Heart,
+  Plus,
   ScanFace,
   Shirt,
   SlidersHorizontal,
@@ -152,8 +155,15 @@ function toneColor(tone: OptionTone): string {
 }
 
 const ForgePreview = memo(function ForgePreview({
+  name,
+  sport,
+  gender,
+  domain,
   cyberneticIntensity,
+  pose,
   tier,
+  imageUrl,
+  isEditing: editing,
 }: {
   name: string;
   sport: string;
@@ -162,11 +172,14 @@ const ForgePreview = memo(function ForgePreview({
   cyberneticIntensity: string;
   pose: string;
   tier: string;
+  imageUrl?: string | null;
+  isEditing?: boolean;
 }): JSX.Element {
   const isFree = tier === "free";
   const intensity = intensities.find((i) => i.id === cyberneticIntensity);
   const accent = isFree ? "#6B7280" : toneColor(intensity?.tone ?? "cyan");
   const brainGlow = isFree ? "rgba(75,85,99,0.4)" : `${accent}88`;
+  const showEagohImage = !!imageUrl;
 
   return (
     <View style={styles.previewStage}>
@@ -179,10 +192,16 @@ const ForgePreview = memo(function ForgePreview({
       <View style={[styles.stageRing, { borderColor: isFree ? "rgba(107,114,128,0.15)" : `${accent}22` }]} />
       <View style={[styles.eagohGlow, { backgroundColor: brainGlow }]} />
       <Image
-        source={{ uri: GENERIC_EAGOH_URI }}
+        source={{ uri: showEagohImage ? (imageUrl as string) : GENERIC_EAGOH_URI }}
         style={styles.eagohImage}
         resizeMode="contain"
       />
+      {editing ? (
+        <View style={styles.editingBadge}>
+          <Sparkles color={palette.gold} size={10} />
+          <Text style={styles.editingBadgeText}>EDITING</Text>
+        </View>
+      ) : null}
     </View>
   );
 });
@@ -272,7 +291,7 @@ export default function ForgeScreen(): JSX.Element {
   const { profile } = useProfile();
   const { total: edgeTotal } = useEdge();
   const { pending, prepareForge, confirmForge, cancelForge, isGenerating } = useForge();
-  const { remaining, canCreate, tier } = useEagohs();
+  const { eagohs, remaining, canCreate, tier } = useEagohs();
   const { height: windowHeight } = useWindowDimensions();
 
   const [name, setName] = useState<string>("");
@@ -290,6 +309,35 @@ export default function ForgeScreen(): JSX.Element {
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
   const [forgeError, setForgeError] = useState<string | null>(null);
   const [keyboardHeight, setKeyboardHeight] = useState<number>(0);
+
+  // ── EAGOH selection for editing ──────────────────────────────────
+  const [selectedEagohId, setSelectedEagohId] = useState<string>("");
+  const [showPicker, setShowPicker] = useState<boolean>(false);
+  const { data: editingEagoh, isLoading: isLoadingEagoh } = useEagohFull(selectedEagohId || null);
+  const hasLoadedRef = useRef<string | null>(null);
+  const isEditing = selectedEagohId.length > 0;
+
+  /** When user picks an EAGOH, load its full data into the wizard form. */
+  useEffect(() => {
+    if (!editingEagoh || !selectedEagohId) return;
+    if (hasLoadedRef.current === selectedEagohId) return;
+    hasLoadedRef.current = selectedEagohId;
+
+    setForgeError(null);
+    setName(editingEagoh.name ?? "");
+    setSport(editingEagoh.sport ?? "football");
+    setGender(editingEagoh.gender ?? "neutral");
+    setDomain(editingEagoh.domain ?? "sports");
+    setBodyType(editingEagoh.body_type ?? "average");
+    setStyleNotes(editingEagoh.style_notes ?? "");
+    setDna(editingEagoh.dna ?? []);
+    setTeams(editingEagoh.teams ?? []);
+    setAppearance(editingEagoh.appearance ?? {});
+    setCyberneticIntensity(editingEagoh.cybernetic_intensity ?? "moderate");
+    setPose(editingEagoh.pose ?? "calm-sentinel");
+    setLab(editingEagoh.lab ?? editingEagoh.labs?.[0] ?? "neon-vault");
+    setCurrentStepIndex(0);
+  }, [editingEagoh, selectedEagohId]);
 
   const scrollViewRef = useRef<ScrollView>(null);
   const scrollYRef = useRef<number>(0);
@@ -317,7 +365,7 @@ export default function ForgeScreen(): JSX.Element {
   const currentTier = profile?.subscription_tier ?? tier ?? "free";
   const multiplier = TIER_MULTIPLIER[currentTier] ?? 0;
   const maxEagohs = TIER_MAX_EAGOHS[currentTier] ?? 0;
-  const forgeCost = getForgeCost("initial");
+  const forgeCost = getForgeCost(isEditing ? "full_reforge" : "initial");
   const domainLabel = INTELLIGENCE_DOMAINS.find((d) => d.id === domain)?.label ?? domain;
   const isSportsDomain = domain === "sports";
 
@@ -420,8 +468,12 @@ export default function ForgeScreen(): JSX.Element {
       return;
     }
     setForgeError(null);
-    prepareForge(draft, "initial");
-  }, [domain.length, draft, name, prepareForge]);
+    if (isEditing) {
+      prepareForge(draft, "full_reforge", { eagohId: selectedEagohId });
+    } else {
+      prepareForge(draft, "initial");
+    }
+  }, [domain.length, draft, name, prepareForge, isEditing, selectedEagohId]);
 
   // ── Keyboard-aware scroll helpers ──────────────────────────────────
 
@@ -669,7 +721,10 @@ export default function ForgeScreen(): JSX.Element {
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       {/* ── Fixed header: preview + info + stepper ───────────────── */}
-      <View style={[styles.previewArea, { height: previewHeight }]}>
+      <Pressable
+        onPress={(): void => setShowPicker(true)}
+        style={[styles.previewArea, { height: previewHeight }]}
+      >
         <ForgePreview
           name={name}
           sport={sport}
@@ -678,21 +733,49 @@ export default function ForgeScreen(): JSX.Element {
           cyberneticIntensity={cyberneticIntensity}
           pose={pose}
           tier={currentTier}
+          imageUrl={isEditing ? editingEagoh?.image_url ?? editingEagoh?.image_thumb_url : null}
+          isEditing={isEditing}
         />
+        {/* Change/Select EAGOH pill */}
+        <View style={[styles.eagohSelectBtn, isEditing && styles.eagohSelectBtnEditing]}>
+          {isEditing ? (
+            <>
+              <BrainCircuit color={palette.gold} size={11} />
+              <Text style={styles.eagohSelectBtnText} numberOfLines={1}>
+                {editingEagoh?.name ?? "Selected"}
+              </Text>
+              <ChevronDown color={palette.gold} size={10} />
+            </>
+          ) : (
+            <>
+              <Plus color={palette.cyan} size={11} />
+              <Text style={styles.eagohSelectBtnText}>Select EAGOH</Text>
+            </>
+          )}
+        </View>
         <View style={[styles.tierChipFloat, currentTier !== "free" && styles.tierChipFloatPaid]}>
           <Zap color={currentTier !== "free" ? palette.cyan : palette.muted} size={11} />
           <Text style={[styles.tierChipFloatText, currentTier !== "free" && { color: palette.cyan }]}>
             {currentTier.replace("_", " ").toUpperCase()}
           </Text>
         </View>
-      </View>
+      </Pressable>
 
       <View style={styles.infoStrip}>
         <Text style={styles.infoName} numberOfLines={1}>{name || "Unnamed EAGOH"}</Text>
         <View style={styles.infoMeta}>
-          <Text style={styles.infoDomain}>{domainLabel}</Text>
-          <View style={styles.infoDot} />
-          <Text style={styles.infoShell}>{currentTier === "free" ? "DORMANT SHELL" : "ACTIVATED CHASSIS"}</Text>
+          {isEditing ? (
+            <View style={styles.editingChip}>
+              <Sparkles color={palette.gold} size={10} />
+              <Text style={styles.editingChipText}>EDITING</Text>
+            </View>
+          ) : (
+            <>
+              <Text style={styles.infoDomain}>{domainLabel}</Text>
+              <View style={styles.infoDot} />
+              <Text style={styles.infoShell}>{currentTier === "free" ? "DORMANT SHELL" : "ACTIVATED CHASSIS"}</Text>
+            </>
+          )}
           <View style={styles.infoDot} />
           <Text style={styles.infoSlots}>{remaining}/{maxEagohs} slots</Text>
           {multiplier > 0 ? <Text style={styles.multiplier}>{multiplier.toFixed(1)}x</Text> : null}
@@ -753,7 +836,7 @@ export default function ForgeScreen(): JSX.Element {
 
           <View style={styles.costPreview}>
             <Zap color={palette.gold} size={16} />
-            <Text style={styles.costPreviewLabel}>{isLastStep ? "Forge Cost" : "Final Forge Cost"}</Text>
+            <Text style={styles.costPreviewLabel}>{isLastStep ? (isEditing ? "Reforge Cost" : "Forge Cost") : (isEditing ? "Final Reforge Cost" : "Final Forge Cost")}</Text>
             <Text style={styles.costPreviewValue}>{forgeCost} Edge</Text>
           </View>
 
@@ -771,8 +854,8 @@ export default function ForgeScreen(): JSX.Element {
           </Pressable>
           <Pressable
             onPress={handlePrimaryAction}
-            disabled={isGenerating || !canCreate}
-            style={({ pressed }) => [styles.ctaButton, (!canCreate || isGenerating) && styles.disabledButton, pressed && styles.pressed]}
+            disabled={isGenerating || (!canCreate && !isEditing)}
+            style={({ pressed }) => [styles.ctaButton, ((!canCreate && !isEditing) || isGenerating) && styles.disabledButton, pressed && styles.pressed]}
           >
             <LinearGradient colors={[palette.cyan, "rgba(61,165,255,0.85)"]} style={StyleSheet.absoluteFill} />
             {isGenerating ? (
@@ -780,7 +863,7 @@ export default function ForgeScreen(): JSX.Element {
             ) : (
               <>
                 <Sparkles color={palette.void} size={18} />
-                <Text style={styles.ctaButtonText}>{!canCreate ? `Tier limit (${maxEagohs} max)` : isLastStep ? "REVIEW & CONFIRM" : "NEXT"}</Text>
+                <Text style={styles.ctaButtonText}>{!canCreate && !isEditing ? `Tier limit (${maxEagohs} max)` : isLastStep ? (isEditing ? "REVIEW & REFORGE" : "REVIEW & CONFIRM") : "NEXT"}</Text>
               </>
             )}
           </Pressable>
@@ -796,6 +879,79 @@ export default function ForgeScreen(): JSX.Element {
           isGenerating={isGenerating}
           canAfford={edgeTotal >= pending.edgeCost}
         />
+      ) : null}
+
+      {/* --- EAGOH Picker Overlay --- */}
+      {showPicker ? (
+        <View style={styles.pickerOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={(): void => setShowPicker(false)} />
+          <View style={styles.pickerSheet}>
+            <LinearGradient colors={["rgba(14,24,37,0.98)", "rgba(8,15,26,0.98)"]} style={StyleSheet.absoluteFill} />
+            <Text style={styles.pickerTitle}>Select EAGOH to Edit</Text>
+            {eagohs.length === 0 ? (
+              <Text style={styles.pickerEmpty}>No EAGOHs forged yet. Create your first one below.</Text>
+            ) : (
+              <>
+                {/* Create New option */}
+                <Pressable
+                  onPress={(): void => {
+                    setSelectedEagohId("");
+                    setName("");
+                    setGender("neutral");
+                    setDomain("sports");
+                    setBodyType("average");
+                    setStyleNotes("");
+                    setDna([]);
+                    setTeams([]);
+                    setAppearance({});
+                    setCyberneticIntensity("moderate");
+                    setPose("calm-sentinel");
+                    setLab("neon-vault");
+                    setCurrentStepIndex(0);
+                    setForgeError(null);
+                    hasLoadedRef.current = null;
+                    setShowPicker(false);
+                  }}
+                  style={({ pressed }) => [styles.pickerItem, !isEditing && styles.pickerItemActive, pressed && styles.pressed]}
+                >
+                  <View style={[styles.pickerDot, { backgroundColor: palette.cyan }]} />
+                  <View style={styles.pickerItemInfo}>
+                    <Text style={styles.pickerItemName}>Create New EAGOH</Text>
+                    <Text style={styles.pickerItemDomain}>Start from scratch</Text>
+                  </View>
+                  {!isEditing ? <Check color={palette.cyan} size={16} /> : null}
+                </Pressable>
+                {/* Existing EAGOHs */}
+                {eagohs.map((eagoh: EagohRecord) => {
+                  const domainObj = INTELLIGENCE_DOMAINS.find((d) => d.id === eagoh.domain);
+                  const dt = domainObj ? toneColor(domainObj.tone) : palette.muted;
+                  const isSelected = selectedEagohId === eagoh.id;
+                  return (
+                    <Pressable
+                      key={eagoh.id}
+                      onPress={(): void => {
+                        setSelectedEagohId(eagoh.id);
+                        setShowPicker(false);
+                      }}
+                      style={({ pressed }) => [
+                        styles.pickerItem,
+                        isSelected && styles.pickerItemActive,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <View style={[styles.pickerDot, { backgroundColor: dt }]} />
+                      <View style={styles.pickerItemInfo}>
+                        <Text style={styles.pickerItemName}>{eagoh.name || "Unnamed"}</Text>
+                        <Text style={styles.pickerItemDomain}>{domainObj?.label ?? eagoh.domain ?? "No domain"}</Text>
+                      </View>
+                      {isSelected ? <Check color={palette.cyan} size={16} /> : null}
+                    </Pressable>
+                  );
+                })}
+              </>
+            )}
+          </View>
+        </View>
       ) : null}
     </SafeAreaView>
   );
@@ -970,6 +1126,56 @@ const styles = StyleSheet.create({
   },
   tierChipFloatPaid: { borderColor: "rgba(108,230,255,0.28)", backgroundColor: "rgba(8,20,35,0.75)" },
   tierChipFloatText: { color: palette.muted, fontSize: 9, fontWeight: "900", letterSpacing: 1.2 },
+
+  // ── EAGOH select button (bottom-left of preview) ────────────────
+  eagohSelectBtn: {
+    position: "absolute",
+    bottom: 8,
+    left: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 5,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    borderWidth: 1,
+    borderColor: "rgba(108,230,255,0.25)",
+    zIndex: 5,
+  },
+  eagohSelectBtnEditing: { borderColor: "rgba(255,181,71,0.35)", backgroundColor: "rgba(20,14,2,0.75)" },
+  eagohSelectBtnText: { color: palette.cyan, fontSize: 10, fontWeight: "800", maxWidth: 100 },
+
+  // ── Editing badge on preview ────────────────────────────────────
+  editingBadge: {
+    position: "absolute",
+    top: 8,
+    left: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 4,
+    backgroundColor: "rgba(255,181,71,0.18)",
+    borderWidth: 1,
+    borderColor: "rgba(255,181,71,0.30)",
+  },
+  editingBadgeText: { color: palette.gold, fontSize: 8, fontWeight: "900", letterSpacing: 1.2 },
+
+  // ── Editing chip in info strip ──────────────────────────────────
+  editingChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 3,
+    backgroundColor: "rgba(255,181,71,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(255,181,71,0.25)",
+  },
+  editingChipText: { color: palette.gold, fontSize: 9, fontWeight: "900", letterSpacing: 0.8 },
   infoStrip: { paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: palette.line },
   infoName: { color: palette.text, fontSize: 18, fontWeight: "900", letterSpacing: 0.6 },
   infoMeta: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4, flexWrap: "wrap" },
@@ -1152,4 +1358,42 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
   },
   confirmForgeText: { color: palette.void, fontWeight: "900", fontSize: 14 },
+
+  // ── EAGOH Picker overlay ────────────────────────────────────────
+  pickerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(2,4,10,0.88)",
+    justifyContent: "flex-end",
+    zIndex: 90,
+  },
+  pickerSheet: {
+    maxHeight: "60%",
+    borderTopLeftRadius: 5,
+    borderTopRightRadius: 5,
+    borderWidth: 1,
+    borderColor: "rgba(54,245,255,0.20)",
+    overflow: "hidden",
+    padding: 16,
+    gap: 5,
+  },
+  pickerTitle: { color: palette.text, fontSize: 16, fontWeight: "900", marginBottom: 6, letterSpacing: 0.5 },
+  pickerEmpty: { color: palette.muted, fontSize: 12, fontWeight: "700", textAlign: "center", paddingVertical: 16 },
+  pickerItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    minHeight: 46,
+    borderRadius: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(255,255,255,0.03)",
+    marginBottom: 2,
+  },
+  pickerItemActive: { borderColor: palette.cyan, backgroundColor: "rgba(108,230,255,0.08)" },
+  pickerDot: { width: 8, height: 8, borderRadius: 4 },
+  pickerItemInfo: { flex: 1 },
+  pickerItemName: { color: palette.text, fontSize: 12, fontWeight: "800" },
+  pickerItemDomain: { color: palette.muted, fontSize: 10, marginTop: 1 },
 });

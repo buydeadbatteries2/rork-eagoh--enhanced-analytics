@@ -105,6 +105,8 @@ alter table public.eagohs add column if not exists music_role text;
 alter table public.eagohs add column if not exists film_tv_category text;
 alter table public.eagohs add column if not exists film_tv_genre text;
 alter table public.eagohs add column if not exists film_tv_role text;
+alter table public.eagohs add column if not exists fashion_style_category text;
+alter table public.eagohs add column if not exists fashion_role text;
 
 create index if not exists eagohs_user_id_idx on public.eagohs(user_id);
 

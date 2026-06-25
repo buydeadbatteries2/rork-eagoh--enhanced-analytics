@@ -151,7 +151,7 @@ function ProfileChamber({ lab, eagoh }: { lab: LabEnvironment; eagoh?: EagohReco
       <View style={styles.eagohBody}>
         {renderUri ? (
           <View style={[styles.chamberRender, { borderColor: `${accent}66`, shadowColor: accent }]}>
-            <Image source={{ uri: renderUri }} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" transition={160} recyclingKey={eagoh?.id ?? eagohName} placeholder={{ blurhash: "L03RUkfQfQfQfQfQfQfQfQfQfQfQ" }} />
+            <Image source={{ uri: renderUri }} style={StyleSheet.absoluteFill} contentFit="contain" cachePolicy="memory-disk" transition={160} recyclingKey={eagoh?.id ?? eagohName} />
             <LinearGradient colors={["transparent", "rgba(3,6,11,0.42)"]} style={StyleSheet.absoluteFill} />
           </View>
         ) : (
@@ -625,8 +625,8 @@ const styles = StyleSheet.create({
   scanText: { fontSize: 11, fontWeight: "900", letterSpacing: 1.4 },
   scanPanelRight: { position: "absolute", top: 20, right: 16, alignItems: "center", gap: 4 },
   scanSub: { color: palette.muted, fontSize: 9, fontWeight: "800" },
-  eagohBody: { position: "absolute", top: 92, alignSelf: "center", alignItems: "center", width: 190, height: 330 },
-  chamberRender: { width: 180, height: 270, borderRadius: 5, borderWidth: 1, overflow: "hidden", backgroundColor: palette.void, shadowOpacity: 0.5, shadowRadius: 22, shadowOffset: { width: 0, height: 0 } },
+  eagohBody: { position: "absolute", top: 56, alignSelf: "center", alignItems: "center", width: 280, height: 495 },
+  chamberRender: { width: 270, height: 405, borderRadius: 5, borderWidth: 1, overflow: "hidden", backgroundColor: "transparent", shadowOpacity: 0.5, shadowRadius: 22, shadowOffset: { width: 0, height: 0 } },
   chamberEagohName: { marginTop: 14, fontSize: 22, fontWeight: "900", letterSpacing: 0.4 },
   head: { width: 72, height: 80, borderRadius: 5, borderWidth: 2, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(244,250,255,0.08)" },
   headText: { fontSize: 20, fontWeight: "900" },

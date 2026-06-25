@@ -111,6 +111,9 @@ export type ListingFilters = {
   /** Business domain filters (canonical IDs). */
   businessIndustry?: string;
   businessRole?: string;
+  /** Finance domain filters (canonical IDs). */
+  financeFocus?: string;
+  financeRole?: string;
   syncLevel?: SyncLevel;
   maxPrice?: number;
   minPrice?: number;
@@ -407,6 +410,12 @@ export async function listActiveListings(
   if (filters.businessRole) {
     result = result.filter((l) => l.eagoh?.business_role === filters.businessRole);
   }
+  if (filters.financeFocus) {
+    result = result.filter((l) => l.eagoh?.finance_focus === filters.financeFocus);
+  }
+  if (filters.financeRole) {
+    result = result.filter((l) => l.eagoh?.finance_role === filters.financeRole);
+  }
   if (filters.team) {
     const teamQuery = filters.team!.toLowerCase();
     result = result.filter((l) => {
@@ -454,6 +463,8 @@ export async function listActiveListings(
         l.eagoh?.gaming_role,
         l.eagoh?.business_industry,
         l.eagoh?.business_role,
+        l.eagoh?.finance_focus,
+        l.eagoh?.finance_role,
         ...l.fanatic_teams,
       ].filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(q);

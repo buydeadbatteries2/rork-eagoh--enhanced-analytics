@@ -37,6 +37,7 @@ import { FASHION_STYLE_CATEGORIES, FASHION_ROLES, getFashionStyleCategory, getFa
 import { EDUCATION_SUBJECTS, EDUCATION_ROLES, getEducationSubject, getEducationRole } from "@/data/education";
 import { GAMING_GENRES, GAMING_ROLES, getGamingGenre, getGamingRole } from "@/data/gaming";
 import { BUSINESS_INDUSTRIES, BUSINESS_ROLES, getBusinessIndustry, getBusinessRole } from "@/data/business";
+import { FINANCE_FOCUSES, FINANCE_ROLES, getFinanceFocus, getFinanceRole } from "@/data/finance";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   AlertTriangle,
@@ -106,6 +107,8 @@ type WizardStepId =
   | "gaming_role"
   | "business_industry"
   | "business_role"
+  | "finance_focus"
+  | "finance_role"
   | "lab";
 
 type WizardStep = {
@@ -344,6 +347,8 @@ export default function ForgeScreen(): JSX.Element {
   const [gamingRole, setGamingRole] = useState<string>("");
   const [businessIndustry, setBusinessIndustry] = useState<string>("");
   const [businessRole, setBusinessRole] = useState<string>("");
+  const [financeFocus, setFinanceFocus] = useState<string>("");
+  const [financeRole, setFinanceRole] = useState<string>("");
   const [appearance, setAppearance] = useState<Record<string, string>>({});
   const [cyberneticIntensity, setCyberneticIntensity] = useState<string>("moderate");
   const [pose, setPose] = useState<string>("calm-sentinel");
@@ -397,6 +402,10 @@ export default function ForgeScreen(): JSX.Element {
     setEducationRole(editingEagoh.education_role ?? "");
     setGamingGenre(editingEagoh.gaming_genre ?? "");
     setGamingRole(editingEagoh.gaming_role ?? "");
+    setBusinessIndustry(editingEagoh.business_industry ?? "");
+    setBusinessRole(editingEagoh.business_role ?? "");
+    setFinanceFocus(editingEagoh.finance_focus ?? "");
+    setFinanceRole(editingEagoh.finance_role ?? "");
     setAppearance(editingEagoh.appearance ?? {});
     setCyberneticIntensity(editingEagoh.cybernetic_intensity ?? "moderate");
     setPose(editingEagoh.pose ?? "calm-sentinel");
@@ -439,6 +448,7 @@ export default function ForgeScreen(): JSX.Element {
   const isEducationDomain = domain === "education";
   const isGamingDomain = domain === "gaming";
   const isBusinessDomain = domain === "business";
+  const isFinanceDomain = domain === "finance";
 
   const wizardSteps: WizardStep[] = useMemo(() => {
     const base: WizardStep[] = [
@@ -492,11 +502,16 @@ export default function ForgeScreen(): JSX.Element {
       base.push({ id: "business_role", title: "Business Role", eyebrow: "Step 14", hint: "Choose the role or perspective this EAGOH embodies in business.", icon: <Sparkles color={palette.gold} size={15} /> });
     }
 
-    const hasSpecialization = isSportsDomain || isMusicDomain || isFilmTvDomain || isFashionDomain || isEducationDomain || isGamingDomain || isBusinessDomain;
-    const labEyebrowNum = hasSpecialization ? (isFilmTvDomain ? "Step 16" : (isFashionDomain || isEducationDomain || isGamingDomain || isBusinessDomain) ? "Step 15" : "Step 15") : "Step 13";
+    if (isFinanceDomain) {
+      base.push({ id: "finance_focus", title: "Finance Focus", eyebrow: "Step 13", hint: "Select the primary financial focus this EAGOH specializes in — Stocks, Crypto, Retirement, or more.", icon: <Zap color={palette.success} size={15} /> });
+      base.push({ id: "finance_role", title: "Finance Role", eyebrow: "Step 14", hint: "Choose the role or perspective this EAGOH embodies in the financial world.", icon: <Sparkles color={palette.success} size={15} /> });
+    }
+
+    const hasSpecialization = isSportsDomain || isMusicDomain || isFilmTvDomain || isFashionDomain || isEducationDomain || isGamingDomain || isBusinessDomain || isFinanceDomain;
+    const labEyebrowNum = hasSpecialization ? (isFilmTvDomain ? "Step 16" : (isFashionDomain || isEducationDomain || isGamingDomain || isBusinessDomain || isFinanceDomain) ? "Step 15" : "Step 15") : "Step 13";
     base.push({ id: "lab", title: "Forge Lab", eyebrow: labEyebrowNum, hint: "Select the lab environment for this EAGOH.", icon: <Cpu color={palette.cyan} size={15} /> });
     return base;
-  }, [isSportsDomain, isMusicDomain, isFilmTvDomain, isFashionDomain, isEducationDomain, isGamingDomain]);
+  }, [isSportsDomain, isMusicDomain, isFilmTvDomain, isFashionDomain, isEducationDomain, isGamingDomain, isBusinessDomain, isFinanceDomain]);
 
   const currentStep = wizardSteps[currentStepIndex];
   const isLastStep = currentStepIndex === wizardSteps.length - 1;
@@ -529,11 +544,13 @@ export default function ForgeScreen(): JSX.Element {
     gamingRole,
     businessIndustry,
     businessRole,
+    financeFocus,
+    financeRole,
     appearance,
     cyberneticIntensity,
     pose,
     lab,
-  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, teamFocusMode, proTeamFocusId, proTeamFocusName, collegeTeamFocusId, collegeTeamFocusName, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole, educationSubject, educationRole, gamingGenre, gamingRole, businessIndustry, businessRole, appearance, cyberneticIntensity, pose, lab]);
+  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, teamFocusMode, proTeamFocusId, proTeamFocusName, collegeTeamFocusId, collegeTeamFocusName, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole, educationSubject, educationRole, gamingGenre, gamingRole, businessIndustry, businessRole, financeFocus, financeRole, appearance, cyberneticIntensity, pose, lab]);
 
   /** Dynamic reforge cost when editing — compares current form vs EAGOH's saved state. */
   const reforgeCost = useMemo(() => {
@@ -1162,6 +1179,38 @@ export default function ForgeScreen(): JSX.Element {
       );
     }
 
+    if (currentStep.id === "finance_focus") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Select the primary financial focus this EAGOH specializes in. This is used for filtering, Marketplace searches, and finance-specific intelligence.</Text>
+          {FINANCE_FOCUSES.map((focus) => (
+            <OptionChip
+              key={focus.id}
+              option={{ id: focus.id, label: focus.label, tone: "success" }}
+              selected={financeFocus === focus.id}
+              onPress={setFinanceFocus}
+            />
+          ))}
+        </>
+      );
+    }
+
+    if (currentStep.id === "finance_role") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Choose the role or perspective this EAGOH embodies in finance. This shapes its analysis style and marketplace discoverability.</Text>
+          {FINANCE_ROLES.map((r) => (
+            <OptionChip
+              key={r.id}
+              option={{ id: r.id, label: r.label, tone: "success" }}
+              selected={financeRole === r.id}
+              onPress={setFinanceRole}
+            />
+          ))}
+        </>
+      );
+    }
+
     if (currentStep.id === "teams") {
       const sportCanonical = getSportCanonical(sport);
       const hasTeams = sportCanonical !== undefined;
@@ -1327,6 +1376,10 @@ export default function ForgeScreen(): JSX.Element {
     businessRole,
     setBusinessIndustry,
     setBusinessRole,
+    financeFocus,
+    financeRole,
+    setFinanceFocus,
+    setFinanceRole,
   ]);
 
   const previewHeight = Math.min(windowHeight * 0.27, 248);
@@ -1564,6 +1617,8 @@ export default function ForgeScreen(): JSX.Element {
                     setEducationRole("");
                     setBusinessIndustry("");
                     setBusinessRole("");
+                    setFinanceFocus("");
+                    setFinanceRole("");
                     setAppearance({});
                     setCyberneticIntensity("moderate");
                     setPose("calm-sentinel");

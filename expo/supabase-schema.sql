@@ -113,6 +113,8 @@ alter table public.eagohs add column if not exists gaming_genre text;
 alter table public.eagohs add column if not exists gaming_role text;
 alter table public.eagohs add column if not exists business_industry text;
 alter table public.eagohs add column if not exists business_role text;
+alter table public.eagohs add column if not exists finance_focus text;
+alter table public.eagohs add column if not exists finance_role text;
 
 create index if not exists eagohs_user_id_idx on public.eagohs(user_id);
 

@@ -21,6 +21,8 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -399,6 +401,10 @@ export default function LeaderboardsScreen(): JSX.Element {
   return (
     <LinearGradient colors={["#03060B", "#08111C", "#0B141F"]} style={styles.root}>
       <SafeAreaView edges={["top"]} style={styles.safe}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
         <FlatList
           data={entries}
           renderItem={renderItem}
@@ -419,6 +425,7 @@ export default function LeaderboardsScreen(): JSX.Element {
           showsVerticalScrollIndicator={false}
           {...LIST_PERFORMANCE_PROPS}
         />
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </LinearGradient>
   );

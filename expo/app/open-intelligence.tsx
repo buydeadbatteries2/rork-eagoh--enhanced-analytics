@@ -56,10 +56,11 @@ import {
   X,
   Zap,
 } from "lucide-react-native";
-import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -68,6 +69,7 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -499,6 +501,31 @@ export default function OpenIntelligenceScreen(): JSX.Element {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState<number>(0);
+  const { height: windowHeight } = useWindowDimensions();
+  const contentInputRef = useRef<TextInput | null>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollYRef = useRef<number>(0);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showSub = Keyboard.addListener(showEvent, (e) => setKeyboardHeight(e.endCoordinates.height));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
+
+  const handleContentFocus = useCallback((): void => {
+    setTimeout(() => {
+      contentInputRef.current?.measureInWindow((_x, inputY, _w, inputHeight) => {
+        const inputBottom = inputY + inputHeight;
+        const safeBottom = windowHeight - keyboardHeight - 20;
+        if (inputBottom > safeBottom) {
+          scrollViewRef.current?.scrollTo({ y: scrollYRef.current + (inputBottom - safeBottom) + 12, animated: true });
+        }
+      });
+    }, 180);
+  }, [keyboardHeight, windowHeight]);
 
   // Sync EAGOH selection on load
   useEffect(() => {
@@ -555,13 +582,8 @@ export default function OpenIntelligenceScreen(): JSX.Element {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <KeyboardAvoidingView
-        style={styles.root}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 20 : 0}
-      >
-        {/* Header */}
-        <View style={styles.header}>
+      {/* Header — fixed outside KAV */}
+      <View style={styles.header}>
           <View>
             <Text style={styles.kicker}>OPEN INTELLIGENCE</Text>
             <Text style={styles.title}>Observation Feed</Text>
@@ -571,11 +593,20 @@ export default function OpenIntelligenceScreen(): JSX.Element {
           </View>
         </View>
 
+      <KeyboardAvoidingView
+        style={styles.kav}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={0}
+      >
         <ScrollView
+          ref={scrollViewRef}
           style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: keyboardHeight > 0 ? keyboardHeight + 24 : 50 }]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          onScroll={(e) => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
+          scrollEventThrottle={16}
         >
           {/* EAGOH Selector */}
           <View style={styles.block}>
@@ -613,8 +644,10 @@ export default function OpenIntelligenceScreen(): JSX.Element {
           <View style={styles.block}>
             <SectionTitle eyebrow="INTELLIGENCE" title="Enter your observation" />
             <TextInput
+              ref={contentInputRef}
               value={content}
-              onChangeText={(v) => setContent(v.slice(0, limit * 2))} // allow overshoot for visual feedback
+              onChangeText={(v) => setContent(v.slice(0, limit * 2))}
+              onFocus={handleContentFocus}
               placeholder={`What did you observe? Max ${limit} chars excl. spaces…`}
               placeholderTextColor={palette.muted}
               multiline
@@ -725,7 +758,6 @@ export default function OpenIntelligenceScreen(): JSX.Element {
             )}
           </View>
 
-          <View style={styles.bottomSpacer} />
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -736,7 +768,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.void },
-  root: { flex: 1, backgroundColor: palette.void },
+  kav: { flex: 1 },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",

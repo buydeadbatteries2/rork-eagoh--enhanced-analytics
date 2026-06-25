@@ -68,7 +68,9 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -172,7 +174,12 @@ function CreateFactionModal({
             <View style={{ width: 22 }} />
           </View>
 
-          <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          <KeyboardAvoidingView
+            style={styles.modalKav}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            keyboardVerticalOffset={0}
+          >
+          <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
             {/* Name */}
             <Text style={styles.fieldLabel}>FACTION NAME</Text>
             <TextInput
@@ -266,6 +273,7 @@ function CreateFactionModal({
               )}
             </Pressable>
           </ScrollView>
+          </KeyboardAvoidingView>
         </SafeAreaView>
       </LinearGradient>
     </Modal>
@@ -1586,6 +1594,7 @@ const styles = StyleSheet.create({
   // Modal (Create Faction)
   modalRoot: { flex: 1 },
   modalSafe: { flex: 1 },
+  modalKav: { flex: 1 },
   modalHeader: {
     flexDirection: "row",
     alignItems: "center",

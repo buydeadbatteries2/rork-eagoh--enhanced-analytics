@@ -40,6 +40,9 @@ export type EagohRecord = {
   college_team_focus_name: string | null;
   music_genre: string | null;
   music_role: string | null;
+  film_tv_category: string | null;
+  film_tv_genre: string | null;
+  film_tv_role: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -78,6 +81,10 @@ export type EagohDraft = {
   /** Music domain specialization. */
   musicGenre: string;
   musicRole: string;
+  /** Film & TV domain specialization. */
+  filmTvCategory: string;
+  filmTvGenre: string;
+  filmTvRole: string;
   appearance: Record<string, string>;
   cyberneticIntensity: string;
   pose: string;
@@ -100,7 +107,7 @@ export function getEagohLimit(tier: SubscriptionTier): number {
 export async function listEagohs(userId: string): Promise<EagohRecord[]> {
   const { data, error } = await supabase
     .from("eagohs")
-    .select("id,user_id,name,sport,gender,domain,body_type,style_notes,cybernetic_intensity,pose,lab,dna,image_url,image_thumb_url,image_prompt,image_generated_at,last_name_change,team_focus_mode,pro_team_focus_id,pro_team_focus_name,college_team_focus_id,college_team_focus_name,music_genre,music_role,created_at,updated_at")
+    .select("id,user_id,name,sport,gender,domain,body_type,style_notes,cybernetic_intensity,pose,lab,dna,image_url,image_thumb_url,image_prompt,image_generated_at,last_name_change,team_focus_mode,pro_team_focus_id,pro_team_focus_name,college_team_focus_id,college_team_focus_name,music_genre,music_role,film_tv_category,film_tv_genre,film_tv_role,created_at,updated_at")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -172,6 +179,9 @@ export async function createEagoh(
     college_team_focus_name: draft.collegeTeamFocusName || null,
     music_genre: draft.musicGenre || null,
     music_role: draft.musicRole || null,
+    film_tv_category: draft.filmTvCategory || null,
+    film_tv_genre: draft.filmTvGenre || null,
+    film_tv_role: draft.filmTvRole || null,
   };
 
   const { data: created, error } = await supabase

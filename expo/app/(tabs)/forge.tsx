@@ -32,6 +32,7 @@ import * as Haptics from "expo-haptics";
 import TeamSelector from "@/app/components/TeamSelector";
 import { getTeamById, getSportCanonical } from "@/data/teams";
 import { MUSIC_GENRES, MUSIC_ROLES, getMusicGenre, getMusicRole } from "@/data/music";
+import { FILM_TV_CATEGORIES, FILM_TV_GENRES, FILM_TV_ROLES, getFilmTvCategory, getFilmTvGenre, getFilmTvRole } from "@/data/filmTv";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   AlertTriangle,
@@ -90,6 +91,9 @@ type WizardStepId =
   | "teams"
   | "music_genre"
   | "music_role"
+  | "film_tv_category"
+  | "film_tv_genre"
+  | "film_tv_role"
   | "lab";
 
 type WizardStep = {
@@ -317,6 +321,9 @@ export default function ForgeScreen(): JSX.Element {
   const [collegeTeamFocusName, setCollegeTeamFocusName] = useState<string>("");
   const [musicGenre, setMusicGenre] = useState<string>("");
   const [musicRole, setMusicRole] = useState<string>("");
+  const [filmTvCategory, setFilmTvCategory] = useState<string>("");
+  const [filmTvGenre, setFilmTvGenre] = useState<string>("");
+  const [filmTvRole, setFilmTvRole] = useState<string>("");
   const [appearance, setAppearance] = useState<Record<string, string>>({});
   const [cyberneticIntensity, setCyberneticIntensity] = useState<string>("moderate");
   const [pose, setPose] = useState<string>("calm-sentinel");
@@ -361,6 +368,9 @@ export default function ForgeScreen(): JSX.Element {
     setCollegeTeamFocusName(editingEagoh.college_team_focus_name ?? "");
     setMusicGenre(editingEagoh.music_genre ?? "");
     setMusicRole(editingEagoh.music_role ?? "");
+    setFilmTvCategory(editingEagoh.film_tv_category ?? "");
+    setFilmTvGenre(editingEagoh.film_tv_genre ?? "");
+    setFilmTvRole(editingEagoh.film_tv_role ?? "");
     setAppearance(editingEagoh.appearance ?? {});
     setCyberneticIntensity(editingEagoh.cybernetic_intensity ?? "moderate");
     setPose(editingEagoh.pose ?? "calm-sentinel");
@@ -398,6 +408,7 @@ export default function ForgeScreen(): JSX.Element {
   const domainLabel = INTELLIGENCE_DOMAINS.find((d) => d.id === domain)?.label ?? domain;
   const isSportsDomain = domain === "sports";
   const isMusicDomain = domain === "music";
+  const isFilmTvDomain = domain === "film-tv";
 
   const wizardSteps: WizardStep[] = useMemo(() => {
     const base: WizardStep[] = [
@@ -425,9 +436,17 @@ export default function ForgeScreen(): JSX.Element {
       base.push({ id: "music_role", title: "Music Role", eyebrow: "Step 14", hint: "Choose the role or perspective this EAGOH embodies in the music industry.", icon: <Sparkles color={palette.violet} size={15} /> });
     }
 
-    base.push({ id: "lab", title: "Forge Lab", eyebrow: (isSportsDomain || isMusicDomain) ? "Step 15" : "Step 13", hint: "Select the lab environment for this EAGOH.", icon: <Cpu color={palette.cyan} size={15} /> });
+    if (isFilmTvDomain) {
+      base.push({ id: "film_tv_category", title: "Film & TV Category", eyebrow: "Step 13", hint: "Select the primary category this EAGOH specializes in.", icon: <Zap color={palette.ember} size={15} /> });
+      base.push({ id: "film_tv_genre", title: "Film & TV Genre", eyebrow: "Step 14", hint: "Select the genre this EAGOH focuses on.", icon: <Sparkles color={palette.ember} size={15} /> });
+      base.push({ id: "film_tv_role", title: "Film & TV Role", eyebrow: "Step 15", hint: "Choose the role or perspective this EAGOH embodies in the film and television industry.", icon: <Heart color={palette.ember} size={15} /> });
+    }
+
+    const hasSpecialization = isSportsDomain || isMusicDomain || isFilmTvDomain;
+    const labEyebrowNum = hasSpecialization ? (isFilmTvDomain ? "Step 16" : "Step 15") : "Step 13";
+    base.push({ id: "lab", title: "Forge Lab", eyebrow: labEyebrowNum, hint: "Select the lab environment for this EAGOH.", icon: <Cpu color={palette.cyan} size={15} /> });
     return base;
-  }, [isSportsDomain]);
+  }, [isSportsDomain, isMusicDomain, isFilmTvDomain]);
 
   const currentStep = wizardSteps[currentStepIndex];
   const isLastStep = currentStepIndex === wizardSteps.length - 1;
@@ -449,11 +468,14 @@ export default function ForgeScreen(): JSX.Element {
     collegeTeamFocusName,
     musicGenre,
     musicRole,
+    filmTvCategory,
+    filmTvGenre,
+    filmTvRole,
     appearance,
     cyberneticIntensity,
     pose,
     lab,
-  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, teamFocusMode, proTeamFocusId, proTeamFocusName, collegeTeamFocusId, collegeTeamFocusName, musicGenre, musicRole, appearance, cyberneticIntensity, pose, lab]);
+  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, teamFocusMode, proTeamFocusId, proTeamFocusName, collegeTeamFocusId, collegeTeamFocusName, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, appearance, cyberneticIntensity, pose, lab]);
 
   /** Dynamic reforge cost when editing — compares current form vs EAGOH's saved state. */
   const reforgeCost = useMemo(() => {
@@ -464,6 +486,9 @@ export default function ForgeScreen(): JSX.Element {
       pose: editingEagoh.pose ?? "",
       musicGenre: editingEagoh.music_genre ?? "",
       musicRole: editingEagoh.music_role ?? "",
+      filmTvCategory: editingEagoh.film_tv_category ?? "",
+      filmTvGenre: editingEagoh.film_tv_genre ?? "",
+      filmTvRole: editingEagoh.film_tv_role ?? "",
     };
     const newState = {
       appearance,
@@ -471,9 +496,12 @@ export default function ForgeScreen(): JSX.Element {
       pose,
       musicGenre,
       musicRole,
+      filmTvCategory,
+      filmTvGenre,
+      filmTvRole,
     };
     return calculateReforgeCost(oldState, newState);
-  }, [isEditing, editingEagoh, appearance, styleNotes, pose, musicGenre, musicRole]);
+  }, [isEditing, editingEagoh, appearance, styleNotes, pose, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole]);
 
   const setAppearanceField = useCallback((category: string, text: string): void => {
     setAppearance((prev) => ({ ...prev, [category]: text }));
@@ -888,6 +916,54 @@ export default function ForgeScreen(): JSX.Element {
       );
     }
 
+    if (currentStep.id === "film_tv_category") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Select the film and television category this EAGOH specializes in. This is used for filtering, Marketplace searches, and category-specific intelligence.</Text>
+          {FILM_TV_CATEGORIES.map((c) => (
+            <OptionChip
+              key={c.id}
+              option={{ id: c.id, label: c.label, tone: "ember" }}
+              selected={filmTvCategory === c.id}
+              onPress={setFilmTvCategory}
+            />
+          ))}
+        </>
+      );
+    }
+
+    if (currentStep.id === "film_tv_genre") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Select the genre this EAGOH focuses on. Genre determines the tone and style of analysis.</Text>
+          {FILM_TV_GENRES.map((g) => (
+            <OptionChip
+              key={g.id}
+              option={{ id: g.id, label: g.label, tone: "ember" }}
+              selected={filmTvGenre === g.id}
+              onPress={setFilmTvGenre}
+            />
+          ))}
+        </>
+      );
+    }
+
+    if (currentStep.id === "film_tv_role") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Choose the role or perspective this EAGOH embodies in the film and television industry. This shapes its analysis style and marketplace discoverability.</Text>
+          {FILM_TV_ROLES.map((r) => (
+            <OptionChip
+              key={r.id}
+              option={{ id: r.id, label: r.label, tone: "ember" }}
+              selected={filmTvRole === r.id}
+              onPress={setFilmTvRole}
+            />
+          ))}
+        </>
+      );
+    }
+
     if (currentStep.id === "teams") {
       const sportCanonical = getSportCanonical(sport);
       const hasTeams = sportCanonical !== undefined;
@@ -1035,6 +1111,12 @@ export default function ForgeScreen(): JSX.Element {
     musicRole,
     setMusicGenre,
     setMusicRole,
+    filmTvCategory,
+    filmTvGenre,
+    filmTvRole,
+    setFilmTvCategory,
+    setFilmTvGenre,
+    setFilmTvRole,
   ]);
 
   const previewHeight = Math.min(windowHeight * 0.27, 248);

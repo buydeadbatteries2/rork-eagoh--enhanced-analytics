@@ -95,6 +95,10 @@ export type ListingFilters = {
   /** Music domain filters (canonical IDs). */
   musicGenre?: string;
   musicRole?: string;
+  /** Film & TV domain filters (canonical IDs). */
+  filmTvCategory?: string;
+  filmTvGenre?: string;
+  filmTvRole?: string;
   syncLevel?: SyncLevel;
   maxPrice?: number;
   minPrice?: number;
@@ -358,6 +362,15 @@ export async function listActiveListings(
   if (filters.musicRole) {
     result = result.filter((l) => l.eagoh?.music_role === filters.musicRole);
   }
+  if (filters.filmTvCategory) {
+    result = result.filter((l) => l.eagoh?.film_tv_category === filters.filmTvCategory);
+  }
+  if (filters.filmTvGenre) {
+    result = result.filter((l) => l.eagoh?.film_tv_genre === filters.filmTvGenre);
+  }
+  if (filters.filmTvRole) {
+    result = result.filter((l) => l.eagoh?.film_tv_role === filters.filmTvRole);
+  }
   if (filters.team) {
     const teamQuery = filters.team!.toLowerCase();
     result = result.filter((l) => {
@@ -394,6 +407,9 @@ export async function listActiveListings(
         l.eagoh?.college_team_focus_name,
         l.eagoh?.music_genre,
         l.eagoh?.music_role,
+        l.eagoh?.film_tv_category,
+        l.eagoh?.film_tv_genre,
+        l.eagoh?.film_tv_role,
         ...l.fanatic_teams,
       ].filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(q);

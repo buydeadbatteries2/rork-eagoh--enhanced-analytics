@@ -1,7 +1,7 @@
 import { Tabs } from "expo-router";
 import { Atom, Home, MessageCircle, Store, UserRound } from "lucide-react-native";
 import React from "react";
-import { Platform, StyleSheet, View } from "react-native";
+import { Platform } from "react-native";
 import { palette } from "@/constants/colors";
 
 /**
@@ -53,11 +53,7 @@ export default function TabLayout(): JSX.Element {
         name="forge"
         options={{
           title: "Forge",
-          tabBarIcon: ({ focused }) => (
-            <View style={[styles.forgeWrap, focused && styles.forgeWrapActive]}>
-              <Atom color={focused ? palette.void : palette.cyan} size={24} strokeWidth={2.2} />
-            </View>
-          ),
+          tabBarIcon: ({ color, size }) => <Atom color={color} size={size} />,
         }}
       />
       <Tabs.Screen
@@ -85,24 +81,4 @@ export default function TabLayout(): JSX.Element {
   );
 }
 
-const styles = StyleSheet.create({
-  forgeWrap: {
-    width: 46,
-    height: 46,
-    borderRadius: 5,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(108, 230, 255, 0.10)",
-    borderWidth: 1.5,
-    borderColor: "rgba(108, 230, 255, 0.22)",
-    marginTop: -6,
-  },
-  forgeWrapActive: {
-    backgroundColor: palette.cyan,
-    borderColor: palette.cyan,
-    shadowColor: palette.cyan,
-    shadowOpacity: 0.55,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 0 },
-  },
-});
+

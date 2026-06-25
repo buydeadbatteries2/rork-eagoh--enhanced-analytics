@@ -194,7 +194,7 @@ function SelectedEagohCard({
       {/* Featured image */}
       <View style={styles.eagohHeroImageWrap}>
         {hero ? (
-          <Image source={{ uri: hero }} style={styles.eagohHeroImage} resizeMode="cover" />
+          <Image source={{ uri: hero }} style={styles.eagohHeroImage} resizeMode="contain" />
         ) : (
           <View style={styles.eagohHeroPlaceholder}>
             <BrainCircuit color={eagoh ? domainTone : palette.muted} size={64} />

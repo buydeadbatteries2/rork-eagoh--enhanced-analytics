@@ -1,5 +1,5 @@
 import { palette, glow } from "@/constants/colors";
-import { LIST_PERFORMANCE_PROPS } from "@/app/components/PerformancePrimitives";
+import { LIST_PERFORMANCE_PROPS } from "@/app/_components/PerformancePrimitives";
 import { useAuth } from "@/providers/AuthProvider";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useEdge } from "@/providers/EdgeProvider";
@@ -39,7 +39,7 @@ import { INTELLIGENCE_DOMAINS, getDomainColor } from "@/services/domains";
 import { getBulkReputations, rankColor as repRankColor, RANK_TIERS, type RankTier } from "@/services/reputation";
 import type { ReputationRow } from "@/services/reputation";
 import { supabase } from "@/lib/supabase";
-import TeamSelector from "@/app/components/TeamSelector";
+import TeamSelector from "@/app/_components/TeamSelector";
 import { LinearGradient } from "expo-linear-gradient";
 import { useHaptics } from "@/hooks/useHaptics";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";

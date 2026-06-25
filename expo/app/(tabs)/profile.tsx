@@ -5,7 +5,7 @@
  */
 
 import { palette } from "@/constants/colors";
-import { LIST_PERFORMANCE_PROPS } from "@/app/components/PerformancePrimitives";
+import { LIST_PERFORMANCE_PROPS } from "@/app/_components/PerformancePrimitives";
 import { Image } from "expo-image";
 import { useWindowDimensions } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";

@@ -29,7 +29,7 @@ import {
 import { TIER_MAX_EAGOHS, TIER_MULTIPLIER, getForgeCost } from "@/services/edge";
 import type { EagohDraft } from "@/services/eagohs";
 import { useHaptics } from "@/hooks/useHaptics";
-import TeamSelector from "@/app/components/TeamSelector";
+import TeamSelector from "@/app/_components/TeamSelector";
 import { getTeamById, getSportCanonical } from "@/data/teams";
 import { MUSIC_GENRES, MUSIC_ROLES, getMusicGenre, getMusicRole } from "@/data/music";
 import { FILM_TV_CATEGORIES, FILM_TV_GENRES, FILM_TV_ROLES, getFilmTvCategory, getFilmTvGenre, getFilmTvRole } from "@/data/filmTv";

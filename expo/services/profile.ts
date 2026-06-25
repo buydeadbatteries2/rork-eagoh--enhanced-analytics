@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import { TIER_MONTHLY_ALLOCATION } from "@/services/edge";
+import { TIER_MONTHLY_ALLOCATION } from "@/services/tiers";
 
 /**
  * Profile service – persists user profile data in the `profiles` Supabase table.

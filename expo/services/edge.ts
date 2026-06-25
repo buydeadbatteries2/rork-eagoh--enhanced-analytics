@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import { getQuickCheckCost } from "@/services/analyst";
-import { updateProfile, type SubscriptionTier, type UserProfile } from "@/services/profile";
+import { updateProfile, type UserProfile } from "@/services/profile";
+import type { SubscriptionTier } from "@/services/tiers";
 
 /**
  * Edge wallet service.

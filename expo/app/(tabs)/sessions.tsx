@@ -14,23 +14,27 @@ import { palette } from "@/constants/colors";
 import * as Haptics from "expo-haptics";
 import {
   ArrowLeft,
+  BarChart3,
   BrainCircuit,
   Check,
   ChevronDown,
   ChevronRight,
-  ChevronUp,
   Clock,
-  Cpu,
-  Flame,
-  Orbit,
+  Dna,
+  FileText,
+  Gem,
+  Info,
+  PieChart,
+  Plus,
   Search,
   Sparkles,
+  Star,
+  Target,
+  TrendingUp,
   Zap,
 } from "lucide-react-native";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -42,10 +46,11 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
+import { Image } from "expo-image";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useEagohs } from "@/providers/EagohProvider";
-import { INTELLIGENCE_DOMAINS, getDomainColor } from "@/services/domains";
+import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import { guardDomainRequest } from "@/services/domainGuard";
 import { getQuickCheckCost, runQuickCheck, type AnalystRequestKind } from "@/services/analyst";
 import type { EagohRecord } from "@/services/eagohs";
@@ -66,11 +71,12 @@ type SessionType = {
 };
 
 const sessionTypes: SessionType[] = [
-  { id: "quick-check", name: "Quick Check", description: "Rapid intelligence check", costRange: "1-3 Edge", minCost: 1, maxCost: 3, model: "Pulse-Lite", duration: "~2 min", tone: "cyan", active: true },
-  { id: "quick-analysis", name: "Quick Analysis", description: "Tactical strategic read", costRange: "10-15 Edge", minCost: 10, maxCost: 15, model: "Tactic-Core", duration: "~5 min", tone: "gold", active: false },
-  { id: "standard", name: "Standard Analysis", description: "Deep strategic assessment", costRange: "40-75 Edge", minCost: 40, maxCost: 75, model: "EAGOH Analyst", duration: "~8 min", tone: "success", active: false },
-  { id: "oracle", name: "Oracle Deep Dive", description: "Elite predictive modeling", costRange: "150-300 Edge", minCost: 150, maxCost: 300, model: "Oracle-Synapse", duration: "~15 min", tone: "violet", active: false },
-  { id: "premium-event", name: "Premium Event", description: "Event-focused intelligence", costRange: "75-150 Edge", minCost: 75, maxCost: 150, model: "Event-Lens Pro", duration: "~10 min", tone: "ember", active: false },
+  { id: "quick-check", name: "Quick Check", description: "Get a fast AI pulse on your question. Perfect for quick decisions.", costRange: "5 EDGE", minCost: 5, maxCost: 5, model: "Pulse-Lite", duration: "1–2 min", tone: "cyan", active: true },
+  { id: "quick-analysis", name: "Quick Analysis", description: "Deeper look with key factors and probabilities.", costRange: "15 EDGE", minCost: 15, maxCost: 15, model: "Tactic-Core", duration: "3–5 min", tone: "cyan", active: false },
+  { id: "standard", name: "Standard Analysis", description: "Comprehensive breakdown with insights and recommended angles.", costRange: "35 EDGE", minCost: 35, maxCost: 35, model: "EAGOH Analyst", duration: "8–12 min", tone: "success", active: false },
+  { id: "detailed", name: "Detailed Analysis", description: "In-depth analysis with advanced metrics, trends, and scenario projections.", costRange: "75 EDGE", minCost: 75, maxCost: 75, model: "Scenario-Core", duration: "15–25 min", tone: "violet", active: false },
+  { id: "oracle", name: "Deep Dive Analysis", description: "Full-spectrum AI analysis with maximum depth and strategic recommendations.", costRange: "125 EDGE", minCost: 125, maxCost: 125, model: "Oracle-Synapse", duration: "30–45 min", tone: "violet", active: false },
+  { id: "premium-event", name: "Elite Strategy Session", description: "Elite-level analysis with custom modeling, matchup simulation & expert AI strategies.", costRange: "250 EDGE", minCost: 250, maxCost: 250, model: "Event-Lens Pro", duration: "45–60 min", tone: "gold", active: false },
 ];
 
 type ChatMessage = { id: string; sender: "user" | "analyst"; text: string; confidence?: number; cost?: number };
@@ -100,13 +106,16 @@ function detectQuickCheckKind(prompt: string): AnalystRequestKind {
 }
 
 function sessionIcon(id: string, color: string, size: number): React.ReactNode {
-  if (id === "quick-check") return <Zap color={color} size={size} />;
-  if (id === "oracle") return <Orbit color={color} size={size} />;
-  if (id === "premium-event") return <Flame color={color} size={size} />;
+  if (id === "quick-check") return <Zap color={color} size={size} fill={color} fillOpacity={0.85} />;
+  if (id === "quick-analysis") return <Search color={color} size={size} />;
+  if (id === "standard") return <TrendingUp color={color} size={size} />;
+  if (id === "detailed") return <PieChart color={color} size={size} fill={color} fillOpacity={0.35} />;
+  if (id === "oracle") return <Target color={color} size={size} />;
+  if (id === "premium-event") return <Star color={color} size={size} />;
   return <BrainCircuit color={color} size={size} />;
 }
 
-// ── Compact session card (max 140px) ──
+// ── Mockup-style session row ──
 function SessionCard({
   session,
   onPress,
@@ -121,46 +130,26 @@ function SessionCard({
     <Pressable
       onPress={onPress}
       disabled={disabled}
-      style={({ pressed }) => [
-        styles.sessionCard,
-        { borderColor: session.active ? `${accent}44` : palette.line },
-        disabled && styles.cardDisabled,
-        pressed && styles.pressed,
-      ]}
+      style={({ pressed }) => [styles.sessionCard, disabled && styles.cardDisabled, pressed && styles.pressed]}
     >
-      {/* Left accent bar */}
-      <View style={[styles.cardAccent, { backgroundColor: accent }]} />
-      {/* Icon */}
-      <View style={[styles.cardIcon, { backgroundColor: toneBg(session.tone), borderColor: `${accent}33` }]}>
-        {sessionIcon(session.id, accent, 20)}
+      <View style={[styles.cardIcon, { backgroundColor: toneBg(session.tone), borderColor: `${accent}AA` }]}>
+        {sessionIcon(session.id, accent, 34)}
       </View>
-      {/* Body */}
       <View style={styles.cardBody}>
-        <View style={styles.cardTopRow}>
-          <Text style={styles.cardName}>{session.name}</Text>
-          {session.active ? (
-            <View style={styles.liveBadge}>
-              <Sparkles color={palette.success} size={8} />
-              <Text style={styles.liveBadgeText}>LIVE</Text>
-            </View>
-          ) : null}
-        </View>
-        <Text style={styles.cardDesc} numberOfLines={1}>{session.description}</Text>
-        <View style={styles.cardMeta}>
-          <Clock color={palette.muted} size={10} />
-          <Text style={styles.cardMetaText}>{session.duration}</Text>
-          <Cpu color={palette.muted} size={10} />
-          <Text style={styles.cardMetaText}>{session.model}</Text>
-        </View>
+        <Text style={styles.cardName}>{session.name}</Text>
+        <Text style={styles.cardDesc}>{session.description}</Text>
       </View>
-      {/* Cost + arrow */}
-      <View style={styles.cardRight}>
-        <View style={styles.cardCostRow}>
-          <Zap color={accent} size={12} />
+      <View style={styles.cardMetaBlock}>
+        <View style={styles.cardTimeRow}>
+          <Clock color="rgba(108,230,255,0.72)" size={15} />
+          <Text style={styles.cardMetaText}>{session.duration.toUpperCase()}</Text>
+        </View>
+        <View style={[styles.cardCostPill, { borderColor: `${accent}88` }]}> 
+          <Gem color={palette.cyan} size={14} fill={palette.cyan} fillOpacity={0.25} />
           <Text style={[styles.cardCost, { color: accent }]}>{session.costRange}</Text>
         </View>
-        <ChevronRight color={accent} size={16} />
       </View>
+      <ChevronRight color={palette.text} size={28} strokeWidth={2.4} />
     </Pressable>
   );
 }
@@ -541,6 +530,7 @@ function ActiveChat({
 export default function SessionsScreen(): JSX.Element {
   const { eagohs } = useEagohs();
   const { profile } = useProfile();
+  const { total: edgeTotal } = useEdge();
   const userTier = profile?.subscription_tier ?? "free";
   const [selectedEagohId, setSelectedEagohId] = useState<string>(eagohs[0]?.id ?? "");
   const [showPicker, setShowPicker] = useState<boolean>(false);
@@ -624,43 +614,103 @@ export default function SessionsScreen(): JSX.Element {
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <View style={styles.root}>
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          {/* Header */}
-          <View style={styles.hero}>
-            <Text style={styles.kicker}>INTELLIGENCE SESSIONS</Text>
-            <Text style={styles.title}>Run your EAGOH</Text>
-            {eagohs.length === 0 ? (
-              <View style={styles.emptyBanner}>
-                <Sparkles color={palette.gold} size={14} />
-                <Text style={styles.emptyText}>Forge an EAGOH first to run sessions.</Text>
+          <View style={styles.topBar}>
+            <Pressable style={({ pressed }) => [styles.backGlyph, pressed && styles.pressed]}>
+              <ArrowLeft color={palette.cyan} size={34} strokeWidth={2.2} />
+            </Pressable>
+            <View style={styles.headerCopy}>
+              <Text style={styles.title}>AI SESSIONS</Text>
+              <Text style={styles.kicker}>CHOOSE YOUR ANALYSIS DEPTH</Text>
+            </View>
+            <View style={styles.edgeBox}>
+              <Text style={styles.edgeLabel}>EDGE BALANCE</Text>
+              <View style={styles.edgeAmountRow}>
+                <Gem color={palette.cyan} size={20} fill={palette.cyan} fillOpacity={0.32} />
+                <Text style={styles.edgeAmount}>{edgeTotal.toLocaleString()}</Text>
+                <View style={styles.edgePlus}><Plus color={palette.void} size={16} strokeWidth={3} /></View>
               </View>
-            ) : null}
+            </View>
           </View>
 
-          {/* Selected EAGOH card */}
-          <SelectedEagohCard
-            eagoh={selectedEagoh ?? null}
-            onPress={() => setShowPicker(true)}
-            hasMultiple={eagohs.length > 1}
-            userTier={userTier}
-          />
+          <View style={styles.mockHero}>
+            <LinearGradient colors={["rgba(0,20,42,0.10)", "rgba(0,126,255,0.22)", "rgba(2,4,10,0.04)"]} style={StyleSheet.absoluteFill} />
+            <View style={styles.scanArc} />
+            <View style={[styles.sidePanel, styles.leftPanel]} />
+            <View style={[styles.sidePanel, styles.rightPanel]} />
+            <Pressable onPress={() => setShowPicker(true)} style={({ pressed }) => [styles.statusCard, pressed && styles.pressed]}>
+              <Text style={styles.statusLabel}>EAGOH STATUS</Text>
+              <Text style={styles.statusValue}>{selectedEagoh ? (userTier === "free" ? "DORMANT" : "ACTIVATED") : "NONE"}</Text>
+              <Text style={styles.statusSub}>{userTier === "free" ? "FREE CHASSIS" : "PREMIUM CHASSIS"}</Text>
+            </Pressable>
+            <Pressable onPress={() => setShowPicker(true)} style={({ pressed }) => [styles.dnaCard, pressed && styles.pressed]}>
+              <Dna color={palette.cyan} size={27} />
+              <Text style={styles.dnaText}>VIEW DNA{"\n"}SUMMARY</Text>
+            </Pressable>
+            <View style={styles.eagohFigure}>
+              <View style={styles.brainDome}>
+                {selectedEagoh?.image_url ? (
+                  <Image source={{ uri: selectedEagoh.image_url }} style={styles.eagohImage} contentFit="cover" />
+                ) : (
+                  <BrainCircuit color={palette.cyan} size={78} strokeWidth={1.7} />
+                )}
+              </View>
+              <View style={styles.neckChain} />
+              <View style={styles.armorTorso}>
+                <Text style={styles.chestMark}>{selectedEagoh?.name?.charAt(0)?.toUpperCase() ?? "N"}</Text>
+              </View>
+              <View style={[styles.shoulder, styles.leftShoulder]} />
+              <View style={[styles.shoulder, styles.rightShoulder]} />
+            </View>
+          </View>
 
-          {/* Session type cards */}
-          <Text style={styles.sectionLabel}>SESSION TYPES</Text>
-          <View style={styles.sessionList}>
-            {sessionTypes.map((session) => (
-              <SessionCard
-                key={session.id}
-                session={session}
-                onPress={() => handleSessionPress(session)}
-                disabled={eagohs.length === 0 && session.id !== "quick-check"}
-              />
-            ))}
+          {eagohs.length === 0 ? (
+            <View style={styles.emptyBanner}>
+              <Sparkles color={palette.gold} size={14} />
+              <Text style={styles.emptyText}>Forge an EAGOH first to run sessions.</Text>
+            </View>
+          ) : null}
+
+          <View style={styles.selectorPanel}>
+            <Text style={styles.sectionLabel}>SELECT AI SESSION TYPE</Text>
+            <Text style={styles.sectionSub}>Different depths. Different insights. Choose what you need.</Text>
+            <View style={styles.sessionList}>
+              {sessionTypes.map((session) => (
+                <SessionCard
+                  key={session.id}
+                  session={session}
+                  onPress={() => handleSessionPress(session)}
+                  disabled={eagohs.length === 0 && session.id !== "quick-check"}
+                />
+              ))}
+            </View>
+            <View style={styles.infoPanel}>
+              <View style={styles.infoIcon}><Info color={palette.cyan} size={22} /></View>
+              <Text style={styles.infoText}>Higher depth provides more data, better accuracy, and stronger insights.{"\n"}Choose the session that matches your goal.</Text>
+            </View>
+          </View>
+
+          <View style={styles.mockTabs}>
+            <View style={[styles.mockTabItem, styles.mockTabActive]}>
+              <BrainCircuit color={palette.cyan} size={29} />
+              <Text style={styles.mockTabActiveText}>AI SESSIONS</Text>
+            </View>
+            <View style={styles.mockTabItem}>
+              <FileText color={palette.muted} size={28} />
+              <Text style={styles.mockTabText}>MY SESSIONS</Text>
+            </View>
+            <View style={styles.mockTabItem}>
+              <BarChart3 color={palette.muted} size={28} />
+              <Text style={styles.mockTabText}>INSIGHTS</Text>
+            </View>
+            <View style={styles.mockTabItem}>
+              <Clock color={palette.muted} size={29} />
+              <Text style={styles.mockTabText}>HISTORY</Text>
+            </View>
           </View>
 
           <View style={styles.bottomSpacer} />
         </ScrollView>
 
-        {/* EAGOH picker overlay */}
         {showPicker ? (
           <EagohPicker
             eagohs={eagohs}
@@ -677,116 +727,98 @@ export default function SessionsScreen(): JSX.Element {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.void },
   root: { flex: 1, backgroundColor: palette.void },
-  scroll: { padding: 14, paddingBottom: 100 },
+  scroll: { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 104 },
 
-  // Hero
-  hero: { marginBottom: 14 },
-  kicker: { color: palette.cyan, fontSize: 10, fontWeight: "900", letterSpacing: 2.2, marginBottom: 4 },
-  title: { color: palette.text, fontSize: 26, fontWeight: "900", letterSpacing: -0.6 },
-  emptyBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 5,
-    backgroundColor: palette.goldSoft,
+  topBar: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 14 },
+  backGlyph: { width: 34, height: 44, alignItems: "center", justifyContent: "center" },
+  headerCopy: { flex: 1 },
+  kicker: { color: palette.cyan, fontSize: 18, fontWeight: "800", letterSpacing: 2.1, marginTop: 1 },
+  title: { color: palette.text, fontSize: 31, fontWeight: "900", letterSpacing: 1.1, textTransform: "uppercase" },
+  edgeBox: {
+    minWidth: 118,
+    borderRadius: 9,
     borderWidth: 1,
-    borderColor: "rgba(255,181,71,0.20)",
+    borderColor: "rgba(0,216,255,0.42)",
+    backgroundColor: "rgba(0,14,28,0.72)",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
   },
+  edgeLabel: { color: palette.cyan, fontSize: 12, fontWeight: "900", letterSpacing: 0.6, textAlign: "center", marginBottom: 7 },
+  edgeAmountRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 },
+  edgeAmount: { color: palette.text, fontSize: 24, fontWeight: "900", letterSpacing: -0.8 },
+  edgePlus: { width: 24, height: 24, borderRadius: 5, backgroundColor: palette.cyan, alignItems: "center", justifyContent: "center" },
+
+  mockHero: { height: 357, marginHorizontal: -14, marginBottom: -2, overflow: "hidden", backgroundColor: "#030914" },
+  scanArc: {
+    position: "absolute",
+    alignSelf: "center",
+    top: 18,
+    width: 285,
+    height: 285,
+    borderRadius: 143,
+    borderWidth: 1,
+    borderColor: "rgba(0,118,255,0.34)",
+    shadowColor: palette.blue,
+    shadowOpacity: 0.55,
+    shadowRadius: 22,
+  },
+  sidePanel: { position: "absolute", width: 72, height: 108, borderRadius: 5, borderWidth: 1, borderColor: "rgba(0,140,255,0.18)", backgroundColor: "rgba(0,38,84,0.18)" },
+  leftPanel: { left: 14, top: 128 },
+  rightPanel: { right: 14, top: 118 },
+  statusCard: { position: "absolute", left: 14, top: 48, width: 126, borderRadius: 8, borderWidth: 1, borderColor: "rgba(0,216,255,0.30)", backgroundColor: "rgba(0,12,24,0.78)", padding: 12 },
+  statusLabel: { color: palette.text, fontSize: 12, fontWeight: "900" },
+  statusValue: { color: palette.cyan, fontSize: 18, fontWeight: "900", marginTop: 8, letterSpacing: 0.7 },
+  statusSub: { color: "#9FEBFF", fontSize: 11, fontWeight: "800", marginTop: 8 },
+  dnaCard: { position: "absolute", right: 14, top: 48, width: 124, minHeight: 78, borderRadius: 8, borderWidth: 1, borderColor: "rgba(0,216,255,0.26)", backgroundColor: "rgba(0,12,24,0.80)", padding: 12, flexDirection: "row", alignItems: "center", gap: 10 },
+  dnaText: { color: palette.cyan, fontSize: 13, fontWeight: "900", lineHeight: 20 },
+  eagohFigure: { position: "absolute", alignSelf: "center", bottom: -18, width: 246, height: 330, alignItems: "center" },
+  brainDome: { width: 112, height: 126, borderRadius: 55, borderWidth: 2, borderColor: palette.cyan, backgroundColor: "rgba(0,126,255,0.20)", alignItems: "center", justifyContent: "center", overflow: "hidden", shadowColor: palette.cyan, shadowOpacity: 0.8, shadowRadius: 18 },
+  eagohImage: { width: "100%", height: "100%" },
+  neckChain: { width: 76, height: 11, borderRadius: 6, backgroundColor: "rgba(220,240,255,0.42)", marginTop: -4, transform: [{ rotate: "-9deg" }] },
+  armorTorso: { width: 158, height: 178, marginTop: -2, borderTopLeftRadius: 42, borderTopRightRadius: 42, borderBottomLeftRadius: 24, borderBottomRightRadius: 24, borderWidth: 1, borderColor: "rgba(132,190,255,0.44)", backgroundColor: "rgba(17,22,32,0.96)", alignItems: "center", paddingTop: 50, shadowColor: palette.blue, shadowOpacity: 0.4, shadowRadius: 14 },
+  chestMark: { color: palette.text, fontSize: 52, fontWeight: "900", textShadowColor: palette.cyan, textShadowRadius: 12 },
+  shoulder: { position: "absolute", top: 142, width: 72, height: 94, borderRadius: 28, borderWidth: 1, borderColor: "rgba(132,190,255,0.34)", backgroundColor: "rgba(18,24,34,0.96)" },
+  leftShoulder: { left: 0, transform: [{ rotate: "18deg" }] },
+  rightShoulder: { right: 0, transform: [{ rotate: "-18deg" }] },
+
+  emptyBanner: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 10, marginBottom: 12, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, backgroundColor: palette.goldSoft, borderWidth: 1, borderColor: "rgba(255,181,71,0.24)" },
   emptyText: { color: palette.gold, fontSize: 12, fontWeight: "800" },
 
-  // EAGOH card
-  eagohCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderRadius: 5,
-    borderWidth: 1,
-    borderColor: palette.line,
-    backgroundColor: "rgba(10,20,35,0.60)",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 16,
-  },
+  eagohCard: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderRadius: 8, borderWidth: 1, borderColor: palette.line, backgroundColor: "rgba(10,20,35,0.60)", paddingHorizontal: 14, paddingVertical: 12, marginBottom: 16 },
   eagohCardLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
-  eagohCardAvatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 5,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.03)",
-  },
+  eagohCardAvatar: { width: 42, height: 42, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.03)" },
   eagohCardInfo: { flex: 1 },
   eagohCardName: { color: palette.text, fontSize: 14, fontWeight: "900" },
   eagohCardDomain: { color: palette.muted, fontSize: 11, fontWeight: "700", marginTop: 1 },
   eagohCardRight: { alignItems: "flex-end", gap: 4 },
-  eagohShellBadge: {
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 4,
-    borderWidth: 1,
-  },
+  eagohShellBadge: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 4, borderWidth: 1 },
   eagohShellText: { fontSize: 8, fontWeight: "900", letterSpacing: 1 },
   eagohCardChange: { color: palette.cyan, fontSize: 11, fontWeight: "800" },
 
-  // Section
-  sectionLabel: { color: palette.gold, fontSize: 9, fontWeight: "900", letterSpacing: 2, marginBottom: 8 },
+  selectorPanel: { borderRadius: 10, borderWidth: 1, borderColor: "rgba(0,216,255,0.43)", backgroundColor: "rgba(0,13,25,0.88)", padding: 16, shadowColor: palette.blue, shadowOpacity: 0.2, shadowRadius: 18 },
+  sectionLabel: { color: palette.cyan, fontSize: 18, fontWeight: "900", letterSpacing: 1.8, marginBottom: 8 },
+  sectionSub: { color: "rgba(220,232,245,0.68)", fontSize: 14, fontWeight: "700", marginBottom: 16 },
+  sessionList: { gap: 10 },
 
-  // Session card list
-  sessionList: { gap: 6 },
-
-  // Session card (compact, max 140px)
-  sessionCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderRadius: 5,
-    borderWidth: 1,
-    backgroundColor: "rgba(10,20,35,0.55)",
-    maxHeight: 88,
-    overflow: "hidden",
-  },
-  cardAccent: { width: 3, alignSelf: "stretch" },
-  cardIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 5,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    marginLeft: 10,
-    marginVertical: 10,
-  },
-  cardBody: { flex: 1, paddingHorizontal: 10, paddingVertical: 10, gap: 2 },
-  cardTopRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  cardName: { color: palette.text, fontSize: 14, fontWeight: "900", flexShrink: 1 },
-  liveBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 4,
-    backgroundColor: "rgba(0,255,178,0.10)",
-    borderWidth: 1,
-    borderColor: "rgba(0,255,178,0.22)",
-  },
-  liveBadgeText: { color: palette.success, fontSize: 7, fontWeight: "900", letterSpacing: 1 },
-  cardDesc: { color: palette.muted, fontSize: 11, fontWeight: "700" },
-  cardMeta: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 1 },
-  cardMetaText: { color: palette.muted, fontSize: 10, fontWeight: "700" },
-  cardRight: {
-    alignItems: "center",
-    gap: 4,
-    paddingRight: 12,
-    paddingVertical: 10,
-  },
-  cardCostRow: { flexDirection: "row", alignItems: "center", gap: 3 },
-  cardCost: { fontSize: 12, fontWeight: "900" },
+  sessionCard: { flexDirection: "row", alignItems: "center", borderRadius: 8, borderWidth: 1, borderColor: "rgba(0,216,255,0.20)", backgroundColor: "rgba(0,21,38,0.58)", minHeight: 106, paddingHorizontal: 14, paddingVertical: 14, gap: 14, overflow: "hidden" },
+  cardIcon: { width: 74, height: 74, borderRadius: 10, borderWidth: 1.2, alignItems: "center", justifyContent: "center" },
+  cardBody: { flex: 1, gap: 7 },
+  cardName: { color: palette.text, fontSize: 18, fontWeight: "900", letterSpacing: 0.7, textTransform: "uppercase" },
+  cardDesc: { color: "rgba(220,232,245,0.70)", fontSize: 13.5, fontWeight: "700", lineHeight: 20 },
+  cardMetaBlock: { alignItems: "flex-end", gap: 14, minWidth: 96 },
+  cardTimeRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  cardMetaText: { color: "rgba(220,232,245,0.70)", fontSize: 13, fontWeight: "800" },
+  cardCostPill: { flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 7, borderWidth: 1, paddingHorizontal: 9, paddingVertical: 8, backgroundColor: "rgba(0,19,35,0.72)" },
+  cardCost: { fontSize: 12.5, fontWeight: "900", letterSpacing: 0.4 },
   cardDisabled: { opacity: 0.45 },
+  infoPanel: { marginTop: 18, borderRadius: 9, borderWidth: 1, borderColor: "rgba(0,216,255,0.50)", backgroundColor: "rgba(0,91,125,0.16)", padding: 16, flexDirection: "row", alignItems: "center", gap: 14 },
+  infoIcon: { width: 36, height: 36, borderRadius: 18, borderWidth: 1.5, borderColor: palette.cyan, alignItems: "center", justifyContent: "center" },
+  infoText: { flex: 1, color: palette.cyan, fontSize: 14, fontWeight: "800", lineHeight: 22 },
+  mockTabs: { flexDirection: "row", alignItems: "center", marginTop: 18, borderRadius: 8, borderWidth: 1, borderColor: "rgba(120,180,255,0.36)", backgroundColor: "rgba(0,17,31,0.82)", overflow: "hidden" },
+  mockTabItem: { flex: 1, minHeight: 86, alignItems: "center", justifyContent: "center", gap: 8, borderRightWidth: 1, borderRightColor: "rgba(120,180,255,0.12)" },
+  mockTabActive: { backgroundColor: "rgba(0,216,255,0.08)" },
+  mockTabActiveText: { color: palette.cyan, fontSize: 12, fontWeight: "900", letterSpacing: 1.2 },
+  mockTabText: { color: "rgba(220,232,245,0.62)", fontSize: 12, fontWeight: "800", letterSpacing: 1.2 },
   pressed: { transform: [{ scale: 0.985 }], opacity: 0.88 },
 
   // Setup

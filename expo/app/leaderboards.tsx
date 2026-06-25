@@ -21,6 +21,8 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -275,6 +277,7 @@ export default function LeaderboardsScreen(): JSX.Element {
             placeholder="Search EAGOH name..."
             placeholderTextColor={palette.muted}
             style={styles.searchInput}
+            returnKeyType="search"
           />
           {filters.search ? (
             <Pressable onPress={() => handleFilterChange({ search: undefined })} hitSlop={8}>
@@ -399,6 +402,11 @@ export default function LeaderboardsScreen(): JSX.Element {
   return (
     <LinearGradient colors={["#03060B", "#08111C", "#0B141F"]} style={styles.root}>
       <SafeAreaView edges={["top"]} style={styles.safe}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
+          style={styles.keyboardWrap}
+        >
         <FlatList
           data={entries}
           renderItem={renderItem}
@@ -417,8 +425,11 @@ export default function LeaderboardsScreen(): JSX.Element {
           onEndReachedThreshold={0.4}
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
           {...LIST_PERFORMANCE_PROPS}
         />
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </LinearGradient>
   );
@@ -429,6 +440,7 @@ export default function LeaderboardsScreen(): JSX.Element {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   safe: { flex: 1 },
+  keyboardWrap: { flex: 1 },
   scroll: { padding: 16, paddingBottom: 120, gap: 10 },
 
   // Hero

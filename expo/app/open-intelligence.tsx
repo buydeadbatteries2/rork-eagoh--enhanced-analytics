@@ -320,6 +320,7 @@ const TagSelector = memo(function TagSelector({
               placeholderTextColor={palette.muted}
               maxLength={30}
               style={styles.customTagInput}
+              returnKeyType="done"
             />
             {customTag.trim() ? (
               <Text style={styles.customTagCount}>{customTag.length}/30</Text>
@@ -557,7 +558,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <KeyboardAvoidingView
         style={styles.root}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={Platform.OS === "ios" ? 20 : 0}
       >
         {/* Header */}
@@ -576,6 +577,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
         >
           {/* EAGOH Selector */}
           <View style={styles.block}>

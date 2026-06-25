@@ -27,6 +27,7 @@ export type EdgeReason =
   | "forge_initial"
   | "forge_full_reforge"
   | "forge_partial_reforge"
+  | "rename_eagoh"
   | "subscription_allocation"
   | "rollover"
   | "purchase"
@@ -58,7 +59,8 @@ export const EDGE_COSTS: Record<
   | "customization"
   | "forge_initial"
   | "forge_full_reforge"
-  | "forge_partial_reforge",
+  | "forge_partial_reforge"
+  | "rename_eagoh",
   number
 > = {
   observation: 10,
@@ -67,6 +69,7 @@ export const EDGE_COSTS: Record<
   forge_initial: 250,
   forge_full_reforge: 500,
   forge_partial_reforge: 100,
+  rename_eagoh: 75,
 };
 
 /** Helper for the Forge confirmation flow. */

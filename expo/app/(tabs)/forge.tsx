@@ -18,12 +18,20 @@ import { useEagohs, useEagohFull } from "@/providers/EagohProvider";
 import { useForge, type ForgePending } from "@/providers/ForgeProvider";
 import { useProfile } from "@/providers/ProfileProvider";
 import type { EagohFull, EagohRecord } from "@/services/eagohs";
+import { renameEagohName } from "@/services/eagohs";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
+import {
+  calculateReforgeCost,
+  canRenameEAGOH,
+  getRenameCooldownRemaining,
+  RENAME_EDGE_COST,
+} from "@/services/eagohIdentity";
 import { TIER_MAX_EAGOHS, TIER_MULTIPLIER, getForgeCost } from "@/services/edge";
 import type { EagohDraft } from "@/services/eagohs";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import {
+  AlertTriangle,
   BrainCircuit,
   Check,
   ChevronDown,
@@ -32,11 +40,13 @@ import {
   Footprints,
   Gem,
   Heart,
+  Pencil,
   Plus,
   ScanFace,
   Shirt,
   SlidersHorizontal,
   Sparkles,
+  X,
   Zap,
 } from "lucide-react-native";
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -317,6 +327,13 @@ export default function ForgeScreen(): JSX.Element {
   const hasLoadedRef = useRef<string | null>(null);
   const isEditing = selectedEagohId.length > 0;
 
+  // ── Rename state ──────────────────────────────────────────────────
+  const [showRenameModal, setShowRenameModal] = useState<boolean>(false);
+  const [renameNameInput, setRenameNameInput] = useState<string>("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [isRenaming, setIsRenaming] = useState<boolean>(false);
+  const { spend } = useEdge();
+
   /** When user picks an EAGOH, load its full data into the wizard form. */
   useEffect(() => {
     if (!editingEagoh || !selectedEagohId) return;
@@ -413,6 +430,22 @@ export default function ForgeScreen(): JSX.Element {
     lab,
   }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, appearance, cyberneticIntensity, pose, lab]);
 
+  /** Dynamic reforge cost when editing — compares current form vs EAGOH's saved state. */
+  const reforgeCost = useMemo(() => {
+    if (!isEditing || !editingEagoh) return { changedSections: [] as string[], edgeCost: getForgeCost("full_reforge") };
+    const oldState = {
+      appearance: editingEagoh.appearance,
+      styleNotes: editingEagoh.style_notes ?? "",
+      pose: editingEagoh.pose ?? "",
+    };
+    const newState = {
+      appearance,
+      styleNotes,
+      pose,
+    };
+    return calculateReforgeCost(oldState, newState);
+  }, [isEditing, editingEagoh, appearance, styleNotes, pose]);
+
   const setAppearanceField = useCallback((category: string, text: string): void => {
     setAppearance((prev) => ({ ...prev, [category]: text }));
   }, []);
@@ -469,11 +502,21 @@ export default function ForgeScreen(): JSX.Element {
     }
     setForgeError(null);
     if (isEditing) {
-      prepareForge(draft, "full_reforge", { eagohId: selectedEagohId });
+      // Free users cannot reforge
+      if (currentTier === "free") {
+        setForgeError("Custom Reforging requires an active subscription.");
+        return;
+      }
+      // If no changes detected, don't charge or generate
+      if (reforgeCost.changedSections.length === 0) {
+        setForgeError("No modifications detected. No Edge charged.");
+        return;
+      }
+      prepareForge(draft, "full_reforge", { eagohId: selectedEagohId, edgeCost: reforgeCost.edgeCost });
     } else {
       prepareForge(draft, "initial");
     }
-  }, [domain.length, draft, name, prepareForge, isEditing, selectedEagohId]);
+  }, [domain.length, draft, name, prepareForge, isEditing, selectedEagohId, currentTier, reforgeCost]);
 
   // ── Keyboard-aware scroll helpers ──────────────────────────────────
 
@@ -572,17 +615,46 @@ export default function ForgeScreen(): JSX.Element {
   const renderStepContent = useCallback((): JSX.Element => {
     if (currentStep.id === "name") {
       return (
-        <TextInput
-          ref={registerInputRef("name")}
-          value={name}
-          onChangeText={setName}
-          onFocus={(): void => handleInputFocus("name")}
-          placeholder="Enter EAGOH name…"
-          placeholderTextColor={palette.muted}
-          style={styles.input}
-          returnKeyType="next"
-          onSubmitEditing={goNext}
-        />
+        <>
+          <TextInput
+            ref={registerInputRef("name")}
+            value={name}
+            onChangeText={setName}
+            onFocus={(): void => handleInputFocus("name")}
+            placeholder="Enter EAGOH name…"
+            placeholderTextColor={palette.muted}
+            style={styles.input}
+            returnKeyType="next"
+            onSubmitEditing={goNext}
+          />
+          {isEditing ? (
+            <Pressable
+              onPress={(): void => {
+                if (currentTier === "free") {
+                  setRenameError("EAGOH renaming requires a Pro, Oracle Elite, or Syndicate subscription.");
+                  setShowRenameModal(true);
+                  return;
+                }
+                const cooldown = getRenameCooldownRemaining(editingEagoh?.last_name_change);
+                if (cooldown > 0) {
+                  setRenameError("Identity recalibration unavailable. EAGOH names may only be changed once every 30 days.");
+                  setShowRenameModal(true);
+                  return;
+                }
+                setRenameError(null);
+                setRenameNameInput(name);
+                setShowRenameModal(true);
+              }}
+              style={({ pressed }) => [
+                styles.renameButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Pencil color={palette.gold} size={12} />
+              <Text style={styles.renameButtonText}>Rename EAGOH</Text>
+            </Pressable>
+          ) : null}
+        </>
       );
     }
 
@@ -834,11 +906,34 @@ export default function ForgeScreen(): JSX.Element {
 
           {forgeError ? <Text style={styles.errorText}>{forgeError}</Text> : null}
 
-          <View style={styles.costPreview}>
-            <Zap color={palette.gold} size={16} />
-            <Text style={styles.costPreviewLabel}>{isLastStep ? (isEditing ? "Reforge Cost" : "Forge Cost") : (isEditing ? "Final Reforge Cost" : "Final Forge Cost")}</Text>
-            <Text style={styles.costPreviewValue}>{forgeCost} Edge</Text>
-          </View>
+          {isEditing ? (
+            <View style={styles.reforgeCostCard}>
+              <View style={styles.reforgeCostRow}>
+                <Text style={styles.reforgeCostLabel}>Detected Changes</Text>
+                <Text style={styles.reforgeCostValue}>{reforgeCost.changedSections.length}</Text>
+              </View>
+              {reforgeCost.changedSections.length > 0 ? (
+                <>
+                  <View style={styles.reforgeDivider} />
+                  <View style={styles.reforgeCostRow}>
+                    <Text style={styles.reforgeCostLabel}>Reforge Cost</Text>
+                    <View style={styles.reforgeCostValueRow}>
+                      <Zap color={palette.gold} size={14} />
+                      <Text style={styles.reforgeCostValueGold}>{reforgeCost.edgeCost} Edge</Text>
+                    </View>
+                  </View>
+                </>
+              ) : (
+                <Text style={styles.reforgeNoChanges}>No modifications detected. No Edge charged.</Text>
+              )}
+            </View>
+          ) : (
+            <View style={styles.costPreview}>
+              <Zap color={palette.gold} size={16} />
+              <Text style={styles.costPreviewLabel}>{isLastStep ? "Forge Cost" : "Final Forge Cost"}</Text>
+              <Text style={styles.costPreviewValue}>{forgeCost} Edge</Text>
+            </View>
+          )}
 
           {/* Extra bottom padding so content can scroll well above the CTA + keyboard */}
           <View style={[styles.bottomSpacer, { height: keyboardHeight > 0 ? keyboardHeight + 48 : 24 }]} />
@@ -950,6 +1045,74 @@ export default function ForgeScreen(): JSX.Element {
                 })}
               </>
             )}
+          </View>
+        </View>
+      ) : null}
+
+      {/* --- Rename Confirmation Modal --- */}
+      {showRenameModal ? (
+        <View style={styles.confirmOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={(): void => { setShowRenameModal(false); setRenameError(null); }} />
+          <View style={styles.confirmCard}>
+            <LinearGradient colors={["rgba(16,27,42,0.98)", "rgba(8,15,26,0.98)"]} style={StyleSheet.absoluteFill} />
+            <Text style={styles.confirmHeader}>RENAME EAGOH</Text>
+            {renameError ? (
+              <View style={styles.renameErrorCard}>
+                <AlertTriangle color={palette.ember} size={16} />
+                <Text style={styles.renameErrorText}>{renameError}</Text>
+              </View>
+            ) : (
+              <>
+                <Text style={styles.renameMessage}>
+                  Renaming an EAGOH costs {RENAME_EDGE_COST} Edge and can only be performed once every 30 days. Marketplace listings, rankings, and faction records will automatically update.
+                </Text>
+                <TextInput
+                  value={renameNameInput}
+                  onChangeText={setRenameNameInput}
+                  placeholder="New EAGOH name…"
+                  placeholderTextColor={palette.muted}
+                  style={styles.input}
+                  returnKeyType="done"
+                />
+              </>
+            )}
+            <View style={styles.confirmActions}>
+              <Pressable
+                onPress={(): void => { setShowRenameModal(false); setRenameError(null); }}
+                style={({ pressed }) => [styles.confirmCancel, pressed && styles.pressed]}
+              >
+                <Text style={styles.confirmCancelText}>Cancel</Text>
+              </Pressable>
+              {!renameError ? (
+                <Pressable
+                  onPress={async (): Promise<void> => {
+                    if (!renameNameInput.trim() || !selectedEagohId) return;
+                    setIsRenaming(true);
+                    try {
+                      await spend(RENAME_EDGE_COST, "rename_eagoh", `Rename EAGOH to ${renameNameInput.trim()}`);
+                      const result = await renameEagohName(selectedEagohId, renameNameInput.trim(), currentTier, editingEagoh?.last_name_change);
+                      if (!result.ok) {
+                        setRenameError(result.message);
+                      } else {
+                        setName(renameNameInput.trim());
+                        setShowRenameModal(false);
+                        setRenameError(null);
+                        // Refresh EAGOH data
+                        hasLoadedRef.current = null;
+                      }
+                    } catch (err: unknown) {
+                      setRenameError(err instanceof Error ? err.message : "Rename failed.");
+                    } finally {
+                      setIsRenaming(false);
+                    }
+                  }}
+                  disabled={!renameNameInput.trim() || isRenaming}
+                  style={({ pressed }) => [styles.confirmForge, (!renameNameInput.trim() || isRenaming) && styles.disabledButton, pressed && styles.pressed]}
+                >
+                  {isRenaming ? <ActivityIndicator color={palette.void} /> : <Text style={styles.confirmForgeText}>Confirm Rename</Text>}
+                </Pressable>
+              ) : null}
+            </View>
           </View>
         </View>
       ) : null}
@@ -1396,4 +1559,55 @@ const styles = StyleSheet.create({
   pickerItemInfo: { flex: 1 },
   pickerItemName: { color: palette.text, fontSize: 12, fontWeight: "800" },
   pickerItemDomain: { color: palette.muted, fontSize: 10, marginTop: 1 },
+
+  // ── Rename button on name step ──────────────────────────────────
+  renameButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "rgba(255,181,71,0.30)",
+    backgroundColor: "rgba(255,181,71,0.08)",
+  },
+  renameButtonText: { color: palette.gold, fontSize: 11, fontWeight: "800", letterSpacing: 0.8 },
+
+  // ── Rename modal ────────────────────────────────────────────────
+  renameErrorCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 10,
+    borderRadius: 5,
+    backgroundColor: "rgba(234,88,12,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(234,88,12,0.30)",
+  },
+  renameErrorText: { color: palette.ember, fontSize: 11, fontWeight: "700", flex: 1 },
+  renameMessage: { color: palette.muted, fontSize: 12, fontWeight: "700", lineHeight: 18 },
+
+  // ── Dynamic reforge cost card ────────────────────────────────────
+  reforgeCostCard: {
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "rgba(255,181,71,0.22)",
+    backgroundColor: "rgba(255,181,71,0.06)",
+    padding: 12,
+    gap: 8,
+  },
+  reforgeCostRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  reforgeDivider: { height: 1, backgroundColor: "rgba(255,181,71,0.14)" },
+  reforgeCostLabel: { color: palette.muted, fontSize: 11, fontWeight: "800" },
+  reforgeCostValue: { color: palette.text, fontSize: 14, fontWeight: "900" },
+  reforgeCostValueRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  reforgeCostValueGold: { color: palette.gold, fontSize: 16, fontWeight: "900" },
+  reforgeNoChanges: { color: palette.success, fontSize: 11, fontWeight: "700", textAlign: "center" },
 });

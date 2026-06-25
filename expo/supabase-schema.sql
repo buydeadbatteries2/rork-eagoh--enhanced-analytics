@@ -94,6 +94,7 @@ alter table public.eagohs add column if not exists style_notes text;
 alter table public.eagohs add column if not exists image_thumb_url text;
 alter table public.eagohs add column if not exists image_prompt text;
 alter table public.eagohs add column if not exists image_generated_at timestamptz;
+alter table public.eagohs add column if not exists last_name_change timestamptz;
 
 create index if not exists eagohs_user_id_idx on public.eagohs(user_id);
 

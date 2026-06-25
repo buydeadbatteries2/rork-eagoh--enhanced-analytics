@@ -53,7 +53,7 @@ export const [ForgeProvider, useForge] = createContextHook(() => {
     (
       draft: EagohDraft,
       mode: ForgeMode,
-      options: { eagohId?: string; scope?: ForgePromptOptions["scope"] } = {},
+      options: { eagohId?: string; scope?: ForgePromptOptions["scope"]; edgeCost?: number } = {},
     ): ForgePending => {
       const scope: ForgePromptOptions["scope"] = options.scope ?? "full";
       const prompt = buildForgePrompt(
@@ -86,7 +86,7 @@ export const [ForgeProvider, useForge] = createContextHook(() => {
       if (draft.domain) {
         summary.push(`Domain: ${draft.domain}`);
       }
-      const edgeCost = getForgeCost(mode);
+      const edgeCost = options.edgeCost ?? getForgeCost(mode);
       const next: ForgePending = { mode, scope, draft, eagohId: options.eagohId, prompt, summary, edgeCost };
       setPending(next);
       return next;

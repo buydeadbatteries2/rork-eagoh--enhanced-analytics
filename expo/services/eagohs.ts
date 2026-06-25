@@ -30,6 +30,7 @@ export type EagohRecord = {
   image_thumb_url: string | null;
   image_prompt: string | null;
   image_generated_at: string | null;
+  last_name_change: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -79,7 +80,7 @@ export function getEagohLimit(tier: SubscriptionTier): number {
 export async function listEagohs(userId: string): Promise<EagohRecord[]> {
   const { data, error } = await supabase
     .from("eagohs")
-    .select("id,user_id,name,sport,gender,domain,body_type,style_notes,cybernetic_intensity,pose,lab,dna,image_url,image_thumb_url,image_prompt,image_generated_at,created_at,updated_at")
+    .select("id,user_id,name,sport,gender,domain,body_type,style_notes,cybernetic_intensity,pose,lab,dna,image_url,image_thumb_url,image_prompt,image_generated_at,last_name_change,created_at,updated_at")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -149,11 +150,10 @@ export async function createEagoh(
   const { data: created, error } = await supabase
     .from("eagohs")
     .insert(insertPayload)
-    .select("*")
-    .single();
-  if (error || !created) return { ok: false, reason: "error", message: error?.message ?? "Failed to create EAGOH" };
+    .select("*");
+  if (error || !created || created.length === 0) return { ok: false, reason: "error", message: error?.message ?? "Failed to create EAGOH" };
 
-  const eagoh = created as EagohRecord;
+  const eagoh = created[0] as EagohRecord;
 
   try {
     await supabase.from("eagoh_customization").insert({ eagoh_id: eagoh.id, appearance: draft.appearance });
@@ -220,4 +220,47 @@ export async function updateEagohCustomizationField(
     .from("eagoh_customization")
     .upsert({ eagoh_id: eagohId, appearance: next, updated_at: new Date().toISOString() });
   if (error) throw error;
+}
+
+export type RenameEagohResult =
+  | { ok: true; eagoh: EagohRecord }
+  | { ok: false; reason: "free_tier" | "cooldown" | "error"; message: string };
+
+/**
+ * Rename an EAGOH. Deducts 75 Edge and enforces a 30-day cooldown.
+ * Only Pro, Oracle Elite, and Syndicate users may rename.
+ */
+export async function renameEagohName(
+  eagohId: string,
+  newName: string,
+  tier: string,
+  lastNameChange: string | null | undefined,
+): Promise<RenameEagohResult> {
+  // --- Gate: free users cannot rename ---
+  if (tier === "free") {
+    return { ok: false, reason: "free_tier", message: "EAGOH renaming requires a Pro, Oracle Elite, or Syndicate subscription." };
+  }
+
+  // --- Cooldown check ---
+  if (lastNameChange) {
+    const last = new Date(lastNameChange).getTime();
+    const msPerDay = 1000 * 60 * 60 * 24;
+    const elapsedDays = (Date.now() - last) / msPerDay;
+    if (elapsedDays < 30) {
+      return { ok: false, reason: "cooldown", message: "Identity recalibration unavailable. EAGOH names may only be changed once every 30 days." };
+    }
+  }
+
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("eagohs")
+    .update({ name: newName.trim(), last_name_change: now, updated_at: now })
+    .eq("id", eagohId)
+    .select("*");
+
+  if (error || !data || data.length === 0) {
+    return { ok: false, reason: "error", message: error?.message ?? "Failed to rename EAGOH." };
+  }
+
+  return { ok: true, eagoh: data[0] as EagohRecord };
 }

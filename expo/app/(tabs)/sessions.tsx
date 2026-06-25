@@ -13,7 +13,9 @@
 import { palette } from "@/constants/colors";
 import * as Haptics from "expo-haptics";
 import {
+  Activity,
   ArrowLeft,
+  BarChart3,
   BrainCircuit,
   Check,
   ChevronDown,
@@ -21,13 +23,19 @@ import {
   ChevronUp,
   Clock,
   Cpu,
+  Eye,
   Flame,
+  Hash,
   Orbit,
+  Plus,
+  Save,
   Search,
   Sparkles,
+  Tag,
+  X,
   Zap,
 } from "lucide-react-native";
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -40,6 +48,7 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -50,6 +59,20 @@ import { INTELLIGENCE_DOMAINS, getDomainColor } from "@/services/domains";
 import { guardDomainRequest } from "@/services/domainGuard";
 import { getQuickCheckCost, runQuickCheck, type AnalystRequestKind } from "@/services/analyst";
 import type { EagohRecord } from "@/services/eagohs";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ENTRY_TYPE_EDGE_COST,
+  ENTRY_TYPE_LIMITS,
+  OBSERVATION_TAGS,
+  ALL_TAGS,
+  computeQualityScore,
+  influenceLabel,
+  listEntriesForEagoh,
+  submitEntry,
+  type EntryType,
+  type ConfidenceLevel,
+  type OpenIntelligenceRow,
+} from "@/services/openIntelligence";
 
 type SessionTone = "cyan" | "gold" | "violet" | "ember" | "success";
 
@@ -72,6 +95,7 @@ const sessionTypes: SessionType[] = [
   { id: "standard", name: "Standard Analysis", description: "Deep strategic assessment", costRange: "40-75 Edge", minCost: 40, maxCost: 75, model: "EAGOH Analyst", duration: "~8 min", tone: "success", active: false },
   { id: "oracle", name: "Oracle Deep Dive", description: "Elite predictive modeling", costRange: "150-300 Edge", minCost: 150, maxCost: 300, model: "Oracle-Synapse", duration: "~15 min", tone: "violet", active: false },
   { id: "premium-event", name: "Premium Event", description: "Event-focused intelligence", costRange: "75-150 Edge", minCost: 75, maxCost: 150, model: "Event-Lens Pro", duration: "~10 min", tone: "ember", active: false },
+  { id: "open-intelligence", name: "Open Intelligence", description: "Feed observations to your EAGOH", costRange: "10-25 Edge", minCost: 10, maxCost: 25, model: "Open Intel", duration: "Per entry", tone: "gold", active: true },
 ];
 
 type ChatMessage = { id: string; sender: "user" | "analyst"; text: string; confidence?: number; cost?: number };
@@ -104,6 +128,7 @@ function sessionIcon(id: string, color: string, size: number): React.ReactNode {
   if (id === "quick-check") return <Zap color={color} size={size} />;
   if (id === "oracle") return <Orbit color={color} size={size} />;
   if (id === "premium-event") return <Flame color={color} size={size} />;
+  if (id === "open-intelligence") return <Eye color={color} size={size} />;
   return <BrainCircuit color={color} size={size} />;
 }
 
@@ -562,6 +587,464 @@ function ActiveChat({
   );
 }
 
+// ── Open Intelligence Session ──
+function OpenIntelSession({
+  selectedEagohId,
+  onBack,
+  onChangeEagoh,
+}: {
+  selectedEagohId: string;
+  onBack: () => void;
+  onChangeEagoh: () => void;
+}): JSX.Element {
+  const { eagohs } = useEagohs();
+  const { profile } = useProfile();
+  const { balances } = useEdge();
+  const queryClient = useQueryClient();
+
+  const [entryType, setEntryType] = useState<EntryType>("quick_observation");
+  const [content, setContent] = useState<string>("");
+  const [selectedTag, setSelectedTag] = useState<string>("");
+  const [customTag, setCustomTag] = useState<string>("");
+  const [confidenceLevel, setConfidenceLevel] = useState<ConfidenceLevel>("moderate_confidence");
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState<number>(0);
+  const [openTagCat, setOpenTagCat] = useState<string | null>(null);
+  const { height: windowHeight } = useWindowDimensions();
+  const contentInputRef = useRef<TextInput | null>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollYRef = useRef<number>(0);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showSub = Keyboard.addListener(showEvent, (e) => setKeyboardHeight(e.endCoordinates.height));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
+
+  const selectedEagoh = useMemo(() => eagohs.find((e) => e.id === selectedEagohId), [eagohs, selectedEagohId]);
+  const userTier = profile?.subscription_tier ?? "free";
+  const domain = useMemo(() => INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh?.domain), [selectedEagoh]);
+  const domainTone = domain ? toneColor(domain.tone) : palette.cyan;
+
+  const limit = ENTRY_TYPE_LIMITS[entryType];
+  const edgeCost = ENTRY_TYPE_EDGE_COST[entryType];
+  const charCountNoSpaces = content.trim().replace(/\s/g, "").length;
+  const canSubmit = !!selectedEagohId && content.trim().length > 0 && charCountNoSpaces <= limit && balances.total >= edgeCost && !isSubmitting;
+
+  const handleContentFocus = useCallback((): void => {
+    setTimeout(() => {
+      contentInputRef.current?.measureInWindow((_x, inputY, _w, inputHeight) => {
+        const inputBottom = inputY + inputHeight;
+        const safeBottom = windowHeight - keyboardHeight - 20;
+        if (inputBottom > safeBottom) {
+          scrollViewRef.current?.scrollTo({ y: scrollYRef.current + (inputBottom - safeBottom) + 12, animated: true });
+        }
+      });
+    }, 180);
+  }, [keyboardHeight, windowHeight]);
+
+  const feedQuery = useQuery<OpenIntelligenceRow[]>({
+    queryKey: ["oi", "feed", selectedEagohId],
+    enabled: !!selectedEagohId,
+    queryFn: () => listEntriesForEagoh(selectedEagohId, 20),
+  });
+
+  const handleSubmit = useCallback(async (): Promise<void> => {
+    if (!selectedEagohId || !profile || !content.trim()) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+    setIsSubmitting(true);
+    setSubmitError(null);
+    setSubmitSuccess(null);
+
+    const result = await submitEntry({
+      userId: profile.id,
+      profile,
+      eagohId: selectedEagohId,
+      intelligenceDomain: selectedEagoh?.domain ?? "unknown",
+      entryType,
+      tag: selectedTag || "general",
+      content: content.trim(),
+      confidenceLevel,
+    });
+
+    if (result.ok) {
+      setContent("");
+      setSelectedTag("");
+      setCustomTag("");
+      setSubmitSuccess(`Entry saved. ${result.edgeCost} Edge deducted.`);
+      queryClient.invalidateQueries({ queryKey: ["oi", "feed", selectedEagohId] });
+    } else {
+      setSubmitError(result.error ?? "Submit failed.");
+    }
+    setIsSubmitting(false);
+  }, [selectedEagohId, profile, content, selectedEagoh, entryType, selectedTag, confidenceLevel, queryClient]);
+
+  const toggleTagCat = useCallback((id: string): void => {
+    setOpenTagCat((prev) => prev === id ? null : id);
+  }, []);
+
+  const score = useMemo(() => {
+    if (!content.trim()) return null;
+    return computeQualityScore({ content: content.trim(), entryType, confidenceLevel, tag: selectedTag });
+  }, [content, entryType, confidenceLevel, selectedTag]);
+
+  const infLabel = score ? influenceLabel(score.influenceScore) : "";
+  const infColor = infLabel === "high" ? palette.success : infLabel === "medium" ? palette.gold : palette.muted;
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.setupWrap}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
+    >
+      <Pressable onPress={onBack} style={styles.backBtn}>
+        <ArrowLeft color={palette.muted} size={18} />
+        <Text style={styles.backText}>Sessions</Text>
+      </Pressable>
+
+      <ScrollView
+        ref={scrollViewRef}
+        style={styles.setupScroll}
+        contentContainerStyle={[styles.setupScrollContent, { paddingBottom: keyboardHeight > 0 ? keyboardHeight + 40 : 80 }]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        showsVerticalScrollIndicator={false}
+        onScroll={(e) => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
+        scrollEventThrottle={16}
+      >
+        {/* EAGOH Hero Card */}
+        <SelectedEagohCard
+          eagoh={selectedEagoh ?? null}
+          onPress={onChangeEagoh}
+          hasMultiple={eagohs.length > 1}
+          userTier={userTier}
+        />
+
+        {/* Open Intelligence header */}
+        <View style={styles.oiHeader}>
+          <View style={[styles.setupIconRing, { borderColor: palette.gold }]}>
+            <Eye color={palette.gold} size={28} />
+          </View>
+          <Text style={styles.setupTitle}>Open Intelligence</Text>
+          <Text style={styles.oiSub}>Feed observations to your EAGOH</Text>
+        </View>
+
+        {/* Domain banner */}
+        {selectedEagoh && domain ? (
+          <View style={[styles.oiDomainBanner, { borderColor: `${domainTone}33`, backgroundColor: `${domainTone}0A` }]}>
+            <BrainCircuit color={domainTone} size={14} />
+            <View>
+              <Text style={[styles.oiDomainTitle, { color: domainTone }]}>{domain.label}</Text>
+              <Text style={styles.oiDomainDesc}>Entries are locked to this EAGOH's intelligence domain.</Text>
+            </View>
+          </View>
+        ) : null}
+
+        {/* Entry Type */}
+        <View style={styles.oiBlock}>
+          <Text style={styles.oiLabel}>ENTRY TYPE</Text>
+          <View style={styles.oiEntryList}>
+            {([
+              { id: "quick_observation" as EntryType, label: "Quick", detail: "110 chars", tone: "cyan" as SessionTone },
+              { id: "basic_deep_entry" as EntryType, label: "Basic Deep", detail: "200 chars", tone: "gold" as SessionTone },
+              { id: "advanced_deep_entry" as EntryType, label: "Advanced", detail: "400 chars", tone: "violet" as SessionTone },
+            ]).map((et) => {
+              const isSel = entryType === et.id;
+              const ac = toneColor(et.tone);
+              return (
+                <Pressable
+                  key={et.id}
+                  onPress={() => setEntryType(et.id)}
+                  style={({ pressed }) => [
+                    styles.oiEntryCard,
+                    isSel && { borderColor: ac, backgroundColor: `${ac}12` },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Zap color={isSel ? ac : palette.muted} size={14} />
+                  <Text style={[styles.oiEntryLabel, isSel && { color: ac }]}>{et.label}</Text>
+                  <Text style={styles.oiEntryDetail}>{et.detail}</Text>
+                  <Text style={[styles.oiEntryCost, { color: ac }]}>{ENTRY_TYPE_EDGE_COST[et.id]}E</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Content Input */}
+        <View style={styles.oiBlock}>
+          <Text style={styles.oiLabel}>OBSERVATION</Text>
+          <TextInput
+            ref={contentInputRef}
+            value={content}
+            onChangeText={(v) => setContent(v.slice(0, limit * 2))}
+            onFocus={handleContentFocus}
+            placeholder={`What did you observe? Max ${limit} chars excl. spaces…`}
+            placeholderTextColor={palette.muted}
+            multiline
+            style={styles.oiInput}
+            textAlignVertical="top"
+          />
+          <View style={styles.oiCharRow}>
+            <Text style={styles.oiCharHint}>
+              {entryType === "quick_observation" ? "Quick Observation" : entryType === "basic_deep_entry" ? "Basic Deep Entry" : "Advanced Deep Entry"}
+            </Text>
+            <Text style={[styles.oiCharCount, charCountNoSpaces > limit && { color: palette.ember }]}>
+              {charCountNoSpaces}/{limit} chars
+            </Text>
+          </View>
+        </View>
+
+        {/* Tag Selection */}
+        <View style={styles.oiBlock}>
+          <Text style={styles.oiLabel}>TAG</Text>
+          <View style={styles.oiTagList}>
+            {OBSERVATION_TAGS.map((cat) => {
+              const isOpen = openTagCat === cat.id;
+              return (
+                <View key={cat.id}>
+                  <Pressable
+                    onPress={() => toggleTagCat(cat.id)}
+                    style={({ pressed }) => [styles.oiTagCat, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.oiTagCatLabel}>{cat.label}</Text>
+                    {isOpen ? <ChevronUp color={palette.muted} size={14} /> : <ChevronDown color={palette.muted} size={14} />}
+                  </Pressable>
+                  {isOpen ? (
+                    <View style={styles.oiTagGrid}>
+                      {cat.tags.map((tag) => {
+                        const isTagSelected = selectedTag === tag.id;
+                        return (
+                          <Pressable
+                            key={tag.id}
+                            onPress={() => setSelectedTag(isTagSelected ? "" : tag.id)}
+                            style={({ pressed }) => [
+                              styles.oiTagChip,
+                              isTagSelected && { borderColor: palette.cyan, backgroundColor: "rgba(108,230,255,0.12)" },
+                              pressed && styles.pressed,
+                            ]}
+                          >
+                            <Hash color={isTagSelected ? palette.cyan : palette.muted} size={10} />
+                            <Text style={[styles.oiTagChipText, isTagSelected && { color: palette.cyan }]}>{tag.label}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })}
+            {/* Custom tag */}
+            <View>
+              <Pressable
+                onPress={() => {
+                  if (openTagCat === "custom") { setOpenTagCat(null); setCustomTag(""); return; }
+                  setOpenTagCat("custom");
+                }}
+                style={({ pressed }) => [styles.oiTagCat, pressed && styles.pressed]}
+              >
+                <Text style={[styles.oiTagCatLabel, { color: palette.gold }]}>Custom Tag</Text>
+                <Plus color={palette.gold} size={14} />
+              </Pressable>
+              {openTagCat === "custom" ? (
+                <View style={styles.oiCustomWrap}>
+                  <TextInput
+                    value={customTag}
+                    onChangeText={(v) => {
+                      const t = v.slice(0, 30);
+                      setCustomTag(t);
+                      setSelectedTag(t.trim() ? `custom:${t.trim()}` : "");
+                    }}
+                    placeholder="Enter custom tag…"
+                    placeholderTextColor={palette.muted}
+                    maxLength={30}
+                    style={styles.oiCustomInput}
+                  />
+                  {customTag.trim() ? (
+                    <View style={styles.oiCustomActive}>
+                      <Tag color={palette.gold} size={12} />
+                      <Text style={styles.oiCustomActiveText}>{customTag.trim()}</Text>
+                      <Pressable onPress={() => { setCustomTag(""); setSelectedTag(""); }}>
+                        <X color={palette.muted} size={14} />
+                      </Pressable>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+            </View>
+          </View>
+        </View>
+
+        {/* Confidence Level */}
+        <View style={styles.oiBlock}>
+          <Text style={styles.oiLabel}>CONFIDENCE</Text>
+          <View style={styles.oiConfRow}>
+            {([
+              { id: "weak_suspicion" as ConfidenceLevel, label: "Weak" },
+              { id: "moderate_confidence" as ConfidenceLevel, label: "Moderate" },
+              { id: "strong_confidence" as ConfidenceLevel, label: "Strong" },
+              { id: "verified_observation" as ConfidenceLevel, label: "Verified" },
+            ]).map((level) => {
+              const isSel = confidenceLevel === level.id;
+              return (
+                <Pressable
+                  key={level.id}
+                  onPress={() => setConfidenceLevel(level.id)}
+                  style={({ pressed }) => [
+                    styles.oiConfChip,
+                    isSel && { borderColor: palette.cyan, backgroundColor: "rgba(108,230,255,0.10)" },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <View style={[styles.oiConfDot, { backgroundColor: isSel ? palette.cyan : "rgba(255,255,255,0.18)" }]} />
+                  <Text style={[styles.oiConfText, isSel && { color: palette.cyan }]}>{level.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Quality Score Preview */}
+        <View style={styles.oiBlock}>
+          <Text style={styles.oiLabel}>QUALITY PREVIEW</Text>
+          <View style={styles.oiScorePanel}>
+            {score ? (
+              <>
+                <View style={styles.oiScoreRow}>
+                  <View style={styles.oiScoreItem}>
+                    <Text style={styles.oiScoreLabel}>Quality</Text>
+                    <View style={styles.oiProgressTrack}>
+                      <View style={[styles.oiProgressFill, { width: `${score.qualityScore}%`, backgroundColor: palette.cyan }]} />
+                    </View>
+                    <Text style={[styles.oiScoreValue, { color: palette.cyan }]}>{score.qualityScore}</Text>
+                  </View>
+                  <View style={styles.oiScoreItem}>
+                    <Text style={styles.oiScoreLabel}>Influence</Text>
+                    <View style={styles.oiProgressTrack}>
+                      <View style={[styles.oiProgressFill, { width: `${score.influenceScore}%`, backgroundColor: infColor }]} />
+                    </View>
+                    <Text style={[styles.oiScoreValue, { color: infColor }]}>{infLabel}</Text>
+                  </View>
+                </View>
+                <View style={styles.oiScoreMeta}>
+                  <Eye color={palette.muted} size={11} />
+                  <Text style={styles.oiScoreMetaText}>Validation: Pending Review</Text>
+                </View>
+              </>
+            ) : (
+              <View style={styles.oiScoreEmpty}>
+                <BarChart3 color={palette.muted} size={14} />
+                <Text style={styles.oiScoreEmptyText}>Enter intelligence to see quality preview.</Text>
+              </View>
+            )}
+          </View>
+        </View>
+
+        {/* Submit */}
+        <View style={styles.oiSubmit}>
+          {submitError ? <Text style={styles.errorText}>{submitError}</Text> : null}
+          {submitSuccess ? <Text style={styles.successText}>{submitSuccess}</Text> : null}
+          <View style={styles.oiSubmitRow}>
+            <View style={styles.oiSubmitCost}>
+              <Zap color={balances.total >= edgeCost ? palette.gold : palette.ember} size={16} />
+              <Text style={[styles.oiSubmitCostText, balances.total < edgeCost && { color: palette.ember }]}>
+                {edgeCost} Edge
+              </Text>
+            </View>
+            <Pressable
+              onPress={handleSubmit}
+              disabled={!canSubmit}
+              style={({ pressed }) => [
+                styles.oiSubmitBtn,
+                !canSubmit && styles.disabledButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <LinearGradient
+                colors={canSubmit ? [palette.cyan, "rgba(61,165,255,0.85)"] : ["rgba(255,255,255,0.08)", "rgba(255,255,255,0.04)"]}
+                style={StyleSheet.absoluteFill}
+              />
+              {isSubmitting ? (
+                <ActivityIndicator color={palette.void} />
+              ) : (
+                <>
+                  <Sparkles color={canSubmit ? palette.void : palette.muted} size={16} />
+                  <Text style={[styles.oiSubmitBtnText, !canSubmit && { color: palette.muted }]}>Submit Entry</Text>
+                </>
+              )}
+            </Pressable>
+          </View>
+          {balances.total < edgeCost ? (
+            <Text style={styles.insufficientEdge}>
+              Insufficient Edge. Need {edgeCost} Edge (have {balances.total}).
+            </Text>
+          ) : null}
+        </View>
+
+        {/* Learning Feed */}
+        <View style={styles.oiFeed}>
+          <View style={styles.oiFeedHeader}>
+            <Activity color={palette.cyan} size={14} />
+            <Text style={styles.oiFeedTitle}>Learning Feed</Text>
+            <Text style={styles.oiFeedCount}>{feedQuery.data?.length ?? 0} entries</Text>
+          </View>
+          {feedQuery.isLoading ? (
+            <ActivityIndicator color={palette.cyan} style={styles.oiFeedLoader} />
+          ) : feedQuery.data && feedQuery.data.length > 0 ? (
+            feedQuery.data.map((entry) => {
+              const tagLabel = ALL_TAGS.find((t) => t.id === entry.tag)?.label ?? entry.tag.replace("custom:", "");
+              const eInfLabel = influenceLabel(entry.influence_score);
+              const eInfColor = eInfLabel === "high" ? palette.success : eInfLabel === "medium" ? palette.gold : palette.muted;
+              const eTypeLabel = entry.entry_type === "quick_observation" ? "Quick" : entry.entry_type === "basic_deep_entry" ? "Basic" : "Advanced";
+              return (
+                <View key={entry.id} style={styles.oiFeedCard}>
+                  <View style={styles.oiFeedTop}>
+                    <View style={styles.oiFeedBadge}>
+                      <Hash color={palette.cyan} size={10} />
+                      <Text style={styles.oiFeedBadgeText}>{tagLabel}</Text>
+                    </View>
+                    <View style={styles.oiFeedMeta}>
+                      <Text style={styles.oiFeedType}>{eTypeLabel}</Text>
+                      <Text style={styles.oiFeedDot}>·</Text>
+                      <Clock color={palette.muted} size={10} />
+                      <Text style={styles.oiFeedTime}>{new Date(entry.created_at).toLocaleDateString()}</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.oiFeedContent} numberOfLines={3}>{entry.content}</Text>
+                  <View style={styles.oiFeedScores}>
+                    <View style={styles.oiFeedScoreItem}>
+                      <Text style={styles.oiFeedScoreLabel}>Quality</Text>
+                      <Text style={[styles.oiFeedScoreVal, { color: palette.cyan }]}>{entry.quality_score}</Text>
+                    </View>
+                    <View style={styles.oiFeedScoreDivider} />
+                    <View style={styles.oiFeedScoreItem}>
+                      <Text style={styles.oiFeedScoreLabel}>Influence</Text>
+                      <Text style={[styles.oiFeedScoreVal, { color: eInfColor }]}>{eInfLabel}</Text>
+                    </View>
+                    <View style={styles.oiFeedScoreDivider} />
+                    <View style={styles.oiFeedScoreItem}>
+                      <Text style={styles.oiFeedScoreLabel}>Status</Text>
+                      <Text style={[styles.oiFeedScoreVal, { color: palette.muted }]}>Pending</Text>
+                    </View>
+                  </View>
+                </View>
+              );
+            })
+          ) : (
+            <Text style={styles.oiFeedEmpty}>
+              {selectedEagoh ? `No entries for ${selectedEagoh.name} yet. Submit your first observation above.` : "Select an EAGOH and submit an entry to populate the feed."}
+            </Text>
+          )}
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
 // ── Main screen ──
 export default function SessionsScreen(): JSX.Element {
   const { eagohs } = useEagohs();
@@ -621,8 +1104,27 @@ export default function SessionsScreen(): JSX.Element {
     );
   }
 
-  // Setup view
+  // Setup view — Open Intelligence has its own layout
   if (activeSession) {
+    if (activeSession.id === "open-intelligence") {
+      return (
+        <SafeAreaView style={styles.safe} edges={["top"]}>
+          <OpenIntelSession
+            selectedEagohId={selectedEagohId}
+            onBack={handleBack}
+            onChangeEagoh={handleChangeEagoh}
+          />
+          {showPicker ? (
+            <EagohPicker
+              eagohs={eagohs}
+              selectedId={selectedEagohId}
+              onSelect={handleSelectEagoh}
+              onClose={() => setShowPicker(false)}
+            />
+          ) : null}
+        </SafeAreaView>
+      );
+    }
     return (
       <SafeAreaView style={styles.safe} edges={["top"]}>
         <SessionSetup
@@ -1016,4 +1518,219 @@ const styles = StyleSheet.create({
   dotMid: { opacity: 0.55 },
 
   bottomSpacer: { height: 40 },
+
+  // Open Intelligence
+  oiHeader: { alignItems: "center", gap: 6, marginBottom: 18 },
+  oiSub: { color: palette.muted, fontSize: 12, fontWeight: "700", textAlign: "center", marginTop: 2 },
+  oiDomainBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    padding: 10,
+    borderRadius: 5,
+    borderWidth: 1,
+    marginBottom: 14,
+  },
+  oiDomainTitle: { fontSize: 12, fontWeight: "900" },
+  oiDomainDesc: { color: palette.muted, fontSize: 10, lineHeight: 15, marginTop: 2 },
+  oiBlock: { marginBottom: 14 },
+  oiLabel: { color: palette.cyan, fontSize: 10, fontWeight: "900", letterSpacing: 1.6, marginBottom: 6, textTransform: "uppercase" as const },
+  oiEntryList: { flexDirection: "row", gap: 5 },
+  oiEntryCard: {
+    flex: 1,
+    alignItems: "center",
+    gap: 3,
+    paddingVertical: 10,
+    paddingHorizontal: 5,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(255,255,255,0.02)",
+  },
+  oiEntryLabel: { color: palette.text, fontSize: 12, fontWeight: "900" },
+  oiEntryDetail: { color: palette.muted, fontSize: 9, fontWeight: "700" },
+  oiEntryCost: { fontSize: 10, fontWeight: "900" },
+  oiInput: {
+    color: palette.text,
+    fontSize: 13,
+    fontWeight: "700",
+    minHeight: 100,
+    borderRadius: 5,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(10,18,30,0.50)",
+    textAlignVertical: "top",
+  },
+  oiCharRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 6,
+  },
+  oiCharHint: { color: palette.muted, fontSize: 10, fontWeight: "700" },
+  oiCharCount: { fontSize: 11, fontWeight: "900", color: palette.text },
+  oiTagList: { gap: 2 },
+  oiTagCat: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
+  oiTagCatLabel: { color: palette.text, fontSize: 12, fontWeight: "900", flex: 1 },
+  oiTagGrid: { flexDirection: "row", flexWrap: "wrap" as const, gap: 5, paddingLeft: 4, paddingBottom: 6 },
+  oiTagChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  oiTagChipText: { color: palette.muted, fontSize: 11, fontWeight: "800" },
+  oiCustomWrap: { paddingHorizontal: 4, marginTop: 4 },
+  oiCustomInput: {
+    color: palette.text,
+    fontSize: 13,
+    fontWeight: "700",
+    minHeight: 40,
+    borderRadius: 5,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,181,71,0.3)",
+    backgroundColor: "rgba(255,181,71,0.06)",
+  },
+  oiCustomActive: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "rgba(255,181,71,0.30)",
+    backgroundColor: "rgba(255,181,71,0.08)",
+    marginTop: 6,
+    alignSelf: "flex-start" as const,
+  },
+  oiCustomActiveText: { color: palette.gold, fontSize: 12, fontWeight: "800" },
+  oiConfRow: { flexDirection: "row", flexWrap: "wrap" as const, gap: 5 },
+  oiConfChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(255,255,255,0.03)",
+    flexGrow: 1,
+  },
+  oiConfDot: { width: 7, height: 7, borderRadius: 4 },
+  oiConfText: { color: palette.text, fontSize: 11, fontWeight: "800" },
+  oiScorePanel: {
+    borderRadius: 5,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(10,18,30,0.50)",
+    gap: 8,
+  },
+  oiScoreEmpty: { flexDirection: "row", alignItems: "center", gap: 8 },
+  oiScoreEmptyText: { color: palette.muted, fontSize: 12, fontWeight: "700" },
+  oiScoreRow: { flexDirection: "row", gap: 10 },
+  oiScoreItem: { flex: 1, gap: 6 },
+  oiScoreLabel: { color: palette.muted, fontSize: 10, fontWeight: "900", textTransform: "uppercase" as const },
+  oiProgressTrack: { height: 5, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.08)", overflow: "hidden" as const },
+  oiProgressFill: { height: 5, borderRadius: 3 },
+  oiScoreValue: { fontSize: 16, fontWeight: "900" },
+  oiScoreMeta: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 },
+  oiScoreMetaText: { color: palette.muted, fontSize: 10, fontWeight: "700" },
+  oiSubmit: { gap: 8, marginTop: 4 },
+  oiSubmitRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  oiSubmitCost: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 12,
+    minHeight: 48,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  oiSubmitCostText: { color: palette.gold, fontSize: 15, fontWeight: "900" },
+  oiSubmitBtn: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 5,
+    overflow: "hidden" as const,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+    shadowColor: palette.cyan,
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  oiSubmitBtnText: { color: palette.void, fontSize: 14, fontWeight: "900" },
+  insufficientEdge: { color: palette.ember, fontSize: 11, fontWeight: "800", textAlign: "center" as const },
+  successText: { color: palette.success, fontSize: 11, fontWeight: "800", textAlign: "center" as const },
+  oiFeed: { marginTop: 16, gap: 8, paddingBottom: 24 },
+  oiFeedHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.line,
+  },
+  oiFeedTitle: { color: palette.text, fontSize: 16, fontWeight: "900", flex: 1 },
+  oiFeedCount: { color: palette.muted, fontSize: 11, fontWeight: "800" },
+  oiFeedLoader: { paddingVertical: 20 },
+  oiFeedEmpty: { color: palette.muted, fontSize: 12, fontWeight: "700", textAlign: "center" as const, paddingVertical: 18 },
+  oiFeedCard: {
+    borderRadius: 5,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(10,18,30,0.45)",
+    gap: 6,
+  },
+  oiFeedTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  oiFeedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 4,
+    backgroundColor: "rgba(108,230,255,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(108,230,255,0.20)",
+  },
+  oiFeedBadgeText: { color: palette.cyan, fontSize: 9, fontWeight: "900" },
+  oiFeedMeta: { flexDirection: "row", alignItems: "center", gap: 4 },
+  oiFeedType: { color: palette.muted, fontSize: 10, fontWeight: "700" },
+  oiFeedDot: { color: palette.muted, fontSize: 8 },
+  oiFeedTime: { color: palette.muted, fontSize: 10, fontWeight: "700" },
+  oiFeedContent: { color: palette.text, fontSize: 12, fontWeight: "700", lineHeight: 17 },
+  oiFeedScores: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.05)",
+  },
+  oiFeedScoreItem: { flexDirection: "row", alignItems: "center", gap: 4 },
+  oiFeedScoreLabel: { color: palette.muted, fontSize: 9, fontWeight: "700", textTransform: "uppercase" as const },
+  oiFeedScoreVal: { fontSize: 11, fontWeight: "900" },
+  oiFeedScoreDivider: { width: 1, height: 12, backgroundColor: palette.line },
 });

@@ -59,7 +59,7 @@ const SECTIONS: { title: string; body: string }[] = [
   },
   {
     title: "Contact",
-    body: "For questions about these Terms, contact NDSTRII Studios LLC at support@eagoh.com.",
+    body: "For questions about these Terms, contact NDSTRII Studios LLC at eagohsupport@ndstriistudios.com.",
   },
 ];
 

@@ -39,7 +39,7 @@ const SECTIONS: { title: string; body: string }[] = [
   },
   {
     title: "Your Rights",
-    body: "You have the right to: (a) access your personal data stored in EAGOH; (b) request correction of inaccurate data; (c) request deletion of your account and associated data; (d) export your data (coming soon); (e) withdraw consent where processing is consent-based. To exercise these rights, contact us at support@eagoh.com.",
+    body: "You have the right to: (a) access your personal data stored in EAGOH; (b) request correction of inaccurate data; (c) request deletion of your account and associated data; (d) export your data (coming soon); (e) withdraw consent where processing is consent-based. To exercise these rights, contact us at eagohsupport@ndstriistudios.com.",
   },
   {
     title: "Children's Privacy",
@@ -51,7 +51,7 @@ const SECTIONS: { title: string; body: string }[] = [
   },
   {
     title: "Contact",
-    body: "For privacy-related questions or to exercise your data rights, contact us at support@eagoh.com.\n\nNDSTRII Studios LLC",
+    body: "For privacy-related questions or to exercise your data rights, contact us at eagohsupport@ndstriistudios.com.\n\nNDSTRII Studios LLC",
   },
 ];
 

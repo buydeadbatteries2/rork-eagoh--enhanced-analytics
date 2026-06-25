@@ -22,6 +22,7 @@ import {
   MessageCircle,
   Moon,
   RefreshCcw,
+  Settings,
   Shield,
   Sliders,
   Star,
@@ -651,7 +652,7 @@ export default function SettingsScreen(): JSX.Element {
           onPress: () => {
             Alert.alert(
               "Account Deletion",
-              "Account deletion is coming soon. Please contact support@eagoh.com to delete your account.",
+              "Account deletion is coming soon. Please contact eagohsupport@ndstriistudios.com to delete your account.",
             );
           },
         },
@@ -885,7 +886,7 @@ export default function SettingsScreen(): JSX.Element {
             label: "Contact Support",
             icon: <MessageCircle color={pal.cyan} size={18} />,
             onPress: () => {
-              Alert.alert("Contact Support", "support@eagoh.com");
+              Alert.alert("Contact Support", "eagohsupport@ndstriistudios.com");
             },
           },
         ],

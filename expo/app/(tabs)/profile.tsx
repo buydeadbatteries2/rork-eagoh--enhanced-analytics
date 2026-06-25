@@ -1,10 +1,17 @@
+/**
+ * Profile screen — hero banner shows all forged EAGOHs with dynamic sizing.
+ * Mock data removed; all displayed data comes from real EAGOH records,
+ * reputation, and leaderboards.
+ */
+
 import { palette } from "@/constants/colors";
-import { LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/components/PerformancePrimitives";
+import { LIST_PERFORMANCE_PROPS } from "@/app/components/PerformancePrimitives";
 import { Image } from "expo-image";
+import { useWindowDimensions } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useHaptics } from "@/hooks/useHaptics";
 import { useRouter } from "expo-router";
-import { Activity, Award, BadgeCheck, BarChart3, BrainCircuit, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Settings, Shield, Sparkles, Swords, TrendingUp, Trophy, Wrench, WalletCards, Zap, Users, Globe } from "lucide-react-native";
+import { Award, BrainCircuit, Cpu, Crown, Flame, FlaskConical, Layers3, LogOut, Swords, Sparkles, Shield, Trophy, TrendingUp, Wrench, Zap } from "lucide-react-native";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -16,92 +23,25 @@ import type { EagohRecord } from "@/services/eagohs";
 import type { SubscriptionTier } from "@/services/profile";
 import {
   getEagohReputationDisplay,
-  computeRank,
   rankColor as repRankColor,
   RANK_TIERS,
-  BADGE_DEFINITIONS,
   type EagohReputationDisplay,
-  type RankTier,
 } from "@/services/reputation";
 import { getUserRankings, type LeaderboardEntry } from "@/services/leaderboards";
 
 type LabTone = "cyan" | "gold" | "violet" | "ember" | "success";
-type LabEnvironment = {
-  id: string;
-  name: string;
-  theme: string;
-  cost: number;
-  premium: boolean;
-  tone: LabTone;
-  grid: string;
-};
-type ProfileSection = { id: string; kind: "hero" | "stats" | "identity" | "features" | "wallet" | "subscriptions" | "edge" | "labs" | "testMode" | "settings" };
-type MultiplierTier = { name: string; value: string; detail: string; active: boolean; tone: LabTone };
-type UsageMetric = { label: string; value: string; detail: string; progress: number; tone: LabTone };
-type SubscriptionPlan = {
-  name: string;
-  label: string;
-  edge: string;
-  eagohLimit: string;
-  teamLimit: string;
-  efficiency: string;
-  marketplace: string;
-  labs: string;
-  sync: string;
-  tone: LabTone;
-  featured: boolean;
-};
+type ProfileSection = { id: string; kind: "hero" | "stats" | "identity" | "testMode" | "settings" };
 type Stat = { label: string; value: string; detail: string; tone: LabTone };
 
 const sections: ProfileSection[] = [
   ...(__DEV__ ? [{ id: "testMode", kind: "testMode" as const }] : []),
   { id: "hero", kind: "hero" },
   { id: "stats", kind: "stats" },
-  { id: "features", kind: "features" },
   { id: "identity", kind: "identity" },
-  { id: "wallet", kind: "wallet" },
-  { id: "subscriptions", kind: "subscriptions" },
-  { id: "edge", kind: "edge" },
   { id: "settings", kind: "settings" },
 ];
 
-const labs: LabEnvironment[] = [
-  { id: "dormant", name: "Dormant Lab", theme: "Free inactive containment bay", cost: 0, premium: false, tone: "cyan", grid: "LOW POWER" },
-  { id: "war", name: "Tactical War Room", theme: "Command walls, threat glass, battle telemetry", cost: 25, premium: true, tone: "ember", grid: "TACTICAL" },
-  { id: "neon", name: "Neon Analytics Chamber", theme: "Live signal panels and cyan market lasers", cost: 25, premium: true, tone: "cyan", grid: "ANALYTICS" },
-  { id: "syndicate", name: "Syndicate Command Center", theme: "Obsidian decks with encrypted faction relays", cost: 25, premium: true, tone: "violet", grid: "COMMAND" },
-  { id: "fight", name: "Underground Fight Lab", theme: "Concrete pit, red scanners, impact monitors", cost: 25, premium: true, tone: "ember", grid: "COMBAT" },
-  { id: "cathedral", name: "AI Data Cathedral", theme: "Vertical data columns and sacred machine light", cost: 25, premium: true, tone: "gold", grid: "ORACLE" },
-  { id: "penthouse", name: "Luxury Penthouse Lab", theme: "Skyline glass, elite vault lighting, premium calm", cost: 25, premium: true, tone: "gold", grid: "LUX" },
-  { id: "cryo", name: "Cryo Scout Vault", theme: "Frosted bay with blue biometric vapor", cost: 25, premium: true, tone: "cyan", grid: "CRYO" },
-  { id: "forge", name: "Blacksite Forge", theme: "Industrial rails and molten Edge diagnostics", cost: 25, premium: true, tone: "ember", grid: "FORGE" },
-  { id: "halo", name: "Halo Strategy Deck", theme: "Circular holo-table with team prediction rings", cost: 25, premium: true, tone: "success", grid: "SYNC" },
-  { id: "void", name: "Void Mirror Lab", theme: "Dark reflective chamber and identity doubles", cost: 25, premium: true, tone: "violet", grid: "MIRROR" },
-];
-
-
-
-const dna = ["Predictive Vision", "Pressure Mapping", "Fanatic Memory", "Market Instinct"];
-const teams = ["Metro Ultras", "Austin Fanatics", "North End Loyal"];
 const labGridLines = [0, 1, 2, 3, 4, 5, 6];
-const edgeActivity = ["+420 Edge from faction validation", "25 Edge reserved for lab preview", "+88 Edge observation streak", "Mock chamber upgrade viewed"];
-const walletUsage: UsageMetric[] = [
-  { label: "Analyst Sessions", value: "1,840", detail: "42% of monthly flow", progress: 0.42, tone: "cyan" },
-  { label: "Marketplace Sync", value: "980", detail: "22% reserved for vendors", progress: 0.22, tone: "violet" },
-  { label: "Lab Cosmetics", value: "725", detail: "16% profile chambers", progress: 0.16, tone: "gold" },
-  { label: "Faction Boosts", value: "540", detail: "12% alliance influence", progress: 0.12, tone: "success" },
-];
-const multipliers: MultiplierTier[] = [
-  { name: "Pro", value: "1.0x", detail: "Baseline Edge velocity", active: false, tone: "cyan" },
-  { name: "Oracle Elite", value: "1.2x", detail: "Current mock tier", active: true, tone: "gold" },
-  { name: "Syndicate", value: "1.5x", detail: "Elite faction economy", active: false, tone: "violet" },
-];
-const subscriptionPlans: SubscriptionPlan[] = [
-  { name: "Free", label: "Dormant access", edge: "0", eagohLimit: "1 dormant EAGOH", teamLimit: "No Fanatic Team", efficiency: "—", marketplace: "Browse-only", labs: "Dormant lab preview", sync: "Manual Quick Checks", tone: "cyan", featured: false },
-  { name: "Pro", label: "Active analyst", edge: "600", eagohLimit: "2 EAGOHs", teamLimit: "1 Fanatic Team", efficiency: "1.0x", marketplace: "Standard visibility", labs: "Core labs unlocked", sync: "25% · 50% sync", tone: "cyan", featured: false },
-  { name: "Oracle Elite", label: "Premium prediction layer", edge: "1,400", eagohLimit: "3 EAGOHs", teamLimit: "2 Fanatic Teams", efficiency: "1.2x", marketplace: "Boosted vendor reads", labs: "Advanced Oracle labs", sync: "25% · 50% · 75% sync", tone: "gold", featured: true },
-  { name: "Syndicate", label: "Faction command tier", edge: "3,700", eagohLimit: "5 EAGOHs", teamLimit: "3 Fanatic Teams", efficiency: "1.5x", marketplace: "Priority exchange", labs: "All labs + elite chambers", sync: "Full 25%–100% sync", tone: "violet", featured: false },
-];
 
 function toneColor(tone: LabTone): string {
   if (tone === "gold") return palette.gold;
@@ -136,36 +76,72 @@ function SectionTitle({ eyebrow, title }: { eyebrow: string; title: string }): J
   );
 }
 
-function ProfileChamber({ lab, eagoh }: { lab: LabEnvironment; eagoh?: EagohRecord }): JSX.Element {
-  const accent = toneColor(lab.tone);
-  const eagohName = eagoh?.name ?? "No EAGOH";
-  const renderUri = eagoh?.image_url ?? eagoh?.image_thumb_url ?? null;
-  return (
-    <View style={styles.chamber}>
-      <LinearGradient colors={[`${accent}33`, "rgba(10,18,30,0.88)", "rgba(3,6,11,0.98)"]} style={StyleSheet.absoluteFill} />
-      <View style={[styles.backHalo, { borderColor: `${accent}55` }]} />
-      <View style={[styles.floorEllipse, { borderColor: `${accent}66`, backgroundColor: `${accent}12` }]} />
-      <View style={styles.labGrid}>{labGridLines.map((index) => <View key={index} style={[styles.gridLine, { backgroundColor: `${accent}18`, left: `${index * 16}%` }]} />)}</View>
-      <View style={styles.scanPanelLeft}><Text style={[styles.scanText, { color: accent }]}>{lab.grid}</Text></View>
-      <View style={styles.scanPanelRight}><Radar color={accent} size={20} /><Text style={styles.scanSub}>LIVE MOCK</Text></View>
-      <View style={styles.eagohBody}>
-        {renderUri ? (
-          <View style={[styles.chamberRender, { borderColor: `${accent}66`, shadowColor: accent }]}>
-            <Image source={{ uri: renderUri }} style={StyleSheet.absoluteFill} contentFit="contain" cachePolicy="memory-disk" transition={160} recyclingKey={eagoh?.id ?? eagohName} />
-            <LinearGradient colors={["transparent", "rgba(3,6,11,0.42)"]} style={StyleSheet.absoluteFill} />
-          </View>
-        ) : (
-          <OptimizedEagohImage tone={lab.tone} label={eagohName.slice(0, 8).toUpperCase()} size="profile" highResolution />
-        )}
-        <Text style={[styles.chamberEagohName, { color: accent }]} numberOfLines={1}>{eagohName}</Text>
+/** Gallery of all forged EAGOHs — sizes adjust dynamically based on count. */
+const EagohGallery = memo(function EagohGallery({ eagohs }: { eagohs: EagohRecord[] }): JSX.Element {
+  const count = eagohs.length;
+
+  if (count === 0) {
+    return (
+      <View style={[styles.chamber, styles.chamberEmpty]}>
+        <LinearGradient colors={["rgba(54,245,255,0.06)", "rgba(10,18,30,0.72)", "rgba(3,6,11,0.96)"]} style={StyleSheet.absoluteFill} />
+        <FlaskConical color={palette.muted} size={36} />
+        <Text style={styles.emptyTitle}>No EAGOHs Forged</Text>
+        <Text style={styles.emptyHint}>Head to the Forge to create your first intelligence unit.</Text>
       </View>
-      <View style={styles.chamberFooter}>
-        <Text style={styles.chamberName}>{lab.name}</Text>
-        <Text style={styles.chamberTheme}>{lab.theme}</Text>
+    );
+  }
+
+  const isCompact = count >= 4;
+  const imageH = isCompact ? 140 : count === 1 ? 380 : count === 2 ? 260 : 200;
+  const chamberH = isCompact ? Math.max(340, count * 160) : count === 1 ? 500 : count === 2 ? 370 : count * 190;
+
+  return (
+    <View style={[styles.chamber, { height: chamberH }]}>
+      <LinearGradient colors={["rgba(54,245,255,0.10)", "rgba(10,18,30,0.84)", "rgba(3,6,11,0.96)"]} style={StyleSheet.absoluteFill} />
+      <View style={[styles.backHalo, { borderColor: "rgba(54,245,255,0.28)" }]} />
+      <View style={styles.labGrid}>{labGridLines.map((index) => <View key={index} style={[styles.gridLine, { backgroundColor: "rgba(54,245,255,0.10)", left: `${index * 16}%` }]} />)}</View>
+      <ScrollView horizontal={count >= 5} showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.galleryContent, count >= 5 && { paddingHorizontal: 8, gap: 10 }]}>
+        <View style={[styles.galleryGrid, { flexDirection: count >= 4 ? "row" : "column", flexWrap: "wrap", gap: 10, justifyContent: "center" }]}>
+          {eagohs.map((eagoh) => {
+            const domainObj = INTELLIGENCE_DOMAINS.find((d) => d.id === eagoh.domain);
+            const accent = domainObj ? toneColor(domainObj.tone) : palette.cyan;
+            const renderUri = eagoh.image_url ?? eagoh.image_thumb_url ?? null;
+            const cardW = count === 1 ? "100%" : count === 2 ? "100%" : count >= 4 ? "47%" : "100%";
+            return (
+              <View key={eagoh.id} style={{ width: cardW as any, minHeight: isCompact ? 146 : imageH + 72, borderRadius: 5, borderWidth: 1, borderColor: `${accent}33`, backgroundColor: "rgba(3,6,11,0.38)", overflow: "hidden", marginBottom: count >= 4 ? 6 : 0 }}>
+                <View style={{ height: imageH, borderBottomWidth: 1, borderBottomColor: `${accent}22` }}>
+                  {renderUri ? (
+                    <View style={[StyleSheet.absoluteFill, { overflow: "hidden" }]}>
+                      <Image source={{ uri: renderUri }} style={StyleSheet.absoluteFill} contentFit="contain" cachePolicy="memory-disk" transition={160} recyclingKey={eagoh.id} />
+                      <LinearGradient colors={["transparent", "rgba(3,6,11,0.55)"]} style={StyleSheet.absoluteFill} />
+                    </View>
+                  ) : (
+                    <View style={[StyleSheet.absoluteFill, { alignItems: "center", justifyContent: "center" }]}>
+                      <LinearGradient colors={[`${accent}14`, "rgba(3,6,11,0.3)"]} style={StyleSheet.absoluteFill} />
+                      <View style={[styles.galleryEmptyIcon, { borderColor: `${accent}44` }]}>
+                        <Cpu color={accent} size={count >= 4 ? 18 : 24} />
+                      </View>
+                    </View>
+                  )}
+                </View>
+                <View style={{ padding: isCompact ? 8 : 10, flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <View style={[styles.galleryDomainDot, { backgroundColor: accent }]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.galleryEagohName, isCompact && { fontSize: 11 }]} numberOfLines={1}>{eagoh.name}</Text>
+                    <Text style={styles.galleryEagohDomain}>{domainObj?.label ?? eagoh.domain ?? "Unknown"}</Text>
+                  </View>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      </ScrollView>
+      <View style={styles.galleryFooter}>
+        <Text style={styles.galleryCount}>{count} EAGOH{count !== 1 ? "s" : ""} Forged</Text>
       </View>
     </View>
   );
-}
+});
 
 const StatCard = memo(function StatCard({ item }: { item: Stat }): JSX.Element {
   const accent = toneColor(item.tone);
@@ -179,111 +155,17 @@ const StatCard = memo(function StatCard({ item }: { item: Stat }): JSX.Element {
   );
 });
 
-const UsageCard = memo(function UsageCard({ item }: { item: UsageMetric }): JSX.Element {
-  const accent = toneColor(item.tone);
-  return (
-    <View style={styles.usageCard}>
-      <View style={styles.usageHeader}><Text style={styles.usageLabel}>{item.label}</Text><Text style={[styles.usageValue, { color: accent }]}>{item.value}</Text></View>
-      <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${item.progress * 100}%`, backgroundColor: accent }]} /></View>
-      <Text style={styles.usageDetail}>{item.detail}</Text>
-    </View>
-  );
-});
-
-function planIcon(plan: SubscriptionPlan, accent: string): JSX.Element {
-  const size = 22;
-  switch (plan.name) {
-    case "Free": return <Lock color={accent} size={size} />;
-    case "Pro": return <TrendingUp color={accent} size={size} />;
-    case "Oracle Elite": return <Crown color={accent} size={size} />;
-    case "Syndicate": return <Shield color={accent} size={size} />;
-    default: return <Zap color={accent} size={size} />;
-  }
-}
-
-const SubscriptionCard = memo(function SubscriptionCard({ item }: { item: SubscriptionPlan }): JSX.Element {
-  const accent = toneColor(item.tone);
-  return (
-    <View style={[styles.subscriptionCard, item.featured && { borderColor: "rgba(255,184,77,0.55)", backgroundColor: "rgba(255,184,77,0.12)" }]}>
-      <LinearGradient colors={[`${accent}20`, "rgba(3,6,11,0.24)"]} style={StyleSheet.absoluteFill} />
-      <View style={styles.planHeader}>
-        <View style={[styles.planIcon, { borderColor: `${accent}66`, backgroundColor: `${accent}16` }]}>{planIcon(item, accent)}</View>
-        <View style={styles.planTitleBlock}>
-          <Text style={styles.planName}>{item.name}</Text>
-          <Text style={styles.planLabel}>{item.label}</Text>
-        </View>
-        {item.featured ? <View style={styles.featuredPill}><Sparkles color={palette.gold} size={12} /><Text style={styles.featuredText}>ACTIVE MOCK</Text></View> : null}
-      </View>
-      <View style={styles.edgeAmountRow}>
-        <Text style={[styles.edgeAmount, { color: accent }]}>{item.edge}</Text>
-        <Text style={styles.edgeAmountLabel}>Edge / month</Text>
-      </View>
-      <View style={styles.planMetricGrid}>
-        <View style={styles.planMetric}>
-          <BrainCircuit color={accent} size={14} />
-          <Text style={styles.planMetricValue}>{item.eagohLimit}</Text>
-          <Text style={styles.planMetricLabel}>EAGOHs</Text>
-        </View>
-        <View style={styles.planMetric}>
-          <Users color={accent} size={14} />
-          <Text style={styles.planMetricValue}>{item.teamLimit}</Text>
-          <Text style={styles.planMetricLabel}>Teams</Text>
-        </View>
-      </View>
-      <View style={styles.planBullets}>
-        <View style={styles.planBullet}>
-          <Text style={styles.planBulletDot}>•</Text>
-          <Text style={styles.planBulletText}><Text style={styles.planBulletBold}>Efficiency</Text> {item.efficiency}</Text>
-        </View>
-        <View style={styles.planBullet}>
-          <Text style={styles.planBulletDot}>•</Text>
-          <Text style={styles.planBulletText}><Text style={styles.planBulletBold}>Marketplace</Text> {item.marketplace}</Text>
-        </View>
-        <View style={styles.planBullet}>
-          <Text style={styles.planBulletDot}>•</Text>
-          <Text style={styles.planBulletText}><Text style={styles.planBulletBold}>Labs</Text> {item.labs}</Text>
-        </View>
-        <View style={styles.planBullet}>
-          <Text style={styles.planBulletDot}>•</Text>
-          <Text style={styles.planBulletText}><Text style={styles.planBulletBold}>Sync</Text> {item.sync}</Text>
-        </View>
-      </View>
-    </View>
-  );
-});
-
-const LabCard = memo(function LabCard({ item, selected, onPress }: { item: LabEnvironment; selected: boolean; onPress: (id: string) => void }): JSX.Element {
-  const accent = toneColor(item.tone);
-  const handlePress = useCallback((): void => onPress(item.id), [item.id, onPress]);
-  return (
-    <Pressable onPress={handlePress} style={[styles.labCard, selected && { borderColor: accent, backgroundColor: `${accent}14` }]}>
-      <View style={[styles.labThumb, { borderColor: `${accent}66` }]}>
-        <LinearGradient colors={[`${accent}44`, "rgba(255,255,255,0.04)", "rgba(3,6,11,0.9)"]} style={StyleSheet.absoluteFill} />
-        <Layers3 color={accent} size={22} />
-      </View>
-      <View style={styles.labInfo}>
-        <Text style={styles.labName}>{item.name}</Text>
-        <Text style={styles.labTheme} numberOfLines={2}>{item.theme}</Text>
-        <View style={styles.labMetaRow}>{item.premium ? <Lock color={palette.gold} size={13} /> : <BadgeCheck color={palette.success} size={13} />}<Text style={[styles.labCost, { color: item.premium ? palette.gold : palette.success }]}>{item.premium ? `${item.cost} Edge` : "Free"}</Text></View>
-      </View>
-      {selected ? <Text style={[styles.selectedText, { color: accent }]}>ACTIVE</Text> : null}
-    </Pressable>
-  );
-});
-
 export default function ProfileScreen(): JSX.Element {
   const h = useHaptics();
   const { user, signOut, signOutState } = useAuth();
   const { eagohs } = useEagohs();
-  const { profile, setTestTier, setSubscriptionTier, effectiveSubscriptionTier, isAdminOverrideActive } = useProfile();
+  const { profile, setTestTier, effectiveSubscriptionTier, isAdminOverrideActive } = useProfile();
   const router = useRouter();
   const handleSignOut = useCallback((): void => {
     h.selection();
     signOut().catch((e) => console.warn("[auth] signOut failed", e));
   }, [signOut, h]);
   const displayAlias = (user?.user_metadata as { username?: string } | undefined)?.username ?? user?.email ?? "EAGOH operator";
-  const [selectedLabId, setSelectedLabId] = useState<string>("neon");
-  const selectedLab = useMemo<LabEnvironment>(() => labs.find((lab) => lab.id === selectedLabId) ?? labs[0], [selectedLabId]);
 
   // ── Reputation for primary EAGOH ────────────────────────────────────
   const [reputation, setReputation] = useState<EagohReputationDisplay | null>(null);
@@ -302,6 +184,37 @@ export default function ProfileScreen(): JSX.Element {
       .then(setUserRankings)
       .catch(() => undefined);
   }, [user?.id]);
+
+  // ── Aggregate real DNA & team data from all EAGOHs ──────────────────
+  const aggregatedDna = useMemo<string[]>(() => {
+    const set = new Set<string>();
+    eagohs.forEach((e) => e.dna?.forEach((d) => set.add(d)));
+    return Array.from(set);
+  }, [eagohs]);
+
+  const aggregatedTeams = useMemo<string[]>(() => {
+    const set = new Set<string>();
+    eagohs.forEach((e) => {
+      if (e.pro_team_focus_name) set.add(e.pro_team_focus_name);
+      if (e.college_team_focus_name) set.add(e.college_team_focus_name);
+    });
+    return Array.from(set);
+  }, [eagohs]);
+
+  const aggregatedDomains = useMemo(() => {
+    const map = new Map<string, { info: typeof INTELLIGENCE_DOMAINS[number]; count: number }>();
+    eagohs.forEach((e) => {
+      const d = e.domain ?? "unknown";
+      const existing = map.get(d);
+      if (existing) {
+        existing.count++;
+      } else {
+        const info = INTELLIGENCE_DOMAINS.find((di) => di.id === d);
+        map.set(d, { info: info!, count: 1 });
+      }
+    });
+    return Array.from(map.entries());
+  }, [eagohs]);
 
   const reputationStats: Stat[] = useMemo<Stat[]>(() => {
     if (!reputation) {
@@ -325,10 +238,6 @@ export default function ProfileScreen(): JSX.Element {
     h.medium();
     setTestTier(tier).catch((err: unknown) => console.warn("[testMode] setTestTier failed", err));
   }, [setTestTier, h]);
-  const handleLabPress = useCallback((id: string): void => {
-    setSelectedLabId(id);
-    h.selection();
-  }, [h]);
 
   const handleSettingsPress = useCallback((): void => {
     h.selection();
@@ -346,43 +255,7 @@ export default function ProfileScreen(): JSX.Element {
               <Text style={styles.adminOverrideText}>Promotional Access Active</Text>
             </View>
           ) : null}
-          <ProfileChamber lab={selectedLab} eagoh={primaryEagoh} />
-          <View style={styles.labCarouselWrap}>
-            <View style={styles.labCarouselHeader}>
-              <FlaskConical color={palette.cyan} size={14} />
-              <Text style={styles.labCarouselEyebrow}>LAB ENVIRONMENTS</Text>
-            </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.labCarouselContent} decelerationRate="fast" snapToInterval={212}>
-              {labs.map((lab) => {
-                const isSelected = lab.id === selectedLabId;
-                const accent = toneColor(lab.tone);
-                return (
-                  <Pressable
-                    key={lab.id}
-                    onPress={() => handleLabPress(lab.id)}
-                    style={({ pressed }) => [
-                      styles.labCarouselCard,
-                      { borderColor: isSelected ? accent : palette.line },
-                      isSelected && { backgroundColor: `${accent}14` },
-                      pressed && { opacity: 0.8 },
-                    ]}
-                  >
-                    <LinearGradient colors={[`${accent}22`, "rgba(3,6,11,0.7)"]} style={StyleSheet.absoluteFill} />
-                    <View style={[styles.labCarouselThumb, { borderColor: `${accent}66` }]}>
-                      <LinearGradient colors={[`${accent}44`, "rgba(255,255,255,0.04)"]} style={StyleSheet.absoluteFill} />
-                      <Layers3 color={accent} size={20} />
-                    </View>
-                    <Text style={styles.labCarouselName} numberOfLines={1}>{lab.name}</Text>
-                    <View style={styles.labCarouselMeta}>
-                      {lab.premium ? <Lock color={palette.gold} size={10} /> : <BadgeCheck color={palette.success} size={10} />}
-                      <Text style={[styles.labCarouselCost, { color: lab.premium ? palette.gold : palette.success }]}>{lab.premium ? `${lab.cost}E` : "Free"}</Text>
-                    </View>
-                    {isSelected ? <View style={[styles.labCarouselActive, { backgroundColor: `${accent}28`, borderColor: accent }]}><Text style={[styles.labCarouselActiveText, { color: accent }]}>ACTIVE</Text></View> : null}
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-          </View>
+          <EagohGallery eagohs={eagohs} />
           <Pressable onPress={handleSignOut} disabled={signOutState.isPending} style={({ pressed }) => [styles.signOutButton, pressed && { opacity: 0.85 }]}>
             {signOutState.isPending ? <ActivityIndicator color={palette.ember} /> : <LogOut color={palette.ember} size={16} />}
             <Text style={styles.signOutText}>{signOutState.isPending ? "Signing out…" : "Sign out"}</Text>
@@ -395,33 +268,20 @@ export default function ProfileScreen(): JSX.Element {
         <View>
           <View style={styles.statGrid}>{reputationStats.map((stat) => <StatCard key={stat.label} item={stat} />)}</View>
           {/* Domain breakdown */}
-          {eagohs.length > 0 && (
+          {aggregatedDomains.length > 0 && (
             <View style={styles.domainPanel}>
               <SectionTitle eyebrow="DOMAIN SPECIALIZATION" title="My Intelligence Domains" />
               <View style={styles.domainGrid}>
-                {(() => {
-                  const domainCounts = new Map<string, number>();
-                  const domainMap = new Map<string, typeof INTELLIGENCE_DOMAINS[number]>();
-                  eagohs.forEach((e) => {
-                    const d = e.domain ?? "unknown";
-                    domainCounts.set(d, (domainCounts.get(d) ?? 0) + 1);
-                    if (!domainMap.has(d)) {
-                      const info = INTELLIGENCE_DOMAINS.find((di) => di.id === d);
-                      if (info) domainMap.set(d, info);
-                    }
-                  });
-                  return Array.from(domainCounts.entries()).map(([domainId, count]) => {
-                    const info = domainMap.get(domainId);
-                    const color = info?.color ?? palette.muted;
-                    return (
-                      <View key={domainId} style={[styles.domainChip, { borderColor: `${color}44`, backgroundColor: `${color}16` }]}>
-                        <View style={[styles.domainDot, { backgroundColor: color }]} />
-                        <Text style={[styles.domainChipLabel, { color }]}>{info?.label ?? domainId}</Text>
-                        <Text style={styles.domainChipCount}>{count} EAGOH{count > 1 ? "s" : ""}</Text>
-                      </View>
-                    );
-                  });
-                })()}
+                {aggregatedDomains.map(([domainId, { info, count }]) => {
+                  const color = info?.color ?? palette.muted;
+                  return (
+                    <View key={domainId} style={[styles.domainChip, { borderColor: `${color}44`, backgroundColor: `${color}16` }]}>
+                      <View style={[styles.domainDot, { backgroundColor: color }]} />
+                      <Text style={[styles.domainChipLabel, { color }]}>{info?.label ?? domainId}</Text>
+                      <Text style={styles.domainChipCount}>{count} EAGOH{count > 1 ? "s" : ""}</Text>
+                    </View>
+                  );
+                })}
               </View>
             </View>
           )}
@@ -452,7 +312,7 @@ export default function ProfileScreen(): JSX.Element {
                   })}
                 </View>
               </View>
-              {/* ── My Rankings ─────────────────────────────────────── */}
+              {/* My Rankings */}
               {userRankings && userRankings.eagohEntries.length > 0 && (
                 <View style={styles.rankingsSection}>
                   <Text style={styles.repDetailLabel}>My Leaderboard Rankings</Text>
@@ -476,7 +336,6 @@ export default function ProfileScreen(): JSX.Element {
                       <Text style={styles.bestCategoryText}>Strongest: {userRankings.bestCategory.replace(/_/g, " ")}</Text>
                     </View>
                   )}
-                  {/* Rank changes */}
                   {userRankings.rankChanges.length > 0 && (
                     <View style={styles.rankChangesSection}>
                       <Text style={styles.repDetailLabel}>Recent Rank Changes</Text>
@@ -493,7 +352,6 @@ export default function ProfileScreen(): JSX.Element {
                   )}
                 </View>
               )}
-
               {/* Badges */}
               {reputation.badges.length > 0 && (
                 <View style={styles.badgesSection}>
@@ -516,123 +374,47 @@ export default function ProfileScreen(): JSX.Element {
         </View>
       );
     }
-    if (item.kind === "features") {
-      const handleLabsPress = (): void => {
-        h.selection();
-        router.push("/labs" as never);
-      };
-      const handleFactionsPress = (): void => {
-        h.selection();
-        router.push("/factions" as never);
-      };
-      const handleOpenIntelPress = (): void => {
-        h.selection();
-        router.push("/open-intelligence" as never);
-      };
-      const handleLeaderboardsPress = (): void => {
-        h.selection();
-        router.push("/leaderboards" as never);
-      };
-      return (
-        <View style={styles.panel}>
-          <SectionTitle eyebrow="FEATURES" title="Labs, Factions & Intelligence" />
-          <Pressable onPress={handleLabsPress} style={({ pressed }) => [styles.featureCard, pressed && { opacity: 0.8 }]}>
-            <View style={[styles.featureIconWrap, { borderColor: "rgba(108,230,255,0.4)" }]}>
-              <FlaskConical color={palette.cyan} size={20} />
-            </View>
-            <View style={styles.featureInfo}>
-              <Text style={styles.featureTitle}>EAGOH Forge & Labs</Text>
-              <Text style={styles.featureDesc}>Create EAGOHs with brain-in-glass-dome, full-body cybernetic chassis, domain intelligence tuning, and open intelligence observation feeds.</Text>
-            </View>
-          </Pressable>
-          <Pressable onPress={handleOpenIntelPress} style={({ pressed }) => [styles.featureCard, pressed && { opacity: 0.8 }]}>
-            <View style={[styles.featureIconWrap, { borderColor: "rgba(255,181,71,0.4)" }]}>
-              <BrainCircuit color={palette.gold} size={20} />
-            </View>
-            <View style={styles.featureInfo}>
-              <Text style={styles.featureTitle}>Open Intelligence</Text>
-              <Text style={styles.featureDesc}>Feed observations into your EAGOHs. Select domain, entry depth, tag signals, and confidence levels. Quality-scored and Edge-gated.</Text>
-            </View>
-          </Pressable>
-          <Pressable onPress={handleFactionsPress} style={({ pressed }) => [styles.featureCard, pressed && { opacity: 0.8 }]}>
-            <View style={[styles.featureIconWrap, { borderColor: "rgba(138,92,255,0.4)" }]}>
-              <Shield color={palette.violet} size={20} />
-            </View>
-            <View style={styles.featureInfo}>
-              <Text style={styles.featureTitle}>Faction Network</Text>
-              <Text style={styles.featureDesc}>Align with intelligence syndicates, pool observations, earn reputation badges, and climb the faction influence ladder.</Text>
-            </View>
-          </Pressable>
-          <Pressable onPress={handleLeaderboardsPress} style={({ pressed }) => [styles.featureCard, pressed && { opacity: 0.8 }]}>
-            <View style={[styles.featureIconWrap, { borderColor: "rgba(255,215,0,0.4)" }]}>
-              <Trophy color={palette.gold} size={20} />
-            </View>
-            <View style={styles.featureInfo}>
-              <Text style={styles.featureTitle}>My Rankings</Text>
-              <Text style={styles.featureDesc}>Track your EAGOH leaderboard positions, reputation growth, and earned badges across all leaderboard categories.</Text>
-            </View>
-          </Pressable>
-        </View>
-      );
-    }
     if (item.kind === "identity") {
       return (
         <View style={styles.panel}>
           <SectionTitle eyebrow="IDENTITY MATRIX" title="DNA, teams, and faction alignment" />
-          <View style={styles.chipWrap}>{dna.map((label) => <View key={label} style={styles.chip}><Sparkles color={palette.cyan} size={13} /><Text style={styles.chipText}>{label}</Text></View>)}</View>
+          {aggregatedDna.length > 0 ? (
+            <View style={styles.chipWrap}>
+              {aggregatedDna.map((label) => {
+                // Filter out domain-encoding DNA entries
+                if (label.startsWith("dom:")) return null;
+                return (
+                  <View key={label} style={styles.chip}>
+                    <Sparkles color={palette.cyan} size={13} />
+                    <Text style={styles.chipText}>{label}</Text>
+                  </View>
+                );
+              })}
+            </View>
+          ) : (
+            <Text style={styles.emptyHint}>No DNA archetypes assigned yet.</Text>
+          )}
           <View style={styles.divider} />
           <Text style={styles.miniLabel}>Fanatic Teams</Text>
-          <View style={styles.chipWrap}>{teams.map((label) => <View key={label} style={[styles.chip, styles.teamChip]}><Shield color={palette.gold} size={13} /><Text style={styles.chipText}>{label}</Text></View>)}</View>
-          <View style={styles.alignment}><Swords color={palette.ember} size={18} /><View><Text style={styles.alignmentTitle}>Faction Alignment</Text><Text style={styles.alignmentBody}>Obsidian Syndicate · strategic intelligence wing</Text></View></View>
-        </View>
-      );
-    }
-    if (item.kind === "wallet") {
-      return (
-        <View style={styles.walletPanel}>
-          <LinearGradient colors={["rgba(255,184,77,0.22)", "rgba(54,245,255,0.08)", "rgba(10,18,30,0.84)"]} style={StyleSheet.absoluteFill} />
-          <SectionTitle eyebrow="EDGE WALLET" title="Mock economy command vault" />
-          <View style={styles.walletHero}>
-            <View><Text style={styles.walletLabel}>Available Edge</Text><Text style={styles.walletTotal}>12,480</Text><Text style={styles.edgeHint}>No real payments · no live deductions</Text></View>
-            <View style={styles.walletOrb}><WalletCards color={palette.gold} size={30} /><Text style={styles.walletOrbText}>EDGE</Text></View>
+          {aggregatedTeams.length > 0 ? (
+            <View style={styles.chipWrap}>
+              {aggregatedTeams.map((label) => (
+                <View key={label} style={[styles.chip, styles.teamChip]}>
+                  <Shield color={palette.gold} size={13} />
+                  <Text style={styles.chipText}>{label}</Text>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.emptyHint}>No team affiliations set.</Text>
+          )}
+          <View style={styles.alignment}>
+            <Swords color={palette.ember} size={18} />
+            <View>
+              <Text style={styles.alignmentTitle}>Faction Alignment</Text>
+              <Text style={styles.alignmentBody}>EAGOH Intelligence Network</Text>
+            </View>
           </View>
-          <View style={styles.balanceGrid}>
-            <View style={styles.balanceCard}><Zap color={palette.cyan} size={18} /><Text style={styles.balanceValue}>8,250</Text><Text style={styles.balanceLabel}>Subscription Edge</Text><Text style={styles.balanceRule}>10% rollover max if 10% retained</Text></View>
-            <View style={styles.balanceCard}><BadgeCheck color={palette.success} size={18} /><Text style={styles.balanceValue}>4,230</Text><Text style={styles.balanceLabel}>Purchased Edge</Text><Text style={styles.balanceRule}>Permanent rollover · never expires</Text></View>
-          </View>
-          <View style={styles.rolloverBox}>
-            <View style={styles.rolloverTop}><RefreshCcw color={palette.gold} size={18} /><Text style={styles.rolloverTitle}>Monthly rollover progress</Text><Text style={styles.rolloverPct}>7.8%</Text></View>
-            <View style={styles.progressTrack}><View style={[styles.progressFill, { width: "78%", backgroundColor: palette.gold }]} /></View>
-            <Text style={styles.rolloverBody}>Eligible for subscription rollover because mock retained balance is above 10%. Cap locks at 10%.</Text>
-          </View>
-          <View style={styles.multiplierRow}>{multipliers.map((tier) => <View key={tier.name} style={[styles.multiplierCard, tier.active && styles.multiplierActive]}><Gauge color={toneColor(tier.tone)} size={16} /><Text style={styles.multiplierName}>{tier.name}</Text><Text style={[styles.multiplierValue, { color: toneColor(tier.tone) }]}>{tier.value}</Text><Text style={styles.multiplierDetail}>{tier.detail}</Text></View>)}</View>
-          <View style={styles.analyticsHeader}><BarChart3 color={palette.cyan} size={18} /><Text style={styles.analyticsTitle}>Edge usage analytics</Text></View>
-          {walletUsage.map((metric) => <UsageCard key={metric.label} item={metric} />)}
-        </View>
-      );
-    }
-    if (item.kind === "subscriptions") {
-      return (
-        <View style={styles.subscriptionPanel}>
-          <LinearGradient colors={["rgba(124,92,255,0.18)", "rgba(54,245,255,0.06)", "rgba(10,18,30,0.88)"]} style={StyleSheet.absoluteFill} />
-          <SectionTitle eyebrow="SUBSCRIPTION MATRIX" title="Choose your intelligence tier" />
-          <Text style={styles.panelBody}>Mock-only plan comparison for Edge flow, EAGOH capacity, Fanatic Team bindings, marketplace access, labs, and synchronization depth.</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.subCarouselContent} decelerationRate="fast" snapToInterval={318}>
-            {subscriptionPlans.map((plan) => (
-              <View key={plan.name} style={styles.subCarouselCard}>
-                <SubscriptionCard item={plan} />
-              </View>
-            ))}
-          </ScrollView>
-        </View>
-      );
-    }
-    if (item.kind === "edge") {
-      return (
-        <View style={styles.panel}>
-          <SectionTitle eyebrow="EDGE ACTIVITY" title="Recent mock economy signals" />
-          <View style={styles.edgeBalance}><TrendingUp color={palette.gold} size={22} /><View><Text style={styles.edgeValue}>Oracle Elite · 1.2x active</Text><Text style={styles.edgeHint}>Preview-only wallet states and economy rules</Text></View></View>
-          {edgeActivity.map((activity) => <View key={activity} style={styles.activityRow}><Activity color={palette.success} size={15} /><Text style={styles.activityText}>{activity}</Text></View>)}
         </View>
       );
     }
@@ -640,7 +422,7 @@ export default function ProfileScreen(): JSX.Element {
       return (
         <Pressable onPress={handleSettingsPress} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
           <View style={[styles.featureIconWrap, { borderColor: "rgba(120,180,255,0.35)" }]}>
-            <Settings color={palette.text} size={20} />
+            <Crown color={palette.text} size={20} />
           </View>
           <View style={styles.featureInfo}>
             <Text style={styles.featureTitle}>Settings</Text>
@@ -695,7 +477,7 @@ export default function ProfileScreen(): JSX.Element {
       );
     }
     return <></>;
-  }, [handleLabPress, selectedLab, selectedLabId, reputationStats, reputation, currentTier, handleSetTestTier, handleSettingsPress, isAdminOverrideActive]);
+  }, [handleSignOut, reputationStats, reputation, currentTier, handleSetTestTier, handleSettingsPress, isAdminOverrideActive, eagohs, displayAlias, aggregatedDna, aggregatedTeams, aggregatedDomains, userRankings, signOutState]);
 
   return (
     <LinearGradient colors={["#020409", "#07111D", "#03060B"]} style={styles.root}>
@@ -717,29 +499,24 @@ const styles = StyleSheet.create({
   rankText: { color: palette.gold, fontWeight: "900", fontSize: 12 },
   adminOverrideBanner: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 14, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 5, backgroundColor: "rgba(255,184,77,0.12)", borderWidth: 1, borderColor: "rgba(255,184,77,0.35)", alignSelf: "flex-start" },
   adminOverrideText: { color: palette.gold, fontSize: 12, fontWeight: "800", letterSpacing: 0.5 },
-  chamber: { height: 500, overflow: "hidden", borderRadius: 5, borderWidth: 1, borderColor: "rgba(54,245,255,0.24)", marginTop: 18, backgroundColor: palette.obsidian },
+  // Chamber (EAGOH Gallery)
+  chamber: { overflow: "hidden", borderRadius: 5, borderWidth: 1, borderColor: "rgba(54,245,255,0.24)", marginTop: 18, backgroundColor: palette.obsidian },
+  chamberEmpty: { height: 260, alignItems: "center", justifyContent: "center", gap: 10 },
+  emptyTitle: { color: palette.muted, fontSize: 16, fontWeight: "900", letterSpacing: 0.5 },
+  emptyHint: { color: palette.muted, fontSize: 12, fontWeight: "600", textAlign: "center", paddingHorizontal: 20 },
   backHalo: { position: "absolute", top: 54, alignSelf: "center", width: 260, height: 260, borderRadius: 130, borderWidth: 1, opacity: 0.8 },
-  floorEllipse: { position: "absolute", bottom: 78, alignSelf: "center", width: 270, height: 68, borderRadius: 5, borderWidth: 1 },
   labGrid: { ...StyleSheet.absoluteFillObject, opacity: 0.8 },
   gridLine: { position: "absolute", top: 0, bottom: 0, width: 1 },
-  scanPanelLeft: { position: "absolute", top: 22, left: 18, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 5, backgroundColor: "rgba(3,6,11,0.58)", borderWidth: 1, borderColor: palette.line },
-  scanText: { fontSize: 11, fontWeight: "900", letterSpacing: 1.4 },
-  scanPanelRight: { position: "absolute", top: 20, right: 16, alignItems: "center", gap: 4 },
-  scanSub: { color: palette.muted, fontSize: 9, fontWeight: "800" },
-  eagohBody: { position: "absolute", top: 56, alignSelf: "center", alignItems: "center", width: 280, height: 495 },
-  chamberRender: { width: 270, height: 405, borderRadius: 5, borderWidth: 1, overflow: "hidden", backgroundColor: "transparent", shadowOpacity: 0.5, shadowRadius: 22, shadowOffset: { width: 0, height: 0 } },
-  chamberEagohName: { marginTop: 14, fontSize: 22, fontWeight: "900", letterSpacing: 0.4 },
-  head: { width: 72, height: 80, borderRadius: 5, borderWidth: 2, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(244,250,255,0.08)" },
-  headText: { fontSize: 20, fontWeight: "900" },
-  shoulders: { width: 150, height: 38, borderTopLeftRadius: 5, borderTopRightRadius: 5, borderWidth: 1, marginTop: 8, backgroundColor: "rgba(244,250,255,0.08)" },
-  torso: { width: 112, height: 150, borderRadius: 5, marginTop: -3, borderWidth: 1, borderColor: "rgba(244,250,255,0.16)" },
-  armLeft: { position: "absolute", top: 110, left: 4, width: 30, height: 150, borderRadius: 5, transform: [{ rotate: "13deg" }], backgroundColor: "rgba(141,162,181,0.24)" },
-  armRight: { position: "absolute", top: 110, right: 4, width: 30, height: 150, borderRadius: 5, transform: [{ rotate: "-13deg" }], backgroundColor: "rgba(141,162,181,0.24)" },
-  legWrap: { flexDirection: "row", gap: 14, marginTop: 8 },
-  leg: { width: 36, height: 94, borderRadius: 5, backgroundColor: "rgba(141,162,181,0.22)" },
-  chamberFooter: { position: "absolute", left: 18, right: 18, bottom: 18, padding: 16, borderRadius: 5, borderWidth: 1, borderColor: palette.line, backgroundColor: "rgba(3,6,11,0.68)" },
-  chamberName: { color: palette.text, fontSize: 20, fontWeight: "900" },
-  chamberTheme: { color: palette.muted, marginTop: 5, lineHeight: 18 },
+  // Gallery
+  galleryContent: { alignItems: "center", justifyContent: "center", flexGrow: 1 },
+  galleryGrid: { alignItems: "center", justifyContent: "center", width: "100%", padding: 10 },
+  galleryEmptyIcon: { width: 48, height: 48, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.03)" },
+  galleryDomainDot: { width: 8, height: 8, borderRadius: 4 },
+  galleryEagohName: { color: palette.text, fontSize: 13, fontWeight: "900" },
+  galleryEagohDomain: { color: palette.muted, fontSize: 10, fontWeight: "700", marginTop: 1 },
+  galleryFooter: { position: "absolute", left: 14, right: 14, bottom: 10, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 5, backgroundColor: "rgba(3,6,11,0.72)", borderWidth: 1, borderColor: "rgba(54,245,255,0.14)" },
+  galleryCount: { color: palette.cyan, fontSize: 10, fontWeight: "900", letterSpacing: 1, textAlign: "center" },
+  // Stats
   statGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   statCard: { width: "48%", minHeight: 118, borderRadius: 5, padding: 14, backgroundColor: "rgba(16,27,42,0.76)", borderWidth: 1, borderColor: palette.line },
   statDot: { width: 9, height: 9, borderRadius: 9, marginBottom: 14 },
@@ -747,12 +524,9 @@ const styles = StyleSheet.create({
   statLabel: { color: palette.muted, marginTop: 3, fontWeight: "800" },
   statDetail: { color: palette.muted, fontSize: 11, marginTop: 8 },
   panel: { borderRadius: 5, padding: 16, backgroundColor: "rgba(10,18,30,0.78)", borderWidth: 1, borderColor: palette.line, gap: 12 },
-  walletPanel: { borderRadius: 5, padding: 16, backgroundColor: "rgba(10,18,30,0.84)", borderWidth: 1, borderColor: "rgba(255,184,77,0.28)", gap: 12, overflow: "hidden" },
-  subscriptionPanel: { borderRadius: 5, padding: 16, backgroundColor: "rgba(10,18,30,0.84)", borderWidth: 1, borderColor: "rgba(124,92,255,0.32)", gap: 12, overflow: "hidden" },
   sectionTitleWrap: { marginBottom: 4 },
   eyebrow: { color: palette.cyan, fontSize: 11, fontWeight: "900", letterSpacing: 1.8 },
   sectionTitle: { color: palette.text, fontSize: 22, fontWeight: "900", marginTop: 3 },
-  panelBody: { color: palette.muted, lineHeight: 20 },
   chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 9, borderRadius: 5, backgroundColor: palette.cyanSoft, borderWidth: 1, borderColor: "rgba(54,245,255,0.26)" },
   teamChip: { backgroundColor: palette.goldSoft, borderColor: "rgba(255,184,77,0.25)" },
@@ -762,69 +536,23 @@ const styles = StyleSheet.create({
   alignment: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 5, backgroundColor: "rgba(255,107,53,0.10)", borderWidth: 1, borderColor: "rgba(255,107,53,0.22)" },
   alignmentTitle: { color: palette.text, fontWeight: "900" },
   alignmentBody: { color: palette.muted, marginTop: 3, flexShrink: 1 },
-  walletHero: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16, borderRadius: 5, backgroundColor: "rgba(3,6,11,0.48)", borderWidth: 1, borderColor: "rgba(255,184,77,0.18)" },
-  walletLabel: { color: palette.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1.2 },
-  walletTotal: { color: palette.text, fontSize: 42, fontWeight: "900", letterSpacing: -1.5, marginTop: 2 },
-  walletOrb: { width: 88, height: 88, borderRadius: 5, alignItems: "center", justifyContent: "center", backgroundColor: palette.goldSoft, borderWidth: 1, borderColor: "rgba(255,184,77,0.42)" },
-  walletOrbText: { color: palette.gold, fontSize: 10, fontWeight: "900", marginTop: 4, letterSpacing: 1.2 },
-  balanceGrid: { flexDirection: "row", gap: 10 },
-  balanceCard: { flex: 1, minHeight: 142, padding: 13, borderRadius: 5, backgroundColor: "rgba(3,6,11,0.42)", borderWidth: 1, borderColor: palette.line },
-  balanceValue: { color: palette.text, fontSize: 24, fontWeight: "900", marginTop: 10 },
-  balanceLabel: { color: palette.text, fontWeight: "900", marginTop: 4, fontSize: 12 },
-  balanceRule: { color: palette.muted, fontSize: 11, lineHeight: 15, marginTop: 7 },
-  rolloverBox: { padding: 14, borderRadius: 5, backgroundColor: "rgba(255,184,77,0.10)", borderWidth: 1, borderColor: "rgba(255,184,77,0.25)" },
-  rolloverTop: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 },
-  rolloverTitle: { color: palette.text, fontWeight: "900", flex: 1 },
-  rolloverPct: { color: palette.gold, fontWeight: "900" },
-  rolloverBody: { color: palette.muted, fontSize: 12, lineHeight: 17, marginTop: 8 },
-  multiplierRow: { flexDirection: "row", gap: 8 },
-  multiplierCard: { flex: 1, padding: 10, borderRadius: 5, backgroundColor: "rgba(3,6,11,0.36)", borderWidth: 1, borderColor: palette.line, minHeight: 128 },
-  multiplierActive: { borderColor: "rgba(255,184,77,0.42)", backgroundColor: "rgba(255,184,77,0.12)" },
-  multiplierName: { color: palette.text, fontSize: 11, fontWeight: "900", marginTop: 8 },
-  multiplierValue: { fontSize: 20, fontWeight: "900", marginTop: 4 },
-  multiplierDetail: { color: palette.muted, fontSize: 10, lineHeight: 14, marginTop: 6 },
-  analyticsHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 2 },
-  analyticsTitle: { color: palette.text, fontWeight: "900" },
-  usageCard: { padding: 12, borderRadius: 17, backgroundColor: "rgba(16,27,42,0.58)", borderWidth: 1, borderColor: palette.line },
-  usageHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
-  usageLabel: { color: palette.text, fontWeight: "900", flex: 1 },
-  usageValue: { fontWeight: "900" },
-  progressTrack: { height: 7, borderRadius: 5, backgroundColor: "rgba(141,162,181,0.16)", overflow: "hidden", marginTop: 10 },
-  progressFill: { height: "100%", borderRadius: 5 },
-  usageDetail: { color: palette.muted, fontSize: 11, marginTop: 7 },
-  subscriptionCard: { height: 420, borderRadius: 5, padding: 14, backgroundColor: "rgba(3,6,11,0.48)", borderWidth: 1, borderColor: palette.line, overflow: "hidden", gap: 12, justifyContent: "space-between" as const },
-  planHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
-  planIcon: { width: 40, height: 40, borderRadius: 5, alignItems: "center", justifyContent: "center", borderWidth: 1 },
-  planTitleBlock: { flex: 1 },
-  planName: { color: palette.text, fontSize: 18, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.8 },
-  planLabel: { color: palette.muted, fontSize: 12, marginTop: 2, fontWeight: "700" },
-  featuredPill: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 5, backgroundColor: palette.goldSoft, borderWidth: 1, borderColor: "rgba(255,184,77,0.32)" },
-  featuredText: { color: palette.gold, fontSize: 9, fontWeight: "900", letterSpacing: 0.8 },
-  edgeAmountRow: { flexDirection: "row", alignItems: "baseline", gap: 8 },
-  edgeAmount: { fontSize: 34, fontWeight: "900", letterSpacing: -1 },
-  edgeAmountLabel: { color: palette.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
-  planMetricGrid: { flexDirection: "row", gap: 8 },
-  planMetric: { flex: 1, padding: 11, paddingVertical: 12, borderRadius: 5, backgroundColor: "rgba(16,27,42,0.62)", borderWidth: 1, borderColor: palette.line, alignItems: "center", gap: 6 },
-  planMetricValue: { color: palette.text, fontWeight: "900", fontSize: 13, textAlign: "center", marginTop: 2 },
-  planMetricLabel: { color: palette.muted, fontSize: 10, fontWeight: "900", textTransform: "uppercase", marginTop: 0 },
-  planBullets: { gap: 8, paddingTop: 2 },
-  planBullet: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
-  planBulletDot: { color: palette.muted, fontSize: 12, lineHeight: 18, fontWeight: "900" },
-  planBulletText: { color: palette.text, fontSize: 12, lineHeight: 18, flex: 1, flexShrink: 1 },
-  planBulletBold: { fontWeight: "900" },
-  edgeBalance: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 5, backgroundColor: palette.goldSoft, borderWidth: 1, borderColor: "rgba(255,184,77,0.24)" },
-  edgeValue: { color: palette.text, fontSize: 19, fontWeight: "900" },
-  edgeHint: { color: palette.muted, marginTop: 3, fontSize: 12 },
-  activityRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 },
-  activityText: { color: palette.text, flex: 1 },
-  labCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 12, borderRadius: 5, borderWidth: 1, borderColor: palette.line, backgroundColor: "rgba(3,6,11,0.38)" },
-  labThumb: { width: 58, height: 58, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  labInfo: { flex: 1 },
-  labName: { color: palette.text, fontWeight: "900", fontSize: 15 },
-  labTheme: { color: palette.muted, fontSize: 12, lineHeight: 16, marginTop: 3 },
-  labMetaRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 7 },
-  labCost: { fontWeight: "900", fontSize: 12 },
-  selectedText: { fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  // Settings
+  settingsCard: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 5, padding: 16, backgroundColor: "rgba(14,24,37,0.64)", borderWidth: 1, borderColor: "rgba(120,180,255,0.24)", marginBottom: 8 },
+  featureCard: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 5, padding: 13, backgroundColor: "rgba(14,24,37,0.64)", borderWidth: 1, borderColor: palette.line, marginBottom: 8 },
+  featureIconWrap: { width: 42, height: 42, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.035)" },
+  featureInfo: { flex: 1 },
+  featureTitle: { color: palette.text, fontSize: 13, fontWeight: "900" },
+  featureDesc: { color: palette.muted, fontSize: 11, lineHeight: 16, marginTop: 3 },
+  signOutButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12, marginTop: 14, borderRadius: 5, borderWidth: 1, borderColor: "rgba(255,107,53,0.32)", backgroundColor: "rgba(255,107,53,0.08)" },
+  signOutText: { color: palette.ember, fontWeight: "900", fontSize: 13, letterSpacing: 1.2 },
+  // Domain breakdown
+  domainPanel: { borderRadius: 5, padding: 14, marginTop: 14, backgroundColor: "rgba(10,18,30,0.82)", borderWidth: 1, borderColor: "rgba(54,245,255,0.18)", gap: 10 },
+  domainGrid: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: 8 },
+  domainChip: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 5, borderWidth: 1 },
+  domainDot: { width: 8, height: 8, borderRadius: 4 },
+  domainChipLabel: { fontSize: 11, fontWeight: "900" as const },
+  domainChipCount: { color: palette.muted, fontSize: 10, fontWeight: "800" as const, marginLeft: 2 },
+  // Reputation
   reputationPanel: { borderRadius: 5, padding: 14, marginTop: 14, backgroundColor: "rgba(10,18,30,0.82)", borderWidth: 1, borderColor: "rgba(255,184,77,0.20)", gap: 10 },
   repGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   repMetricCard: { width: "48%", padding: 10, borderRadius: 5, backgroundColor: "rgba(16,27,42,0.64)", borderWidth: 1, borderColor: palette.line },
@@ -844,30 +572,6 @@ const styles = StyleSheet.create({
   badgeInfo: { flex: 1 },
   badgeName: { color: palette.gold, fontSize: 13, fontWeight: "900" as const },
   badgeDesc: { color: palette.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
-  signOutButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12, borderRadius: 5, borderWidth: 1, borderColor: "rgba(255,107,53,0.32)", backgroundColor: "rgba(255,107,53,0.08)" },
-  // Domain breakdown
-  domainPanel: { borderRadius: 5, padding: 14, marginTop: 14, backgroundColor: "rgba(10,18,30,0.82)", borderWidth: 1, borderColor: "rgba(54,245,255,0.18)", gap: 10 },
-  domainGrid: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: 8 },
-  domainChip: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 5, borderWidth: 1 },
-  domainDot: { width: 8, height: 8, borderRadius: 4 },
-  domainChipLabel: { fontSize: 11, fontWeight: "900" as const },
-  domainChipCount: { color: palette.muted, fontSize: 10, fontWeight: "800" as const, marginLeft: 2 },
-  signOutText: { color: palette.ember, fontWeight: "900", fontSize: 13, letterSpacing: 1.2 },
-  // Lab carousel
-  labCarouselWrap: { marginTop: 20, paddingVertical: 24, borderTopWidth: 1, borderBottomWidth: 1, borderColor: "rgba(54,245,255,0.12)" },
-  labCarouselHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 14, paddingHorizontal: 2 },
-  labCarouselEyebrow: { color: palette.cyan, fontSize: 11, fontWeight: "900", letterSpacing: 1.8 },
-  labCarouselContent: { paddingHorizontal: 2, gap: 12 },
-  labCarouselCard: { width: 200, minHeight: 140, borderRadius: 5, padding: 14, borderWidth: 1, backgroundColor: "rgba(3,6,11,0.48)", overflow: "hidden", justifyContent: "space-between" },
-  labCarouselThumb: { width: 48, height: 48, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", overflow: "hidden", marginBottom: 10 },
-  labCarouselName: { color: palette.text, fontWeight: "900", fontSize: 13, marginBottom: 4 },
-  labCarouselMeta: { flexDirection: "row", alignItems: "center", gap: 5 },
-  labCarouselCost: { fontWeight: "900", fontSize: 11 },
-  labCarouselActive: { position: "absolute", top: 8, right: 8, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 5, borderWidth: 1 },
-  labCarouselActiveText: { fontSize: 8, fontWeight: "900", letterSpacing: 0.8 },
-  // Subscription carousel
-  subCarouselContent: { gap: 14, paddingHorizontal: 2 },
-  subCarouselCard: { width: 304 },
   // Rankings
   rankingsSection: { marginTop: 8, paddingTop: 10, borderTopWidth: 1, borderTopColor: palette.line },
   rankingsList: { gap: 6 },
@@ -884,13 +588,6 @@ const styles = StyleSheet.create({
   rankChangeRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8, paddingVertical: 6 },
   rankChangeText: { color: palette.text, fontSize: 12, fontWeight: "700" as const, flex: 1 },
   rankChangeDate: { color: palette.muted, fontSize: 10 },
-  featureCard: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 5, padding: 13, backgroundColor: "rgba(14,24,37,0.64)", borderWidth: 1, borderColor: palette.line, marginBottom: 8 },
-  featureIconWrap: { width: 42, height: 42, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.035)" },
-  featureInfo: { flex: 1 },
-  featureTitle: { color: palette.text, fontSize: 13, fontWeight: "900" },
-  featureDesc: { color: palette.muted, fontSize: 11, lineHeight: 16, marginTop: 3 },
-  // Settings
-  settingsCard: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 5, padding: 16, backgroundColor: "rgba(14,24,37,0.64)", borderWidth: 1, borderColor: "rgba(120,180,255,0.24)", marginBottom: 8 },
   // Subscription Test Mode
   testPanel: { borderRadius: 5, padding: 14, backgroundColor: "rgba(10,18,30,0.88)", borderWidth: 1, borderColor: "rgba(255,77,109,0.28)", gap: 12, overflow: "hidden" as const },
   testBanner: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },

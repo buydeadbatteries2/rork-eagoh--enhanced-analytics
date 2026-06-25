@@ -57,12 +57,14 @@ import {
   Shirt,
   SlidersHorizontal,
   Sparkles,
+  Trash2,
   X,
   Zap,
 } from "lucide-react-native";
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Keyboard,
   KeyboardAvoidingView,
@@ -326,7 +328,7 @@ export default function ForgeScreen(): JSX.Element {
   const { profile } = useProfile();
   const { total: edgeTotal } = useEdge();
   const { pending, prepareForge, confirmForge, cancelForge, isGenerating } = useForge();
-  const { eagohs, remaining, canCreate, tier } = useEagohs();
+  const { eagohs, remaining, canCreate, tier, deleteEagoh, isDeleting } = useEagohs();
   const { height: windowHeight } = useWindowDimensions();
 
   const [name, setName] = useState<string>("");
@@ -1755,26 +1757,54 @@ export default function ForgeScreen(): JSX.Element {
                   const domainObj = INTELLIGENCE_DOMAINS.find((d) => d.id === eagoh.domain);
                   const dt = domainObj ? toneColor(domainObj.tone) : palette.muted;
                   const isSelected = selectedEagohId === eagoh.id;
+                  const handleDelete = (): void => {
+                    Alert.alert(
+                      "Delete EAGOH",
+                      `Permanently delete "${eagoh.name || "Unnamed"}"? This action cannot be undone.`,
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        {
+                          text: "Delete",
+                          style: "destructive",
+                          onPress: () => {
+                            deleteEagoh(eagoh.id).catch((err) => console.warn("[forge] deleteEagoh failed", err));
+                          },
+                        },
+                      ],
+                    );
+                  };
                   return (
-                    <Pressable
-                      key={eagoh.id}
-                      onPress={(): void => {
-                        setSelectedEagohId(eagoh.id);
-                        setShowPicker(false);
-                      }}
-                      style={({ pressed }) => [
-                        styles.pickerItem,
-                        isSelected && styles.pickerItemActive,
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      <View style={[styles.pickerDot, { backgroundColor: dt }]} />
-                      <View style={styles.pickerItemInfo}>
-                        <Text style={styles.pickerItemName}>{eagoh.name || "Unnamed"}</Text>
-                        <Text style={styles.pickerItemDomain}>{domainObj?.label ?? eagoh.domain ?? "No domain"}</Text>
-                      </View>
-                      {isSelected ? <Check color={palette.cyan} size={16} /> : null}
-                    </Pressable>
+                    <View key={eagoh.id} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                      <Pressable
+                        onPress={(): void => {
+                          setSelectedEagohId(eagoh.id);
+                          setShowPicker(false);
+                        }}
+                        style={({ pressed }) => [
+                          styles.pickerItem,
+                          { flex: 1, marginBottom: 0 },
+                          isSelected && styles.pickerItemActive,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <View style={[styles.pickerDot, { backgroundColor: dt }]} />
+                        <View style={styles.pickerItemInfo}>
+                          <Text style={styles.pickerItemName}>{eagoh.name || "Unnamed"}</Text>
+                          <Text style={styles.pickerItemDomain}>{domainObj?.label ?? eagoh.domain ?? "No domain"}</Text>
+                        </View>
+                        {isSelected ? <Check color={palette.cyan} size={16} /> : null}
+                      </Pressable>
+                      <Pressable
+                        onPress={handleDelete}
+                        disabled={isDeleting}
+                        style={({ pressed }) => [
+                          styles.deleteEagohBtn,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <Trash2 color={palette.ember} size={14} />
+                      </Pressable>
+                    </View>
                   );
                 })}
               </>
@@ -2382,4 +2412,17 @@ const styles = StyleSheet.create({
   reforgeCostValueRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   reforgeCostValueGold: { color: palette.gold, fontSize: 16, fontWeight: "900" },
   reforgeNoChanges: { color: palette.success, fontSize: 11, fontWeight: "700", textAlign: "center" },
+
+  // ── Delete EAGOH button in picker ───────────────────────────────
+  deleteEagohBtn: {
+    width: 36,
+    height: 46,
+    borderRadius: 5,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(234,88,12,0.18)",
+    backgroundColor: "rgba(234,88,12,0.06)",
+    marginBottom: 2,
+  },
 });

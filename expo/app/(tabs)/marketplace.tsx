@@ -29,8 +29,12 @@ import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   FlatList,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -525,6 +529,8 @@ function PurchaseModal({
 
 // ── Create Listing Modal ───────────────────────────────────────────────
 
+const SCREEN_HEIGHT = Dimensions.get("window").height;
+
 function CreateListingModal({
   visible,
   onClose,
@@ -555,6 +561,7 @@ function CreateListingModal({
   };
 
   const handleCreate = async () => {
+    Keyboard.dismiss();
     if (!user?.id || !selectedEagohId) return;
     try {
       await createListing({
@@ -579,85 +586,99 @@ function CreateListingModal({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalSheet}>
+      <Pressable style={styles.modalOverlay} onPress={Keyboard.dismiss}>
+        <Pressable style={[styles.modalSheet, styles.modalSheetCreate]} onPress={() => {}}>
           <LinearGradient colors={["#0A1628", "#050D18"]} style={StyleSheet.absoluteFill} />
           <View style={styles.modalHandle} />
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Create Listing</Text>
-            <Pressable onPress={() => { reset(); onClose(); }} style={styles.modalClose}>
+            <Pressable onPress={() => { Keyboard.dismiss(); reset(); onClose(); }} style={styles.modalClose}>
               <X color={palette.muted} size={20} />
             </Pressable>
           </View>
 
-          <Text style={styles.modalSectionLabel}>Select EAGOH</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRail}>
-            {myEagohs.map((e: EagohRecord) => (
-              <Pressable
-                key={e.id}
-                onPress={() => setSelectedEagohId(e.id)}
-                style={[styles.chip, selectedEagohId === e.id && styles.activeChip]}
-              >
-                <Text style={[styles.chipText, selectedEagohId === e.id && styles.activeChipText]}>{e.name}</Text>
-              </Pressable>
-            ))}
-            {myEagohs.length === 0 && (
-              <Text style={styles.emptyHint}>No EAGOHs available. Forge one first.</Text>
-            )}
-          </ScrollView>
-
-          <Text style={styles.modalSectionLabel}>Price Per Day (EC)</Text>
-          <View style={styles.priceGrid}>
-            <View style={styles.priceInputWrap}>
-              <Text style={styles.priceInputLabel}>25% Sync</Text>
-              <TextInput value={price25} onChangeText={setPrice25} keyboardType="numeric" placeholder="0" placeholderTextColor={palette.muted} style={styles.priceInput} />
-            </View>
-            <View style={styles.priceInputWrap}>
-              <Text style={styles.priceInputLabel}>50% Sync</Text>
-              <TextInput value={price50} onChangeText={setPrice50} keyboardType="numeric" placeholder="0" placeholderTextColor={palette.muted} style={styles.priceInput} />
-            </View>
-            <View style={styles.priceInputWrap}>
-              <Text style={styles.priceInputLabel}>75% Sync</Text>
-              <TextInput value={price75} onChangeText={setPrice75} keyboardType="numeric" placeholder="0" placeholderTextColor={palette.muted} style={styles.priceInput} />
-            </View>
-            <View style={styles.priceInputWrap}>
-              <Text style={styles.priceInputLabel}>100% Sync</Text>
-              <TextInput value={price100} onChangeText={setPrice100} keyboardType="numeric" placeholder="0" placeholderTextColor={palette.muted} style={styles.priceInput} />
-            </View>
-          </View>
-
-          <Text style={styles.modalSectionLabel}>Description (optional)</Text>
-          <TextInput
-            value={description}
-            onChangeText={setDescription}
-            placeholder="Brief description of what buyers get..."
-            placeholderTextColor={palette.muted}
-            multiline
-            numberOfLines={3}
-            style={styles.descriptionInput}
-          />
-
-          <Pressable
-            onPress={handleCreate}
-            disabled={creating || !selectedEagohId}
-            style={({ pressed }) => [
-              styles.confirmButton,
-              (creating || !selectedEagohId) && styles.confirmButtonDisabled,
-              pressed && styles.pressed,
-              { marginTop: 16 },
-            ]}
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            style={{ flex: 1 }}
           >
-            {creating ? (
-              <ActivityIndicator color={palette.void} size="small" />
-            ) : (
-              <>
-                <PlusCircle color={palette.void} size={17} />
-                <Text style={styles.confirmButtonText}>Publish Listing</Text>
-              </>
-            )}
-          </Pressable>
-        </View>
-      </View>
+            <ScrollView
+              contentContainerStyle={styles.createModalScroll}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+            >
+              <Text style={styles.modalSectionLabel}>Select EAGOH</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRail}>
+                {myEagohs.map((e: EagohRecord) => (
+                  <Pressable
+                    key={e.id}
+                    onPress={() => setSelectedEagohId(e.id)}
+                    style={[styles.chip, selectedEagohId === e.id && styles.activeChip]}
+                  >
+                    <Text style={[styles.chipText, selectedEagohId === e.id && styles.activeChipText]}>{e.name}</Text>
+                  </Pressable>
+                ))}
+                {myEagohs.length === 0 && (
+                  <Text style={styles.emptyHint}>No EAGOHs available. Forge one first.</Text>
+                )}
+              </ScrollView>
+
+              <Text style={styles.modalSectionLabel}>Price Per Day (EC)</Text>
+              <View style={styles.priceGrid}>
+                <View style={styles.priceInputWrap}>
+                  <Text style={styles.priceInputLabel}>25% Sync</Text>
+                  <TextInput value={price25} onChangeText={setPrice25} keyboardType="numeric" placeholder="0" placeholderTextColor={palette.muted} style={styles.priceInput} returnKeyType="done" />
+                </View>
+                <View style={styles.priceInputWrap}>
+                  <Text style={styles.priceInputLabel}>50% Sync</Text>
+                  <TextInput value={price50} onChangeText={setPrice50} keyboardType="numeric" placeholder="0" placeholderTextColor={palette.muted} style={styles.priceInput} returnKeyType="done" />
+                </View>
+                <View style={styles.priceInputWrap}>
+                  <Text style={styles.priceInputLabel}>75% Sync</Text>
+                  <TextInput value={price75} onChangeText={setPrice75} keyboardType="numeric" placeholder="0" placeholderTextColor={palette.muted} style={styles.priceInput} returnKeyType="done" />
+                </View>
+                <View style={styles.priceInputWrap}>
+                  <Text style={styles.priceInputLabel}>100% Sync</Text>
+                  <TextInput value={price100} onChangeText={setPrice100} keyboardType="numeric" placeholder="0" placeholderTextColor={palette.muted} style={styles.priceInput} returnKeyType="done" />
+                </View>
+              </View>
+
+              <Text style={styles.modalSectionLabel}>Description (optional)</Text>
+              <TextInput
+                value={description}
+                onChangeText={setDescription}
+                placeholder="Brief description of what buyers get..."
+                placeholderTextColor={palette.muted}
+                multiline
+                numberOfLines={3}
+                style={styles.descriptionInput}
+                returnKeyType="done"
+                blurOnSubmit
+              />
+
+              <Pressable
+                onPress={handleCreate}
+                disabled={creating || !selectedEagohId}
+                style={({ pressed }) => [
+                  styles.confirmButton,
+                  (creating || !selectedEagohId) && styles.confirmButtonDisabled,
+                  pressed && styles.pressed,
+                  { marginTop: 16 },
+                ]}
+              >
+                {creating ? (
+                  <ActivityIndicator color={palette.void} size="small" />
+                ) : (
+                  <>
+                    <PlusCircle color={palette.void} size={17} />
+                    <Text style={styles.confirmButtonText}>Publish Listing</Text>
+                  </>
+                )}
+              </Pressable>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -1573,6 +1594,12 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     padding: 18,
   },
+  modalSheetCreate: {
+    maxHeight: SCREEN_HEIGHT * 0.75,
+    height: SCREEN_HEIGHT * 0.75,
+    flexShrink: 0,
+  },
+  createModalScroll: { paddingBottom: 24 },
   modalHandle: {
     width: 36,
     height: 4,

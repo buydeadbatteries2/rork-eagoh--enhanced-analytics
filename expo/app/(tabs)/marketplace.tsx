@@ -1352,7 +1352,7 @@ const styles = StyleSheet.create({
   activeChipText: { color: palette.void },
 
   // Tabs
-  tabRail: { gap: 8, paddingRight: 8, marginTop: -4 },
+  tabRail: { gap: 8, paddingRight: 8, paddingTop: 16, paddingBottom: 16 },
   tabChip: {
     borderWidth: 1,
     borderColor: palette.line,

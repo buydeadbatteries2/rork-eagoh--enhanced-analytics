@@ -31,6 +31,7 @@ import type { EagohDraft } from "@/services/eagohs";
 import * as Haptics from "expo-haptics";
 import TeamSelector from "@/app/components/TeamSelector";
 import { getTeamById, getSportCanonical } from "@/data/teams";
+import { MUSIC_GENRES, MUSIC_ROLES, getMusicGenre, getMusicRole } from "@/data/music";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   AlertTriangle,
@@ -87,6 +88,8 @@ type WizardStepId =
   | "dna"
   | "sport"
   | "teams"
+  | "music_genre"
+  | "music_role"
   | "lab";
 
 type WizardStep = {
@@ -312,6 +315,8 @@ export default function ForgeScreen(): JSX.Element {
   const [proTeamFocusName, setProTeamFocusName] = useState<string>("");
   const [collegeTeamFocusId, setCollegeTeamFocusId] = useState<string>("");
   const [collegeTeamFocusName, setCollegeTeamFocusName] = useState<string>("");
+  const [musicGenre, setMusicGenre] = useState<string>("");
+  const [musicRole, setMusicRole] = useState<string>("");
   const [appearance, setAppearance] = useState<Record<string, string>>({});
   const [cyberneticIntensity, setCyberneticIntensity] = useState<string>("moderate");
   const [pose, setPose] = useState<string>("calm-sentinel");
@@ -354,6 +359,8 @@ export default function ForgeScreen(): JSX.Element {
     setProTeamFocusName(editingEagoh.pro_team_focus_name ?? "");
     setCollegeTeamFocusId(editingEagoh.college_team_focus_id ?? "");
     setCollegeTeamFocusName(editingEagoh.college_team_focus_name ?? "");
+    setMusicGenre(editingEagoh.music_genre ?? "");
+    setMusicRole(editingEagoh.music_role ?? "");
     setAppearance(editingEagoh.appearance ?? {});
     setCyberneticIntensity(editingEagoh.cybernetic_intensity ?? "moderate");
     setPose(editingEagoh.pose ?? "calm-sentinel");
@@ -390,6 +397,7 @@ export default function ForgeScreen(): JSX.Element {
   const forgeCost = getForgeCost(isEditing ? "full_reforge" : "initial");
   const domainLabel = INTELLIGENCE_DOMAINS.find((d) => d.id === domain)?.label ?? domain;
   const isSportsDomain = domain === "sports";
+  const isMusicDomain = domain === "music";
 
   const wizardSteps: WizardStep[] = useMemo(() => {
     const base: WizardStep[] = [
@@ -412,7 +420,12 @@ export default function ForgeScreen(): JSX.Element {
       base.push({ id: "teams", title: "Team / College Focus", eyebrow: "Step 14", hint: "Search and select real pro or college teams as canonical references for filtering and rankings.", icon: <Heart color={palette.ember} size={15} /> });
     }
 
-    base.push({ id: "lab", title: "Forge Lab", eyebrow: isSportsDomain ? "Step 15" : "Step 13", hint: "Select the lab environment for this EAGOH.", icon: <Cpu color={palette.cyan} size={15} /> });
+    if (isMusicDomain) {
+      base.push({ id: "music_genre", title: "Music Genre", eyebrow: "Step 13", hint: "Select the primary genre this EAGOH specializes in.", icon: <Zap color={palette.violet} size={15} /> });
+      base.push({ id: "music_role", title: "Music Role", eyebrow: "Step 14", hint: "Choose the role or perspective this EAGOH embodies in the music industry.", icon: <Sparkles color={palette.violet} size={15} /> });
+    }
+
+    base.push({ id: "lab", title: "Forge Lab", eyebrow: (isSportsDomain || isMusicDomain) ? "Step 15" : "Step 13", hint: "Select the lab environment for this EAGOH.", icon: <Cpu color={palette.cyan} size={15} /> });
     return base;
   }, [isSportsDomain]);
 
@@ -434,11 +447,13 @@ export default function ForgeScreen(): JSX.Element {
     proTeamFocusName,
     collegeTeamFocusId,
     collegeTeamFocusName,
+    musicGenre,
+    musicRole,
     appearance,
     cyberneticIntensity,
     pose,
     lab,
-  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, teamFocusMode, proTeamFocusId, proTeamFocusName, collegeTeamFocusId, collegeTeamFocusName, appearance, cyberneticIntensity, pose, lab]);
+  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, teamFocusMode, proTeamFocusId, proTeamFocusName, collegeTeamFocusId, collegeTeamFocusName, musicGenre, musicRole, appearance, cyberneticIntensity, pose, lab]);
 
   /** Dynamic reforge cost when editing — compares current form vs EAGOH's saved state. */
   const reforgeCost = useMemo(() => {
@@ -447,14 +462,18 @@ export default function ForgeScreen(): JSX.Element {
       appearance: editingEagoh.appearance,
       styleNotes: editingEagoh.style_notes ?? "",
       pose: editingEagoh.pose ?? "",
+      musicGenre: editingEagoh.music_genre ?? "",
+      musicRole: editingEagoh.music_role ?? "",
     };
     const newState = {
       appearance,
       styleNotes,
       pose,
+      musicGenre,
+      musicRole,
     };
     return calculateReforgeCost(oldState, newState);
-  }, [isEditing, editingEagoh, appearance, styleNotes, pose]);
+  }, [isEditing, editingEagoh, appearance, styleNotes, pose, musicGenre, musicRole]);
 
   const setAppearanceField = useCallback((category: string, text: string): void => {
     setAppearance((prev) => ({ ...prev, [category]: text }));
@@ -837,6 +856,38 @@ export default function ForgeScreen(): JSX.Element {
       );
     }
 
+    if (currentStep.id === "music_genre") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Select the primary music genre this EAGOH specializes in. This is used for filtering, Marketplace searches, and genre-specific intelligence.</Text>
+          {MUSIC_GENRES.map((g) => (
+            <OptionChip
+              key={g.id}
+              option={{ id: g.id, label: g.label, tone: "violet" }}
+              selected={musicGenre === g.id}
+              onPress={setMusicGenre}
+            />
+          ))}
+        </>
+      );
+    }
+
+    if (currentStep.id === "music_role") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Choose the role or perspective this EAGOH embodies in the music industry. This shapes its analysis style and marketplace discoverability.</Text>
+          {MUSIC_ROLES.map((r) => (
+            <OptionChip
+              key={r.id}
+              option={{ id: r.id, label: r.label, tone: "violet" }}
+              selected={musicRole === r.id}
+              onPress={setMusicRole}
+            />
+          ))}
+        </>
+      );
+    }
+
     if (currentStep.id === "teams") {
       const sportCanonical = getSportCanonical(sport);
       const hasTeams = sportCanonical !== undefined;
@@ -980,6 +1031,10 @@ export default function ForgeScreen(): JSX.Element {
     teams,
     toggleDna,
     toggleTeams,
+    musicGenre,
+    musicRole,
+    setMusicGenre,
+    setMusicRole,
   ]);
 
   const previewHeight = Math.min(windowHeight * 0.27, 248);

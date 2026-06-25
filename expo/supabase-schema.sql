@@ -100,6 +100,8 @@ alter table public.eagohs add column if not exists pro_team_focus_id text;
 alter table public.eagohs add column if not exists pro_team_focus_name text;
 alter table public.eagohs add column if not exists college_team_focus_id text;
 alter table public.eagohs add column if not exists college_team_focus_name text;
+alter table public.eagohs add column if not exists music_genre text;
+alter table public.eagohs add column if not exists music_role text;
 
 create index if not exists eagohs_user_id_idx on public.eagohs(user_id);
 

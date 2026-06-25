@@ -92,6 +92,9 @@ export type ListingFilters = {
   /** Filter to Generalist EAGOHs (team_focus_mode = "none"). */
   generalist?: boolean;
   dna?: string;
+  /** Music domain filters (canonical IDs). */
+  musicGenre?: string;
+  musicRole?: string;
   syncLevel?: SyncLevel;
   maxPrice?: number;
   minPrice?: number;
@@ -349,6 +352,12 @@ export async function listActiveListings(
   if (filters.generalist) {
     result = result.filter((l) => (l.eagoh?.team_focus_mode ?? "none") === "none");
   }
+  if (filters.musicGenre) {
+    result = result.filter((l) => l.eagoh?.music_genre === filters.musicGenre);
+  }
+  if (filters.musicRole) {
+    result = result.filter((l) => l.eagoh?.music_role === filters.musicRole);
+  }
   if (filters.team) {
     const teamQuery = filters.team!.toLowerCase();
     result = result.filter((l) => {
@@ -383,6 +392,8 @@ export async function listActiveListings(
         l.description,
         l.eagoh?.pro_team_focus_name,
         l.eagoh?.college_team_focus_name,
+        l.eagoh?.music_genre,
+        l.eagoh?.music_role,
         ...l.fanatic_teams,
       ].filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(q);

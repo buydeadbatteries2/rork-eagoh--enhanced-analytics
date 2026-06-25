@@ -38,6 +38,8 @@ export type EagohRecord = {
   pro_team_focus_name: string | null;
   college_team_focus_id: string | null;
   college_team_focus_name: string | null;
+  music_genre: string | null;
+  music_role: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -73,6 +75,9 @@ export type EagohDraft = {
   proTeamFocusName: string;
   collegeTeamFocusId: string;
   collegeTeamFocusName: string;
+  /** Music domain specialization. */
+  musicGenre: string;
+  musicRole: string;
   appearance: Record<string, string>;
   cyberneticIntensity: string;
   pose: string;
@@ -95,7 +100,7 @@ export function getEagohLimit(tier: SubscriptionTier): number {
 export async function listEagohs(userId: string): Promise<EagohRecord[]> {
   const { data, error } = await supabase
     .from("eagohs")
-    .select("id,user_id,name,sport,gender,domain,body_type,style_notes,cybernetic_intensity,pose,lab,dna,image_url,image_thumb_url,image_prompt,image_generated_at,last_name_change,team_focus_mode,pro_team_focus_id,pro_team_focus_name,college_team_focus_id,college_team_focus_name,created_at,updated_at")
+    .select("id,user_id,name,sport,gender,domain,body_type,style_notes,cybernetic_intensity,pose,lab,dna,image_url,image_thumb_url,image_prompt,image_generated_at,last_name_change,team_focus_mode,pro_team_focus_id,pro_team_focus_name,college_team_focus_id,college_team_focus_name,music_genre,music_role,created_at,updated_at")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -165,6 +170,8 @@ export async function createEagoh(
     pro_team_focus_name: draft.proTeamFocusName || null,
     college_team_focus_id: draft.collegeTeamFocusId || null,
     college_team_focus_name: draft.collegeTeamFocusName || null,
+    music_genre: draft.musicGenre || null,
+    music_role: draft.musicRole || null,
   };
 
   const { data: created, error } = await supabase

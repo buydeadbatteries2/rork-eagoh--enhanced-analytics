@@ -4,7 +4,7 @@ import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
-import { Activity, Award, BadgeCheck, BarChart3, BrainCircuit, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Shield, Sparkles, Swords, TrendingUp, Trophy, Wrench, WalletCards, Zap } from "lucide-react-native";
+import { Activity, Award, BadgeCheck, BarChart3, BrainCircuit, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Shield, Sparkles, Swords, TrendingUp, Trophy, Wrench, WalletCards, Zap, Users, Globe } from "lucide-react-native";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -96,10 +96,10 @@ const multipliers: MultiplierTier[] = [
   { name: "Syndicate", value: "1.5x", detail: "Elite faction economy", active: false, tone: "violet" },
 ];
 const subscriptionPlans: SubscriptionPlan[] = [
-  { name: "Free", label: "Dormant access", edge: "0", eagohLimit: "1 dormant EAGOH", teamLimit: "No Fanatic Team binding", efficiency: "—", marketplace: "Browse-only marketplace", labs: "Dormant lab preview", sync: "Manual Quick Check previews", tone: "cyan", featured: false },
-  { name: "Pro", label: "Active analyst", edge: "600", eagohLimit: "2 EAGOHs", teamLimit: "1 Fanatic Team per EAGOH", efficiency: "1.0x", marketplace: "Standard vendor visibility", labs: "Core labs unlocked", sync: "25% and 50% sync access", tone: "cyan", featured: false },
-  { name: "Oracle Elite", label: "Premium prediction layer", edge: "1,400", eagohLimit: "3 EAGOHs", teamLimit: "2 Fanatic Teams per EAGOH", efficiency: "1.2x", marketplace: "Boosted vendor confidence reads", labs: "Advanced Oracle lab access", sync: "25% · 50% · 75% sync access", tone: "gold", featured: true },
-  { name: "Syndicate", label: "Faction command tier", edge: "3,700", eagohLimit: "5 EAGOHs", teamLimit: "3 Fanatic Teams per EAGOH", efficiency: "1.5x", marketplace: "Priority exchange positioning", labs: "Syndicate labs and elite chambers", sync: "Full 25% to 100% sync access", tone: "violet", featured: false },
+  { name: "Free", label: "Dormant access", edge: "0", eagohLimit: "1 dormant EAGOH", teamLimit: "No Fanatic Team", efficiency: "—", marketplace: "Browse-only", labs: "Dormant lab preview", sync: "Manual Quick Checks", tone: "cyan", featured: false },
+  { name: "Pro", label: "Active analyst", edge: "600", eagohLimit: "2 EAGOHs", teamLimit: "1 Fanatic Team", efficiency: "1.0x", marketplace: "Standard visibility", labs: "Core labs unlocked", sync: "25% · 50% sync", tone: "cyan", featured: false },
+  { name: "Oracle Elite", label: "Premium prediction layer", edge: "1,400", eagohLimit: "3 EAGOHs", teamLimit: "2 Fanatic Teams", efficiency: "1.2x", marketplace: "Boosted vendor reads", labs: "Advanced Oracle labs", sync: "25% · 50% · 75% sync", tone: "gold", featured: true },
+  { name: "Syndicate", label: "Faction command tier", edge: "3,700", eagohLimit: "5 EAGOHs", teamLimit: "3 Fanatic Teams", efficiency: "1.5x", marketplace: "Priority exchange", labs: "All labs + elite chambers", sync: "Full 25%–100% sync", tone: "violet", featured: false },
 ];
 
 function toneColor(tone: LabTone): string {
@@ -189,26 +189,63 @@ const UsageCard = memo(function UsageCard({ item }: { item: UsageMetric }): JSX.
   );
 });
 
+function planIcon(plan: SubscriptionPlan, accent: string): JSX.Element {
+  const size = 22;
+  switch (plan.name) {
+    case "Free": return <Lock color={accent} size={size} />;
+    case "Pro": return <TrendingUp color={accent} size={size} />;
+    case "Oracle Elite": return <Crown color={accent} size={size} />;
+    case "Syndicate": return <Shield color={accent} size={size} />;
+    default: return <Zap color={accent} size={size} />;
+  }
+}
+
 const SubscriptionCard = memo(function SubscriptionCard({ item }: { item: SubscriptionPlan }): JSX.Element {
   const accent = toneColor(item.tone);
   return (
     <View style={[styles.subscriptionCard, item.featured && { borderColor: "rgba(255,184,77,0.55)", backgroundColor: "rgba(255,184,77,0.12)" }]}>
       <LinearGradient colors={[`${accent}20`, "rgba(3,6,11,0.24)"]} style={StyleSheet.absoluteFill} />
       <View style={styles.planHeader}>
-        <View style={[styles.planIcon, { borderColor: `${accent}66`, backgroundColor: `${accent}16` }]}>{item.name === "Free" ? <Lock color={accent} size={18} /> : <Crown color={accent} size={18} />}</View>
-        <View style={styles.planTitleBlock}><Text style={styles.planName}>{item.name}</Text><Text style={styles.planLabel}>{item.label}</Text></View>
+        <View style={[styles.planIcon, { borderColor: `${accent}66`, backgroundColor: `${accent}16` }]}>{planIcon(item, accent)}</View>
+        <View style={styles.planTitleBlock}>
+          <Text style={styles.planName}>{item.name}</Text>
+          <Text style={styles.planLabel}>{item.label}</Text>
+        </View>
         {item.featured ? <View style={styles.featuredPill}><Sparkles color={palette.gold} size={12} /><Text style={styles.featuredText}>ACTIVE MOCK</Text></View> : null}
       </View>
-      <View style={styles.edgeAmountRow}><Text style={[styles.edgeAmount, { color: accent }]}>{item.edge}</Text><Text style={styles.edgeAmountLabel}>Edge / month</Text></View>
-      <View style={styles.planMetricGrid}>
-        <View style={styles.planMetric}><Text style={styles.planMetricValue}>{item.efficiency}</Text><Text style={styles.planMetricLabel}>Efficiency</Text></View>
-        <View style={styles.planMetric}><Text style={styles.planMetricValue}>{item.eagohLimit}</Text><Text style={styles.planMetricLabel}>EAGOH limit</Text></View>
+      <View style={styles.edgeAmountRow}>
+        <Text style={[styles.edgeAmount, { color: accent }]}>{item.edge}</Text>
+        <Text style={styles.edgeAmountLabel}>Edge / month</Text>
       </View>
-      <View style={styles.planRows}>
-        <Text style={styles.planRow}>Fanatic Teams: {item.teamLimit}</Text>
-        <Text style={styles.planRow}>Marketplace: {item.marketplace}</Text>
-        <Text style={styles.planRow}>Labs: {item.labs}</Text>
-        <Text style={styles.planRow}>Sync: {item.sync}</Text>
+      <View style={styles.planMetricGrid}>
+        <View style={styles.planMetric}>
+          <BrainCircuit color={accent} size={14} />
+          <Text style={styles.planMetricValue}>{item.eagohLimit}</Text>
+          <Text style={styles.planMetricLabel}>EAGOHs</Text>
+        </View>
+        <View style={styles.planMetric}>
+          <Users color={accent} size={14} />
+          <Text style={styles.planMetricValue}>{item.teamLimit}</Text>
+          <Text style={styles.planMetricLabel}>Teams</Text>
+        </View>
+      </View>
+      <View style={styles.planBullets}>
+        <View style={styles.planBullet}>
+          <Text style={styles.planBulletDot}>•</Text>
+          <Text style={styles.planBulletText}><Text style={styles.planBulletBold}>Efficiency</Text> {item.efficiency}</Text>
+        </View>
+        <View style={styles.planBullet}>
+          <Text style={styles.planBulletDot}>•</Text>
+          <Text style={styles.planBulletText}><Text style={styles.planBulletBold}>Marketplace</Text> {item.marketplace}</Text>
+        </View>
+        <View style={styles.planBullet}>
+          <Text style={styles.planBulletDot}>•</Text>
+          <Text style={styles.planBulletText}><Text style={styles.planBulletBold}>Labs</Text> {item.labs}</Text>
+        </View>
+        <View style={styles.planBullet}>
+          <Text style={styles.planBulletDot}>•</Text>
+          <Text style={styles.planBulletText}><Text style={styles.planBulletBold}>Sync</Text> {item.sync}</Text>
+        </View>
       </View>
     </View>
   );
@@ -567,7 +604,7 @@ export default function ProfileScreen(): JSX.Element {
           <LinearGradient colors={["rgba(124,92,255,0.18)", "rgba(54,245,255,0.06)", "rgba(10,18,30,0.88)"]} style={StyleSheet.absoluteFill} />
           <SectionTitle eyebrow="SUBSCRIPTION MATRIX" title="Choose your intelligence tier" />
           <Text style={styles.panelBody}>Mock-only plan comparison for Edge flow, EAGOH capacity, Fanatic Team bindings, marketplace access, labs, and synchronization depth.</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.subCarouselContent} decelerationRate="fast" snapToInterval={292}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.subCarouselContent} decelerationRate="fast" snapToInterval={318}>
             {subscriptionPlans.map((plan) => (
               <View key={plan.name} style={styles.subCarouselCard}>
                 <SubscriptionCard item={plan} />
@@ -738,11 +775,14 @@ const styles = StyleSheet.create({
   edgeAmount: { fontSize: 34, fontWeight: "900", letterSpacing: -1 },
   edgeAmountLabel: { color: palette.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
   planMetricGrid: { flexDirection: "row", gap: 8 },
-  planMetric: { flex: 1, padding: 11, borderRadius: 5, backgroundColor: "rgba(16,27,42,0.62)", borderWidth: 1, borderColor: palette.line },
-  planMetricValue: { color: palette.text, fontWeight: "900", fontSize: 13 },
-  planMetricLabel: { color: palette.muted, fontSize: 10, fontWeight: "900", marginTop: 5, textTransform: "uppercase" },
-  planRows: { gap: 7 },
-  planRow: { color: palette.text, fontSize: 12, lineHeight: 17 },
+  planMetric: { flex: 1, padding: 11, paddingVertical: 12, borderRadius: 5, backgroundColor: "rgba(16,27,42,0.62)", borderWidth: 1, borderColor: palette.line, alignItems: "center", gap: 6 },
+  planMetricValue: { color: palette.text, fontWeight: "900", fontSize: 13, textAlign: "center", marginTop: 2 },
+  planMetricLabel: { color: palette.muted, fontSize: 10, fontWeight: "900", textTransform: "uppercase", marginTop: 0 },
+  planBullets: { gap: 8, paddingTop: 2 },
+  planBullet: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  planBulletDot: { color: palette.muted, fontSize: 12, lineHeight: 18, fontWeight: "900" },
+  planBulletText: { color: palette.text, fontSize: 12, lineHeight: 18, flex: 1, flexShrink: 1 },
+  planBulletBold: { fontWeight: "900" },
   edgeBalance: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 5, backgroundColor: palette.goldSoft, borderWidth: 1, borderColor: "rgba(255,184,77,0.24)" },
   edgeValue: { color: palette.text, fontSize: 19, fontWeight: "900" },
   edgeHint: { color: palette.muted, marginTop: 3, fontSize: 12 },
@@ -797,8 +837,8 @@ const styles = StyleSheet.create({
   labCarouselActive: { position: "absolute", top: 8, right: 8, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 5, borderWidth: 1 },
   labCarouselActiveText: { fontSize: 8, fontWeight: "900", letterSpacing: 0.8 },
   // Subscription carousel
-  subCarouselContent: { gap: 12 },
-  subCarouselCard: { width: 280 },
+  subCarouselContent: { gap: 14, paddingHorizontal: 2 },
+  subCarouselCard: { width: 304 },
   // Rankings
   rankingsSection: { marginTop: 8, paddingTop: 10, borderTopWidth: 1, borderTopColor: palette.line },
   rankingsList: { gap: 6 },

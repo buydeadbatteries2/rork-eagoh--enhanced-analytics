@@ -348,8 +348,14 @@ const ListingCard = memo(function ListingCard({
               </View>
             ))}
           </View>
-          {item.fanatic_teams.length > 0 && (
-            <Text style={styles.teamText} numberOfLines={1}>{item.fanatic_teams.map((id: string) => getTeamById(id)?.display_name ?? id).join(" · ")}</Text>
+          {(item.eagoh?.pro_team_focus_name || item.eagoh?.college_team_focus_name || item.fanatic_teams.length > 0) && (
+            <Text style={styles.teamText} numberOfLines={1}>
+              {[
+                item.eagoh?.pro_team_focus_name,
+                item.eagoh?.college_team_focus_name,
+                ...item.fanatic_teams.map((id: string) => getTeamById(id)?.display_name ?? id),
+              ].filter(Boolean).join(" · ")}
+            </Text>
           )}
           <View style={styles.metricGrid}>
             <View style={styles.metricRow}>

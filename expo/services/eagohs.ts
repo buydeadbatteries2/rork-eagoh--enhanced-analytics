@@ -13,6 +13,8 @@ import type { SubscriptionTier } from "@/services/profile";
  * No AI / image generation is connected — `image_url` is a placeholder reference only.
  */
 
+export type TeamFocusMode = "none" | "pro_only" | "college_only" | "pro_college";
+
 export type EagohRecord = {
   id: string;
   user_id: string;
@@ -31,6 +33,11 @@ export type EagohRecord = {
   image_prompt: string | null;
   image_generated_at: string | null;
   last_name_change: string | null;
+  team_focus_mode: TeamFocusMode | null;
+  pro_team_focus_id: string | null;
+  pro_team_focus_name: string | null;
+  college_team_focus_id: string | null;
+  college_team_focus_name: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -45,6 +52,7 @@ export type EagohLabRow = { eagoh_id: string; lab_id: string };
 
 export type EagohFull = EagohRecord & {
   appearance: Record<string, string>;
+  /** Legacy fanatic teams array (deprecated, use pro_team_focus_id / college_team_focus_id). */
   teams: string[];
   labs: string[];
 };
@@ -57,7 +65,14 @@ export type EagohDraft = {
   bodyType: string;
   styleNotes: string;
   dna: string[];
+  /** Legacy teams array (deprecated for sports domain). */
   teams: string[];
+  /** Team focus mode for sports-domain EAGOHs. */
+  teamFocusMode: TeamFocusMode;
+  proTeamFocusId: string;
+  proTeamFocusName: string;
+  collegeTeamFocusId: string;
+  collegeTeamFocusName: string;
   appearance: Record<string, string>;
   cyberneticIntensity: string;
   pose: string;
@@ -80,7 +95,7 @@ export function getEagohLimit(tier: SubscriptionTier): number {
 export async function listEagohs(userId: string): Promise<EagohRecord[]> {
   const { data, error } = await supabase
     .from("eagohs")
-    .select("id,user_id,name,sport,gender,domain,body_type,style_notes,cybernetic_intensity,pose,lab,dna,image_url,image_thumb_url,image_prompt,image_generated_at,last_name_change,created_at,updated_at")
+    .select("id,user_id,name,sport,gender,domain,body_type,style_notes,cybernetic_intensity,pose,lab,dna,image_url,image_thumb_url,image_prompt,image_generated_at,last_name_change,team_focus_mode,pro_team_focus_id,pro_team_focus_name,college_team_focus_id,college_team_focus_name,created_at,updated_at")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -145,6 +160,11 @@ export async function createEagoh(
     lab: draft.lab,
     dna: draft.dna,
     image_url: draft.imageUrl ?? null,
+    team_focus_mode: draft.teamFocusMode || null,
+    pro_team_focus_id: draft.proTeamFocusId || null,
+    pro_team_focus_name: draft.proTeamFocusName || null,
+    college_team_focus_id: draft.collegeTeamFocusId || null,
+    college_team_focus_name: draft.collegeTeamFocusName || null,
   };
 
   const { data: created, error } = await supabase

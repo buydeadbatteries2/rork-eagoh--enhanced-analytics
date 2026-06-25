@@ -138,8 +138,14 @@ const LeaderboardCard = React.memo(function LeaderboardCard({ item }: { item: Le
             ))}
           </View>
         )}
-        {item.fanatic_teams.length > 0 && (
-          <Text style={styles.teamText} numberOfLines={1}>{item.fanatic_teams.map((id: string) => getTeamById(id)?.display_name ?? id).join(" · ")}</Text>
+        {(item.fanatic_teams.length > 0 || (item as any).pro_team_focus_name || (item as any).college_team_focus_name) && (
+          <Text style={styles.teamText} numberOfLines={1}>
+            {[
+              (item as any).pro_team_focus_name,
+              (item as any).college_team_focus_name,
+              ...item.fanatic_teams.map((id: string) => getTeamById(id)?.display_name ?? id),
+            ].filter(Boolean).join(" · ")}
+          </Text>
         )}
       </View>
 

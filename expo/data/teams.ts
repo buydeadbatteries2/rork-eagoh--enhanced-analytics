@@ -272,8 +272,48 @@ export const ALL_TEAMS: TeamData[] = [
 // ── Lookup utilities ──────────────────────────────────────────────────
 
 const teamsById = new Map<string, TeamData>();
+const teamsBySport = new Map<string, TeamData[]>();
 for (const team of ALL_TEAMS) {
   teamsById.set(team.id, team);
+  const key = team.sport.toLowerCase();
+  if (!teamsBySport.has(key)) teamsBySport.set(key, []);
+  teamsBySport.get(key)!.push(team);
+}
+
+/**
+ * Maps Forge sport IDs ("football", "basketball", etc.) to the canonical
+ * sport string used in team data ("Football", "Basketball", etc.).
+ * Also maps which leagues belong to each sport for level filtering.
+ */
+export const SPORT_ID_MAP: Record<string, { sport: string; proLeagues: string[]; collegeLeagues: string[] }> = {
+  football: { sport: "Football", proLeagues: ["NFL"], collegeLeagues: ["NCAAF"] },
+  basketball: { sport: "Basketball", proLeagues: ["NBA", "WNBA"], collegeLeagues: ["NCAAB"] },
+  baseball: { sport: "Baseball", proLeagues: ["MLB"], collegeLeagues: [] },
+  soccer: { sport: "Soccer", proLeagues: ["MLS", "NWSL", "EPL", "LaLiga"], collegeLeagues: [] },
+  hockey: { sport: "Hockey", proLeagues: ["NHL"], collegeLeagues: [] },
+};
+
+/**
+ * Get the canonical sport string for a Forge sport ID.
+ */
+export function getSportCanonical(sportId: string): string | undefined {
+  return SPORT_ID_MAP[sportId]?.sport;
+}
+
+/**
+ * Get teams filtered by Forge sport ID and optional level ("Pro" | "College").
+ */
+export function getTeamsBySportAndLevel(sportId: string, level?: "Pro" | "College"): TeamData[] {
+  const mapping = SPORT_ID_MAP[sportId];
+  if (!mapping) return [];
+
+  const sportTeams = teamsBySport.get(mapping.sport.toLowerCase()) ?? [];
+  if (!level) return sportTeams;
+
+  const allowedLeagues = level === "Pro" ? mapping.proLeagues : mapping.collegeLeagues;
+  if (allowedLeagues.length === 0) return [];
+
+  return sportTeams.filter((t) => allowedLeagues.includes(t.league));
 }
 
 /**
@@ -298,15 +338,24 @@ export function getTeamsByIds(ids: string[]): TeamData[] {
  * Matches against display_name, aliases, city, league, sport, and state.
  * Returns matches sorted by relevance (exact alias match > display_name starts-with > other).
  */
-export function searchTeams(query: string): TeamData[] {
+export function searchTeams(query: string, options?: { sport?: string; level?: "Pro" | "College" }): TeamData[] {
   const q = query.toLowerCase().trim();
   if (!q) return [];
+
+  // Determine candidate pool
+  let pool = ALL_TEAMS;
+  if (options?.sport) {
+    const sportCanonical = getSportCanonical(options.sport);
+    if (sportCanonical) {
+      pool = getTeamsBySportAndLevel(options.sport, options.level);
+    }
+  }
 
   const exactAlias: TeamData[] = [];
   const startsWith: TeamData[] = [];
   const contains: TeamData[] = [];
 
-  for (const team of ALL_TEAMS) {
+  for (const team of pool) {
     // Exact alias match
     if (team.aliases.some((a) => a.toLowerCase() === q)) {
       exactAlias.push(team);

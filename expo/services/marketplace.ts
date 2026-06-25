@@ -89,6 +89,8 @@ export type ListingFilters = {
   domain?: string;
   sport?: string;
   team?: string;
+  /** Filter to Generalist EAGOHs (team_focus_mode = "none"). */
+  generalist?: boolean;
   dna?: string;
   syncLevel?: SyncLevel;
   maxPrice?: number;
@@ -344,14 +346,25 @@ export async function listActiveListings(
   if (filters.sport) {
     result = result.filter((l) => l.eagoh?.sport === filters.sport);
   }
+  if (filters.generalist) {
+    result = result.filter((l) => (l.eagoh?.team_focus_mode ?? "none") === "none");
+  }
   if (filters.team) {
     const teamQuery = filters.team!.toLowerCase();
-    result = result.filter((l) =>
-      l.fanatic_teams.some((t) => {
+    result = result.filter((l) => {
+      // Check new canonical fields first
+      const proId = l.eagoh?.pro_team_focus_id;
+      const colId = l.eagoh?.college_team_focus_id;
+      const proName = l.eagoh?.pro_team_focus_name ?? "";
+      const colName = l.eagoh?.college_team_focus_name ?? "";
+      if (proId && (proId.toLowerCase().includes(teamQuery) || proName.toLowerCase().includes(teamQuery))) return true;
+      if (colId && (colId.toLowerCase().includes(teamQuery) || colName.toLowerCase().includes(teamQuery))) return true;
+      // Fallback: legacy fanatic_teams array
+      return l.fanatic_teams.some((t) => {
         const display = getTeamById(t)?.display_name ?? "";
         return t.toLowerCase().includes(teamQuery) || display.toLowerCase().includes(teamQuery);
-      }),
-    );
+      });
+    });
   }
   if (filters.dna) {
     result = result.filter((l) => (l.eagoh?.dna ?? []).includes(filters.dna!));
@@ -368,6 +381,8 @@ export async function listActiveListings(
         l.eagoh?.domain,
         l.vendor_username,
         l.description,
+        l.eagoh?.pro_team_focus_name,
+        l.eagoh?.college_team_focus_name,
         ...l.fanatic_teams,
       ].filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(q);

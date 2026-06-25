@@ -17,7 +17,7 @@ import { useEdge } from "@/providers/EdgeProvider";
 import { useEagohs, useEagohFull } from "@/providers/EagohProvider";
 import { useForge, type ForgePending } from "@/providers/ForgeProvider";
 import { useProfile } from "@/providers/ProfileProvider";
-import type { EagohFull, EagohRecord } from "@/services/eagohs";
+import type { EagohFull, EagohRecord, TeamFocusMode } from "@/services/eagohs";
 import { renameEagohName } from "@/services/eagohs";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import {
@@ -30,6 +30,7 @@ import { TIER_MAX_EAGOHS, TIER_MULTIPLIER, getForgeCost } from "@/services/edge"
 import type { EagohDraft } from "@/services/eagohs";
 import * as Haptics from "expo-haptics";
 import TeamSelector from "@/app/components/TeamSelector";
+import { getTeamById, getSportCanonical } from "@/data/teams";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   AlertTriangle,
@@ -306,6 +307,11 @@ export default function ForgeScreen(): JSX.Element {
   const [styleNotes, setStyleNotes] = useState<string>("");
   const [dna, setDna] = useState<string[]>([]);
   const [teams, setTeams] = useState<string[]>([]);
+  const [teamFocusMode, setTeamFocusMode] = useState<TeamFocusMode>("none");
+  const [proTeamFocusId, setProTeamFocusId] = useState<string>("");
+  const [proTeamFocusName, setProTeamFocusName] = useState<string>("");
+  const [collegeTeamFocusId, setCollegeTeamFocusId] = useState<string>("");
+  const [collegeTeamFocusName, setCollegeTeamFocusName] = useState<string>("");
   const [appearance, setAppearance] = useState<Record<string, string>>({});
   const [cyberneticIntensity, setCyberneticIntensity] = useState<string>("moderate");
   const [pose, setPose] = useState<string>("calm-sentinel");
@@ -343,6 +349,11 @@ export default function ForgeScreen(): JSX.Element {
     setStyleNotes(editingEagoh.style_notes ?? "");
     setDna(editingEagoh.dna ?? []);
     setTeams(editingEagoh.teams ?? []);
+    setTeamFocusMode(editingEagoh.team_focus_mode ?? "none");
+    setProTeamFocusId(editingEagoh.pro_team_focus_id ?? "");
+    setProTeamFocusName(editingEagoh.pro_team_focus_name ?? "");
+    setCollegeTeamFocusId(editingEagoh.college_team_focus_id ?? "");
+    setCollegeTeamFocusName(editingEagoh.college_team_focus_name ?? "");
     setAppearance(editingEagoh.appearance ?? {});
     setCyberneticIntensity(editingEagoh.cybernetic_intensity ?? "moderate");
     setPose(editingEagoh.pose ?? "calm-sentinel");
@@ -418,11 +429,16 @@ export default function ForgeScreen(): JSX.Element {
     styleNotes,
     dna,
     teams,
+    teamFocusMode,
+    proTeamFocusId,
+    proTeamFocusName,
+    collegeTeamFocusId,
+    collegeTeamFocusName,
     appearance,
     cyberneticIntensity,
     pose,
     lab,
-  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, appearance, cyberneticIntensity, pose, lab]);
+  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, teamFocusMode, proTeamFocusId, proTeamFocusName, collegeTeamFocusId, collegeTeamFocusName, appearance, cyberneticIntensity, pose, lab]);
 
   /** Dynamic reforge cost when editing — compares current form vs EAGOH's saved state. */
   const reforgeCost = useMemo(() => {
@@ -450,6 +466,92 @@ export default function ForgeScreen(): JSX.Element {
 
   const toggleTeams = useCallback((id: string): void => {
     setTeams((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
+  }, []);
+
+  // ── Sport-aware team handlers ──────────────────────────────────────
+
+  /** Clear team selections that are incompatible with the new sport. */
+  const clearIncompatibleTeams = useCallback((newSport: string): void => {
+    const canonical = getSportCanonical(newSport);
+    if (!canonical) {
+      // Sport has no team mapping — clear everything
+      if (teamFocusMode !== "none" || proTeamFocusId || collegeTeamFocusId) {
+        setTeamFocusMode("none");
+        setProTeamFocusId("");
+        setProTeamFocusName("");
+        setCollegeTeamFocusId("");
+        setCollegeTeamFocusName("");
+        setForgeError("Team focus reset because sport type changed.");
+      }
+      return;
+    }
+
+    // Check if existing pro team belongs to new sport
+    let needsClear = false;
+    if (proTeamFocusId) {
+      const proTeam = getTeamById(proTeamFocusId);
+      if (!proTeam || proTeam.sport.toLowerCase() !== canonical.toLowerCase()) {
+        needsClear = true;
+      }
+    }
+    if (collegeTeamFocusId) {
+      const colTeam = getTeamById(collegeTeamFocusId);
+      if (!colTeam || colTeam.sport.toLowerCase() !== canonical.toLowerCase()) {
+        needsClear = true;
+      }
+    }
+
+    if (needsClear) {
+      setTeamFocusMode("none");
+      setProTeamFocusId("");
+      setProTeamFocusName("");
+      setCollegeTeamFocusId("");
+      setCollegeTeamFocusName("");
+      setForgeError("Team focus reset because sport type changed.");
+    }
+  }, [teamFocusMode, proTeamFocusId, collegeTeamFocusId]);
+
+  const handleSportChange = useCallback((newSport: string): void => {
+    clearIncompatibleTeams(newSport);
+    setSport(newSport);
+  }, [clearIncompatibleTeams]);
+
+  const handleProTeamToggle = useCallback((id: string): void => {
+    setProTeamFocusId((prev) => {
+      if (prev === id) {
+        setProTeamFocusName("");
+        return "";
+      }
+      const team = getTeamById(id);
+      setProTeamFocusName(team?.display_name ?? "");
+      return id;
+    });
+  }, []);
+
+  const handleCollegeTeamToggle = useCallback((id: string): void => {
+    setCollegeTeamFocusId((prev) => {
+      if (prev === id) {
+        setCollegeTeamFocusName("");
+        return "";
+      }
+      const team = getTeamById(id);
+      setCollegeTeamFocusName(team?.display_name ?? "");
+      return id;
+    });
+  }, []);
+
+  const handleTeamFocusModeChange = useCallback((mode: TeamFocusMode): void => {
+    setTeamFocusMode(mode);
+    // Clear incompatible slots when mode restricts
+    if (mode === "none" || mode === "college_only") {
+      setProTeamFocusId("");
+      setProTeamFocusName("");
+    }
+    if (mode === "none" || mode === "pro_only") {
+      setCollegeTeamFocusId("");
+      setCollegeTeamFocusName("");
+    }
+    Haptics.selectionAsync().catch(() => undefined);
   }, []);
 
   const validateCurrentStep = useCallback((): boolean => {
@@ -730,19 +832,124 @@ export default function ForgeScreen(): JSX.Element {
       return (
         <>
           <Text style={styles.sectionHint}>Primary sport focus for this EAGOH.</Text>
-          {sports.map((opt) => <OptionChip key={opt.id} option={opt} selected={sport === opt.id} onPress={setSport} />)}
+          {sports.map((opt) => <OptionChip key={opt.id} option={opt} selected={sport === opt.id} onPress={handleSportChange} />)}
         </>
       );
     }
 
     if (currentStep.id === "teams") {
+      const sportCanonical = getSportCanonical(sport);
+      const hasTeams = sportCanonical !== undefined;
+      const focusModes: { id: TeamFocusMode; label: string; detail: string; tone: OptionTone }[] = [
+        { id: "none", label: "No Team Focus", detail: "Generalist — no specific team allegiance.", tone: "success" },
+        { id: "pro_only", label: "Pro Team Only", detail: "Focus on one professional team.", tone: "cyan" },
+        { id: "college_only", label: "College Team Only", detail: "Focus on one college program.", tone: "gold" },
+        { id: "pro_college", label: "Pro + College Team", detail: "One pro and one college team.", tone: "violet" },
+      ];
+
+      const showProSlot = teamFocusMode === "pro_only" || teamFocusMode === "pro_college";
+      const showCollegeSlot = teamFocusMode === "college_only" || teamFocusMode === "pro_college";
+
+      if (!hasTeams) {
+        return (
+          <>
+            <Text style={styles.sectionHint}>No teams available for this sport yet.</Text>
+          </>
+        );
+      }
+
+      const selectedProTeam = proTeamFocusId ? getTeamById(proTeamFocusId) : undefined;
+      const selectedColTeam = collegeTeamFocusId ? getTeamById(collegeTeamFocusId) : undefined;
+
       return (
-        <TeamSelector
-          selectedIds={teams}
-          onToggle={toggleTeams}
-          mode="multi"
-          placeholder="Search NFL, NBA, MLB, NHL, WNBA, NCAAF, NCAAB…"
-        />
+        <>
+          <Text style={styles.sectionHint}>Select your team focus. Team names are factual references only. Color families may inspire the visual chassis.</Text>
+
+          {/* Team Focus Mode */}
+          <Text style={styles.subsectionLabel}>TEAM FOCUS MODE</Text>
+          {focusModes.map((opt) => (
+            <OptionChip
+              key={opt.id}
+              option={opt}
+              selected={teamFocusMode === opt.id}
+              onPress={(id: string) => handleTeamFocusModeChange(id as TeamFocusMode)}
+            />
+          ))}
+
+          {/* Pro Team slot */}
+          {showProSlot ? (
+            <View style={styles.teamSlotSection}>
+              {selectedProTeam ? (
+                <View style={styles.selectedTeamCard}>
+                  <View style={styles.selectedTeamLeft}>
+                    <View style={[styles.teamLevelBadge, { backgroundColor: `${palette.cyan}18`, borderColor: `${palette.cyan}40` }]}>
+                      <Text style={[styles.teamLevelBadgeText, { color: palette.cyan }]}>PRO</Text>
+                    </View>
+                    <Text style={styles.selectedTeamName}>{selectedProTeam.display_name}</Text>
+                    <Text style={styles.selectedTeamLeague}>{selectedProTeam.league}</Text>
+                  </View>
+                  <Pressable
+                    onPress={() => handleProTeamToggle(proTeamFocusId)}
+                    hitSlop={8}
+                    style={({ pressed }) => [styles.removeTeamBtn, pressed && styles.pressed]}
+                  >
+                    <X color={palette.muted} size={14} />
+                  </Pressable>
+                </View>
+              ) : (
+                <TeamSelector
+                  selectedIds={proTeamFocusId ? [proTeamFocusId] : []}
+                  onToggle={handleProTeamToggle}
+                  mode="single"
+                  sportFilter={sport}
+                  levelFilter="Pro"
+                  label="PRO TEAM FOCUS"
+                  placeholder={`Search ${sportCanonical} pro teams…`}
+                  maxSuggestions={12}
+                />
+              )}
+            </View>
+          ) : null}
+
+          {/* College Team slot */}
+          {showCollegeSlot ? (
+            <View style={styles.teamSlotSection}>
+              {selectedColTeam ? (
+                <View style={styles.selectedTeamCard}>
+                  <View style={styles.selectedTeamLeft}>
+                    <View style={[styles.teamLevelBadge, { backgroundColor: `${palette.gold}18`, borderColor: `${palette.gold}40` }]}>
+                      <Text style={[styles.teamLevelBadgeText, { color: palette.gold }]}>COLLEGE</Text>
+                    </View>
+                    <Text style={styles.selectedTeamName}>{selectedColTeam.display_name}</Text>
+                    <Text style={styles.selectedTeamLeague}>{selectedColTeam.league}</Text>
+                  </View>
+                  <Pressable
+                    onPress={() => handleCollegeTeamToggle(collegeTeamFocusId)}
+                    hitSlop={8}
+                    style={({ pressed }) => [styles.removeTeamBtn, pressed && styles.pressed]}
+                  >
+                    <X color={palette.muted} size={14} />
+                  </Pressable>
+                </View>
+              ) : (
+                <TeamSelector
+                  selectedIds={collegeTeamFocusId ? [collegeTeamFocusId] : []}
+                  onToggle={handleCollegeTeamToggle}
+                  mode="single"
+                  sportFilter={sport}
+                  levelFilter="College"
+                  label="COLLEGE TEAM FOCUS"
+                  placeholder={`Search ${sportCanonical} college teams…`}
+                  maxSuggestions={12}
+                />
+              )}
+            </View>
+          ) : null}
+
+          {teamFocusMode === "none" ? (
+            <Text style={styles.generalistLabel}>[{sport.charAt(0).toUpperCase() + sport.slice(1)} Generalist]</Text>
+          ) : null}
+        </>
       );
     }
 
@@ -994,6 +1201,11 @@ export default function ForgeScreen(): JSX.Element {
                     setStyleNotes("");
                     setDna([]);
                     setTeams([]);
+                    setTeamFocusMode("none");
+                    setProTeamFocusId("");
+                    setProTeamFocusName("");
+                    setCollegeTeamFocusId("");
+                    setCollegeTeamFocusName("");
                     setAppearance({});
                     setCyberneticIntensity("moderate");
                     setPose("calm-sentinel");
@@ -1585,6 +1797,44 @@ const styles = StyleSheet.create({
   },
   renameErrorText: { color: palette.ember, fontSize: 11, fontWeight: "700", flex: 1 },
   renameMessage: { color: palette.muted, fontSize: 12, fontWeight: "700", lineHeight: 18 },
+
+  // ── Team Focus UI ────────────────────────────────────────────────
+  subsectionLabel: { color: palette.muted, fontSize: 9, fontWeight: "900", letterSpacing: 1.4, marginTop: 6, marginBottom: 2 },
+  teamSlotSection: { marginTop: 6, gap: 4 },
+  selectedTeamCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    minHeight: 46,
+    borderRadius: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: `${palette.cyan}30`,
+    backgroundColor: `${palette.cyan}08`,
+    gap: 8,
+  },
+  selectedTeamLeft: { flex: 1, flexDirection: "row", alignItems: "center", gap: 8 },
+  teamLevelBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 3,
+    borderWidth: 1,
+  },
+  teamLevelBadgeText: { fontSize: 8, fontWeight: "900", letterSpacing: 1 },
+  selectedTeamName: { color: palette.text, fontSize: 13, fontWeight: "800", flex: 1 },
+  selectedTeamLeague: { color: palette.muted, fontSize: 9, fontWeight: "600" },
+  removeTeamBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  generalistLabel: { color: palette.success, fontSize: 11, fontWeight: "800", textAlign: "center", marginTop: 8, fontStyle: "italic" },
 
   // ── Dynamic reforge cost card ────────────────────────────────────
   reforgeCostCard: {

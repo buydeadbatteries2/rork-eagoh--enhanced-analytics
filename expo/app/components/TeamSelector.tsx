@@ -2,15 +2,15 @@
  * Canonical team selector for Sports-domain EAGOHs.
  *
  * Replaces free-form text input with a searchable autocomplete that
- * enforces canonical team IDs. Used in the Forge wizard (multi-select)
- * and Faction creation (single-select).
+ * enforces canonical team IDs. Used in the Forge wizard (Pro/College
+ * slots) and Faction creation (single-select).
  *
  * No logos, league marks, or official artwork. Color families are
  * provided as inspired palette hints only.
  */
 
 import { palette } from "@/constants/colors";
-import { searchTeams, getTeamById, type TeamData } from "@/data/teams";
+import { searchTeams, getTeamById, getSportCanonical, type TeamData } from "@/data/teams";
 import { Search, X, Check, AlertTriangle, MapPin } from "lucide-react-native";
 import React, { useCallback, useMemo, useState } from "react";
 import {
@@ -36,6 +36,14 @@ type TeamSelectorProps = {
   placeholder?: string;
   /** Maximum number of suggestions to show. */
   maxSuggestions?: number;
+  /** Filter results to this Forge sport ID (e.g. "football"). */
+  sportFilter?: string;
+  /** Filter results to this level ("Pro" or "College"). Requires sportFilter. */
+  levelFilter?: "Pro" | "College";
+  /** Show "No Team Focus" option (single mode only). */
+  showNoTeamOption?: boolean;
+  /** Label for the selector (e.g. "Pro Team Focus"). */
+  label?: string;
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -61,23 +69,26 @@ export default function TeamSelector({
   mode = "multi",
   placeholder = "Search teams…",
   maxSuggestions = 18,
+  sportFilter,
+  levelFilter,
+  showNoTeamOption = false,
+  label,
 }: TeamSelectorProps): JSX.Element {
   const [query, setQuery] = useState<string>("");
   const [focused, setFocused] = useState<boolean>(false);
 
   const results = useMemo<TeamData[]>(() => {
     if (!query.trim()) return [];
-    return searchTeams(query).slice(0, maxSuggestions);
-  }, [query, maxSuggestions]);
+    return searchTeams(query, { sport: sportFilter, level: levelFilter }).slice(0, maxSuggestions);
+  }, [query, maxSuggestions, sportFilter, levelFilter]);
 
   const handleToggle = useCallback(
     (id: string): void => {
       if (mode === "single") {
         // Single-select: replace entirely (or deselect if already selected)
         if (selectedIds.includes(id)) {
-          onToggle(id); // deselect
+          onToggle(id);
         } else {
-          // Deselect current, then select new
           if (selectedIds.length > 0) {
             onToggle(selectedIds[0]!);
           }
@@ -148,6 +159,9 @@ export default function TeamSelector({
 
   return (
     <View style={styles.container}>
+      {/* ── Label ──────────────────────────────────────────────── */}
+      {label ? <Text style={styles.selectorLabel}>{label}</Text> : null}
+
       {/* ── Search input ────────────────────────────────────────── */}
       <View style={[styles.searchBar, focused && styles.searchBarFocused]}>
         <Search color={palette.muted} size={14} style={styles.searchIcon} />
@@ -191,7 +205,7 @@ export default function TeamSelector({
       ) : null}
 
       {/* ── "No Team Focus" option (single mode) ────────────────── */}
-      {mode === "single" ? (
+      {mode === "single" && showNoTeamOption ? (
         <Pressable
           onPress={() => {
             if (selectedIds.length > 0) {
@@ -241,6 +255,8 @@ export default function TeamSelector({
 
 const styles = StyleSheet.create({
   container: { gap: 6 },
+
+  selectorLabel: { color: palette.muted, fontSize: 10, fontWeight: "800", letterSpacing: 0.8, marginBottom: 2 },
 
   // Search bar
   searchBar: {

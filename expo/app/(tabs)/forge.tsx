@@ -39,6 +39,7 @@ import { GAMING_GENRES, GAMING_ROLES, getGamingGenre, getGamingRole } from "@/da
 import { BUSINESS_INDUSTRIES, BUSINESS_ROLES, getBusinessIndustry, getBusinessRole } from "@/data/business";
 import { FINANCE_FOCUSES, FINANCE_ROLES, getFinanceFocus, getFinanceRole } from "@/data/finance";
 import { TECHNOLOGY_AREAS, TECHNOLOGY_ROLES, getTechnologyArea, getTechnologyRole } from "@/data/technology";
+import { HEALTH_FITNESS_AREAS, HEALTH_FITNESS_ROLES, getHealthFitnessArea, getHealthFitnessRole } from "@/data/healthFitness";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   AlertTriangle,
@@ -112,6 +113,8 @@ type WizardStepId =
   | "finance_role"
   | "technology_area"
   | "technology_role"
+  | "health_fitness_area"
+  | "health_fitness_role"
   | "lab";
 
 type WizardStep = {
@@ -354,6 +357,8 @@ export default function ForgeScreen(): JSX.Element {
   const [financeRole, setFinanceRole] = useState<string>("");
   const [technologyArea, setTechnologyArea] = useState<string>("");
   const [technologyRole, setTechnologyRole] = useState<string>("");
+  const [healthFitnessArea, setHealthFitnessArea] = useState<string>("");
+  const [healthFitnessRole, setHealthFitnessRole] = useState<string>("");
   const [appearance, setAppearance] = useState<Record<string, string>>({});
   const [cyberneticIntensity, setCyberneticIntensity] = useState<string>("moderate");
   const [pose, setPose] = useState<string>("calm-sentinel");
@@ -413,6 +418,8 @@ export default function ForgeScreen(): JSX.Element {
     setFinanceRole(editingEagoh.finance_role ?? "");
     setTechnologyArea(editingEagoh.technology_area ?? "");
     setTechnologyRole(editingEagoh.technology_role ?? "");
+    setHealthFitnessArea(editingEagoh.health_fitness_area ?? "");
+    setHealthFitnessRole(editingEagoh.health_fitness_role ?? "");
     setAppearance(editingEagoh.appearance ?? {});
     setCyberneticIntensity(editingEagoh.cybernetic_intensity ?? "moderate");
     setPose(editingEagoh.pose ?? "calm-sentinel");
@@ -457,6 +464,7 @@ export default function ForgeScreen(): JSX.Element {
   const isBusinessDomain = domain === "business";
   const isFinanceDomain = domain === "finance";
   const isTechnologyDomain = domain === "technology";
+  const isHealthFitnessDomain = domain === "health-fitness";
 
   const wizardSteps: WizardStep[] = useMemo(() => {
     const base: WizardStep[] = [
@@ -520,11 +528,16 @@ export default function ForgeScreen(): JSX.Element {
       base.push({ id: "technology_role", title: "Technology Role", eyebrow: "Step 14", hint: "Choose the role or perspective this EAGOH embodies in technology.", icon: <Sparkles color={palette.cyan} size={15} /> });
     }
 
-    const hasSpecialization = isSportsDomain || isMusicDomain || isFilmTvDomain || isFashionDomain || isEducationDomain || isGamingDomain || isBusinessDomain || isFinanceDomain || isTechnologyDomain;
-    const labEyebrowNum = hasSpecialization ? (isFilmTvDomain ? "Step 16" : (isFashionDomain || isEducationDomain || isGamingDomain || isBusinessDomain || isFinanceDomain || isTechnologyDomain) ? "Step 15" : "Step 15") : "Step 13";
+    if (isHealthFitnessDomain) {
+      base.push({ id: "health_fitness_area", title: "Health & Fitness Area", eyebrow: "Step 13", hint: "Select the primary fitness area this EAGOH specializes in — Strength Training, Nutrition, CrossFit, or more.", icon: <Zap color={palette.ember} size={15} /> });
+      base.push({ id: "health_fitness_role", title: "Health & Fitness Role", eyebrow: "Step 14", hint: "Choose the role or perspective this EAGOH embodies in health and fitness.", icon: <Sparkles color={palette.ember} size={15} /> });
+    }
+
+    const hasSpecialization = isSportsDomain || isMusicDomain || isFilmTvDomain || isFashionDomain || isEducationDomain || isGamingDomain || isBusinessDomain || isFinanceDomain || isTechnologyDomain || isHealthFitnessDomain;
+    const labEyebrowNum = hasSpecialization ? (isFilmTvDomain ? "Step 16" : (isFashionDomain || isEducationDomain || isGamingDomain || isBusinessDomain || isFinanceDomain || isTechnologyDomain || isHealthFitnessDomain) ? "Step 15" : "Step 15") : "Step 13";
     base.push({ id: "lab", title: "Forge Lab", eyebrow: labEyebrowNum, hint: "Select the lab environment for this EAGOH.", icon: <Cpu color={palette.cyan} size={15} /> });
     return base;
-  }, [isSportsDomain, isMusicDomain, isFilmTvDomain, isFashionDomain, isEducationDomain, isGamingDomain, isBusinessDomain, isFinanceDomain, isTechnologyDomain]);
+  }, [isSportsDomain, isMusicDomain, isFilmTvDomain, isFashionDomain, isEducationDomain, isGamingDomain, isBusinessDomain, isFinanceDomain, isTechnologyDomain, isHealthFitnessDomain]);
 
   const currentStep = wizardSteps[currentStepIndex];
   const isLastStep = currentStepIndex === wizardSteps.length - 1;
@@ -561,11 +574,13 @@ export default function ForgeScreen(): JSX.Element {
     financeRole,
     technologyArea,
     technologyRole,
+    healthFitnessArea,
+    healthFitnessRole,
     appearance,
     cyberneticIntensity,
     pose,
     lab,
-  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, teamFocusMode, proTeamFocusId, proTeamFocusName, collegeTeamFocusId, collegeTeamFocusName, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole, educationSubject, educationRole, gamingGenre, gamingRole, businessIndustry, businessRole, financeFocus, financeRole, technologyArea, technologyRole, appearance, cyberneticIntensity, pose, lab]);
+  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, teamFocusMode, proTeamFocusId, proTeamFocusName, collegeTeamFocusId, collegeTeamFocusName, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole, educationSubject, educationRole, gamingGenre, gamingRole, businessIndustry, businessRole, financeFocus, financeRole, technologyArea, technologyRole, healthFitnessArea, healthFitnessRole, appearance, cyberneticIntensity, pose, lab]);
 
   /** Dynamic reforge cost when editing — compares current form vs EAGOH's saved state. */
   const reforgeCost = useMemo(() => {
@@ -585,6 +600,8 @@ export default function ForgeScreen(): JSX.Element {
       educationRole: editingEagoh.education_role ?? "",
       gamingGenre: editingEagoh.gaming_genre ?? "",
       gamingRole: editingEagoh.gaming_role ?? "",
+      healthFitnessArea: editingEagoh.health_fitness_area ?? "",
+      healthFitnessRole: editingEagoh.health_fitness_role ?? "",
     };
     const newState = {
       appearance,
@@ -601,9 +618,11 @@ export default function ForgeScreen(): JSX.Element {
       educationRole,
       gamingGenre,
       gamingRole,
+      healthFitnessArea,
+      healthFitnessRole,
     };
     return calculateReforgeCost(oldState, newState);
-  }, [isEditing, editingEagoh, appearance, styleNotes, pose, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole, educationSubject, educationRole, gamingGenre, gamingRole]);
+  }, [isEditing, editingEagoh, appearance, styleNotes, pose, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole, educationSubject, educationRole, gamingGenre, gamingRole, healthFitnessArea, healthFitnessRole]);
 
   const setAppearanceField = useCallback((category: string, text: string): void => {
     setAppearance((prev) => ({ ...prev, [category]: text }));
@@ -1258,6 +1277,38 @@ export default function ForgeScreen(): JSX.Element {
       );
     }
 
+    if (currentStep.id === "health_fitness_area") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Select the primary fitness area this EAGOH specializes in. This is used for filtering, Marketplace searches, and fitness-specific intelligence.</Text>
+          {HEALTH_FITNESS_AREAS.map((area) => (
+            <OptionChip
+              key={area.id}
+              option={{ id: area.id, label: area.label, tone: "ember" }}
+              selected={healthFitnessArea === area.id}
+              onPress={setHealthFitnessArea}
+            />
+          ))}
+        </>
+      );
+    }
+
+    if (currentStep.id === "health_fitness_role") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Choose the role or perspective this EAGOH embodies in health and fitness. This shapes its analysis style and marketplace discoverability.</Text>
+          {HEALTH_FITNESS_ROLES.map((r) => (
+            <OptionChip
+              key={r.id}
+              option={{ id: r.id, label: r.label, tone: "ember" }}
+              selected={healthFitnessRole === r.id}
+              onPress={setHealthFitnessRole}
+            />
+          ))}
+        </>
+      );
+    }
+
     if (currentStep.id === "teams") {
       const sportCanonical = getSportCanonical(sport);
       const hasTeams = sportCanonical !== undefined;
@@ -1431,6 +1482,10 @@ export default function ForgeScreen(): JSX.Element {
     technologyRole,
     setTechnologyArea,
     setTechnologyRole,
+    healthFitnessArea,
+    healthFitnessRole,
+    setHealthFitnessArea,
+    setHealthFitnessRole,
   ]);
 
   const previewHeight = Math.min(windowHeight * 0.27, 248);
@@ -1672,6 +1727,8 @@ export default function ForgeScreen(): JSX.Element {
                     setFinanceRole("");
                     setTechnologyArea("");
                     setTechnologyRole("");
+                    setHealthFitnessArea("");
+                    setHealthFitnessRole("");
                     setAppearance({});
                     setCyberneticIntensity("moderate");
                     setPose("calm-sentinel");

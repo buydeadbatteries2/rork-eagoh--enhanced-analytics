@@ -117,6 +117,9 @@ export type ListingFilters = {
   /** Technology domain filters (canonical IDs). */
   technologyArea?: string;
   technologyRole?: string;
+  /** Health & Fitness domain filters (canonical IDs). */
+  healthFitnessArea?: string;
+  healthFitnessRole?: string;
   syncLevel?: SyncLevel;
   maxPrice?: number;
   minPrice?: number;
@@ -425,6 +428,12 @@ export async function listActiveListings(
   if (filters.technologyRole) {
     result = result.filter((l) => l.eagoh?.technology_role === filters.technologyRole);
   }
+  if (filters.healthFitnessArea) {
+    result = result.filter((l) => l.eagoh?.health_fitness_area === filters.healthFitnessArea);
+  }
+  if (filters.healthFitnessRole) {
+    result = result.filter((l) => l.eagoh?.health_fitness_role === filters.healthFitnessRole);
+  }
   if (filters.team) {
     const teamQuery = filters.team!.toLowerCase();
     result = result.filter((l) => {
@@ -476,6 +485,8 @@ export async function listActiveListings(
         l.eagoh?.finance_role,
         l.eagoh?.technology_area,
         l.eagoh?.technology_role,
+        l.eagoh?.health_fitness_area,
+        l.eagoh?.health_fitness_role,
         ...l.fanatic_teams,
       ].filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(q);

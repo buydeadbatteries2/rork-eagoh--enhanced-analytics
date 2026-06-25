@@ -55,6 +55,8 @@ export type EagohRecord = {
   finance_role: string | null;
   technology_area: string | null;
   technology_role: string | null;
+  health_fitness_area: string | null;
+  health_fitness_role: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -115,6 +117,9 @@ export type EagohDraft = {
   /** Technology domain specialization. */
   technologyArea: string;
   technologyRole: string;
+  /** Health & Fitness domain specialization. */
+  healthFitnessArea: string;
+  healthFitnessRole: string;
   appearance: Record<string, string>;
   cyberneticIntensity: string;
   pose: string;
@@ -137,7 +142,7 @@ export function getEagohLimit(tier: SubscriptionTier): number {
 export async function listEagohs(userId: string): Promise<EagohRecord[]> {
   const { data, error } = await supabase
     .from("eagohs")
-    .select("id,user_id,name,sport,gender,domain,body_type,style_notes,cybernetic_intensity,pose,lab,dna,image_url,image_thumb_url,image_prompt,image_generated_at,last_name_change,team_focus_mode,pro_team_focus_id,pro_team_focus_name,college_team_focus_id,college_team_focus_name,music_genre,music_role,film_tv_category,film_tv_genre,film_tv_role,fashion_style_category,fashion_role,education_subject,education_role,gaming_genre,gaming_role,business_industry,business_role,finance_focus,finance_role,technology_area,technology_role,created_at,updated_at")
+    .select("id,user_id,name,sport,gender,domain,body_type,style_notes,cybernetic_intensity,pose,lab,dna,image_url,image_thumb_url,image_prompt,image_generated_at,last_name_change,team_focus_mode,pro_team_focus_id,pro_team_focus_name,college_team_focus_id,college_team_focus_name,music_genre,music_role,film_tv_category,film_tv_genre,film_tv_role,fashion_style_category,fashion_role,education_subject,education_role,gaming_genre,gaming_role,business_industry,business_role,finance_focus,finance_role,technology_area,technology_role,health_fitness_area,health_fitness_role,created_at,updated_at")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -224,6 +229,8 @@ export async function createEagoh(
     finance_role: draft.financeRole || null,
     technology_area: draft.technologyArea || null,
     technology_role: draft.technologyRole || null,
+    health_fitness_area: draft.healthFitnessArea || null,
+    health_fitness_role: draft.healthFitnessRole || null,
   };
 
   const { data: created, error } = await supabase

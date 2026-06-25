@@ -186,45 +186,56 @@ function SelectedEagohCard({
 }): JSX.Element {
   const domain = eagoh ? INTELLIGENCE_DOMAINS.find((d) => d.id === eagoh.domain) : null;
   const domainTone = domain ? toneColor(domain.tone) : palette.cyan;
-  const thumb = eagoh?.image_thumb_url ?? eagoh?.image_url ?? null;
+  const hero = eagoh?.image_url ?? eagoh?.image_thumb_url ?? null;
   const isActive = userTier !== "free";
 
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.eagohCard, { shadowColor: domainTone }, pressed && styles.pressed]}>
-      <LinearGradient
-        colors={[`${domainTone}1A`, "rgba(8,16,30,0.92)"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={StyleSheet.absoluteFill}
-      />
-      <View style={styles.eagohCardLeft}>
-        <View style={[styles.eagohCardAvatar, { borderColor: eagoh ? domainTone : palette.line, shadowColor: domainTone }]}>
-          {thumb ? (
-            <Image source={{ uri: thumb }} style={styles.eagohCardImg} resizeMode="cover" />
-          ) : (
-            <BrainCircuit color={eagoh ? domainTone : palette.muted} size={26} />
-          )}
-        </View>
-        <View style={styles.eagohCardInfo}>
-          <Text style={styles.eagohCardName} numberOfLines={1}>
-            {eagoh?.name || "No EAGOH selected"}
-          </Text>
-          <Text style={[styles.eagohCardDomain, { color: domainTone }]} numberOfLines={1}>
-            {eagoh ? (domain?.label ?? eagoh.domain ?? "No domain") : "Tap to select an EAGOH"}
-          </Text>
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.eagohHero, { shadowColor: domainTone, borderColor: eagoh ? `${domainTone}55` : palette.lineStrong }, pressed && styles.pressed]}>
+      {/* Featured image */}
+      <View style={styles.eagohHeroImageWrap}>
+        {hero ? (
+          <Image source={{ uri: hero }} style={styles.eagohHeroImage} resizeMode="cover" />
+        ) : (
+          <View style={styles.eagohHeroPlaceholder}>
+            <BrainCircuit color={eagoh ? domainTone : palette.muted} size={64} />
+          </View>
+        )}
+        {/* atmospheric tint + bottom fade */}
+        <LinearGradient
+          colors={[`${domainTone}22`, "transparent", "rgba(5,9,16,0.96)"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+        {/* top badges */}
+        <View style={styles.eagohHeroTopRow}>
+          <View style={[styles.eagohHeroDomainTag, { borderColor: `${domainTone}55`, backgroundColor: `${domainTone}1F` }]}>
+            <Text style={[styles.eagohHeroDomainText, { color: domainTone }]} numberOfLines={1}>
+              {eagoh ? (domain?.label ?? eagoh.domain ?? "No domain").toUpperCase() : "SELECT EAGOH"}
+            </Text>
+          </View>
           {eagoh ? (
-            <View style={styles.eagohStatusRow}>
+            <View style={[styles.eagohHeroStatus, { borderColor: isActive ? "rgba(0,255,178,0.4)" : palette.line, backgroundColor: isActive ? "rgba(0,255,178,0.12)" : "rgba(255,255,255,0.04)" }]}>
               <View style={[styles.eagohStatusDot, { backgroundColor: isActive ? palette.success : palette.muted, shadowColor: isActive ? palette.success : "transparent" }]} />
               <Text style={[styles.eagohStatusText, { color: isActive ? palette.success : palette.muted }]}>
-                {isActive ? "SHELL ACTIVE" : "SHELL DORMANT"}
+                {isActive ? "SHELL ACTIVE" : "DORMANT"}
               </Text>
             </View>
           ) : null}
         </View>
-      </View>
-      <View style={[styles.eagohChangeBtn, { borderColor: `${domainTone}44`, backgroundColor: `${domainTone}14` }]}>
-        <Text style={[styles.eagohChangeText, { color: domainTone }]}>{hasMultiple ? "Change" : "Select"}</Text>
-        <ChevronDown color={domainTone} size={13} />
+        {/* bottom name + change button */}
+        <View style={styles.eagohHeroBottom}>
+          <View style={styles.eagohHeroNameWrap}>
+            <Text style={styles.eagohHeroLabel}>ACTIVE EAGOH</Text>
+            <Text style={styles.eagohHeroName} numberOfLines={1}>
+              {eagoh?.name || "No EAGOH selected"}
+            </Text>
+          </View>
+          <View style={[styles.eagohChangeBtn, { borderColor: `${domainTone}55`, backgroundColor: `${domainTone}22` }]}>
+            <Text style={[styles.eagohChangeText, { color: domainTone }]}>{hasMultiple ? "Change" : "Select"}</Text>
+            <ChevronDown color={domainTone} size={13} />
+          </View>
+        </View>
       </View>
     </Pressable>
   );
@@ -718,51 +729,69 @@ const styles = StyleSheet.create({
   },
   emptyText: { color: palette.gold, fontSize: 12, fontWeight: "800" },
 
-  // EAGOH card
-  eagohCard: {
+  // EAGOH hero card (featured image)
+  eagohHero: {
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 16,
+    overflow: "hidden",
+    shadowOpacity: 0.4,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 6,
+  },
+  eagohHeroImageWrap: {
+    height: 260,
+    width: "100%",
+    backgroundColor: "rgba(8,16,30,0.92)",
+    justifyContent: "space-between",
+  },
+  eagohHeroImage: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
+  eagohHeroPlaceholder: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },
+  eagohHeroTopRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    paddingHorizontal: 12,
+    paddingTop: 12,
+  },
+  eagohHeroDomainTag: {
+    paddingHorizontal: 9,
+    paddingVertical: 5,
     borderRadius: 5,
     borderWidth: 1,
-    borderColor: palette.lineStrong,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    marginBottom: 16,
-    overflow: "hidden",
-    shadowOpacity: 0.28,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 4,
+    maxWidth: "60%",
   },
-  eagohCardLeft: { flexDirection: "row", alignItems: "center", gap: 11, flex: 1 },
-  eagohCardAvatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 6,
-    borderWidth: 1.5,
+  eagohHeroDomainText: { fontSize: 9, fontWeight: "900", letterSpacing: 1.4 },
+  eagohHeroStatus: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.03)",
-    overflow: "hidden",
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 0 },
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 5,
+    borderWidth: 1,
   },
-  eagohCardImg: { width: "100%", height: "100%" },
-  eagohCardInfo: { flex: 1 },
-  eagohCardName: { color: palette.text, fontSize: 15, fontWeight: "900", letterSpacing: -0.2 },
-  eagohCardDomain: { fontSize: 11, fontWeight: "800", marginTop: 1, letterSpacing: 0.2 },
-  eagohStatusRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 4 },
+  eagohHeroBottom: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+    gap: 10,
+  },
+  eagohHeroNameWrap: { flex: 1 },
+  eagohHeroLabel: { color: palette.cyan, fontSize: 9, fontWeight: "900", letterSpacing: 2, marginBottom: 3 },
+  eagohHeroName: { color: palette.text, fontSize: 24, fontWeight: "900", letterSpacing: -0.5 },
   eagohStatusDot: { width: 6, height: 6, borderRadius: 3, shadowOpacity: 0.9, shadowRadius: 5, shadowOffset: { width: 0, height: 0 } },
   eagohStatusText: { fontSize: 8, fontWeight: "900", letterSpacing: 1.2 },
   eagohChangeBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 6,
     borderWidth: 1,
   },
   eagohChangeText: { fontSize: 11, fontWeight: "900", letterSpacing: 0.3 },

@@ -7,7 +7,7 @@ import { useRouter } from "expo-router";
 import { Activity, Award, BadgeCheck, BarChart3, BrainCircuit, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Shield, Sparkles, Swords, TrendingUp, Trophy, Wrench, WalletCards, Zap } from "lucide-react-native";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/providers/AuthProvider";
 import { useProfile } from "@/providers/ProfileProvider";
@@ -62,7 +62,6 @@ const sections: ProfileSection[] = [
   { id: "wallet", kind: "wallet" },
   { id: "subscriptions", kind: "subscriptions" },
   { id: "edge", kind: "edge" },
-  { id: "labs", kind: "labs" },
 ];
 
 const labs: LabEnvironment[] = [
@@ -298,6 +297,42 @@ export default function ProfileScreen(): JSX.Element {
         <View>
           <View style={styles.topline}><View><Text style={styles.kicker}>PROFILE CHAMBER</Text><Text style={styles.title} numberOfLines={1}>{displayAlias}</Text></View><View style={[styles.rankPill, reputation ? { borderColor: `${repRankColor(reputation.rank)}66`, backgroundColor: `${repRankColor(reputation.rank)}22` } : undefined]}><Crown color={reputation ? repRankColor(reputation.rank) : palette.gold} size={16} /><Text style={[styles.rankText, reputation ? { color: repRankColor(reputation.rank) } : undefined]}>{reputation?.rank ?? "No Rank"}</Text></View></View>
           <ProfileChamber lab={selectedLab} eagoh={primaryEagoh} />
+          <View style={styles.labCarouselWrap}>
+            <View style={styles.labCarouselHeader}>
+              <FlaskConical color={palette.cyan} size={14} />
+              <Text style={styles.labCarouselEyebrow}>LAB ENVIRONMENTS</Text>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.labCarouselContent} decelerationRate="fast" snapToInterval={212}>
+              {labs.map((lab) => {
+                const isSelected = lab.id === selectedLabId;
+                const accent = toneColor(lab.tone);
+                return (
+                  <Pressable
+                    key={lab.id}
+                    onPress={() => handleLabPress(lab.id)}
+                    style={({ pressed }) => [
+                      styles.labCarouselCard,
+                      { borderColor: isSelected ? accent : palette.line },
+                      isSelected && { backgroundColor: `${accent}14` },
+                      pressed && { opacity: 0.8 },
+                    ]}
+                  >
+                    <LinearGradient colors={[`${accent}22`, "rgba(3,6,11,0.7)"]} style={StyleSheet.absoluteFill} />
+                    <View style={[styles.labCarouselThumb, { borderColor: `${accent}66` }]}>
+                      <LinearGradient colors={[`${accent}44`, "rgba(255,255,255,0.04)"]} style={StyleSheet.absoluteFill} />
+                      <Layers3 color={accent} size={20} />
+                    </View>
+                    <Text style={styles.labCarouselName} numberOfLines={1}>{lab.name}</Text>
+                    <View style={styles.labCarouselMeta}>
+                      {lab.premium ? <Lock color={palette.gold} size={10} /> : <BadgeCheck color={palette.success} size={10} />}
+                      <Text style={[styles.labCarouselCost, { color: lab.premium ? palette.gold : palette.success }]}>{lab.premium ? `${lab.cost}E` : "Free"}</Text>
+                    </View>
+                    {isSelected ? <View style={[styles.labCarouselActive, { backgroundColor: `${accent}28`, borderColor: accent }]}><Text style={[styles.labCarouselActiveText, { color: accent }]}>ACTIVE</Text></View> : null}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
           <Pressable onPress={handleSignOut} disabled={signOutState.isPending} style={({ pressed }) => [styles.signOutButton, pressed && { opacity: 0.85 }]}>
             {signOutState.isPending ? <ActivityIndicator color={palette.ember} /> : <LogOut color={palette.ember} size={16} />}
             <Text style={styles.signOutText}>{signOutState.isPending ? "Signing out…" : "Sign out"}</Text>
@@ -532,7 +567,13 @@ export default function ProfileScreen(): JSX.Element {
           <LinearGradient colors={["rgba(124,92,255,0.18)", "rgba(54,245,255,0.06)", "rgba(10,18,30,0.88)"]} style={StyleSheet.absoluteFill} />
           <SectionTitle eyebrow="SUBSCRIPTION MATRIX" title="Choose your intelligence tier" />
           <Text style={styles.panelBody}>Mock-only plan comparison for Edge flow, EAGOH capacity, Fanatic Team bindings, marketplace access, labs, and synchronization depth.</Text>
-          {subscriptionPlans.map((plan) => <SubscriptionCard key={plan.name} item={plan} />)}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.subCarouselContent} decelerationRate="fast" snapToInterval={292}>
+            {subscriptionPlans.map((plan) => (
+              <View key={plan.name} style={styles.subCarouselCard}>
+                <SubscriptionCard item={plan} />
+              </View>
+            ))}
+          </ScrollView>
         </View>
       );
     }
@@ -589,13 +630,7 @@ export default function ProfileScreen(): JSX.Element {
         </View>
       );
     }
-    return (
-      <View style={styles.panel}>
-        <SectionTitle eyebrow="LAB ENVIRONMENTS" title="Choose the profile headquarters" />
-        <Text style={styles.panelBody}>One dormant lab is free. Ten premium environments display a mock 25 Edge cost and use optimized layered backgrounds instead of live 3D.</Text>
-        <FlatList data={labs} keyExtractor={(lab) => lab.id} renderItem={({ item: lab }) => <LabCard item={lab} selected={lab.id === selectedLabId} onPress={handleLabPress} />} scrollEnabled={false} {...LIST_PERFORMANCE_PROPS} />
-      </View>
-    );
+    return <></>;
   }, [handleLabPress, selectedLab, selectedLabId, reputationStats, reputation, currentTier, handleSetTestTier]);
 
   return (
@@ -740,7 +775,7 @@ const styles = StyleSheet.create({
   badgeInfo: { flex: 1 },
   badgeName: { color: palette.gold, fontSize: 13, fontWeight: "900" as const },
   badgeDesc: { color: palette.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
-  signOutButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 14, paddingVertical: 12, borderRadius: 5, borderWidth: 1, borderColor: "rgba(255,107,53,0.32)", backgroundColor: "rgba(255,107,53,0.08)" },
+  signOutButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12, borderRadius: 5, borderWidth: 1, borderColor: "rgba(255,107,53,0.32)", backgroundColor: "rgba(255,107,53,0.08)" },
   // Domain breakdown
   domainPanel: { borderRadius: 5, padding: 14, marginTop: 14, backgroundColor: "rgba(10,18,30,0.82)", borderWidth: 1, borderColor: "rgba(54,245,255,0.18)", gap: 10 },
   domainGrid: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: 8 },
@@ -749,6 +784,21 @@ const styles = StyleSheet.create({
   domainChipLabel: { fontSize: 11, fontWeight: "900" as const },
   domainChipCount: { color: palette.muted, fontSize: 10, fontWeight: "800" as const, marginLeft: 2 },
   signOutText: { color: palette.ember, fontWeight: "900", fontSize: 13, letterSpacing: 1.2 },
+  // Lab carousel
+  labCarouselWrap: { marginTop: 20, paddingVertical: 24, borderTopWidth: 1, borderBottomWidth: 1, borderColor: "rgba(54,245,255,0.12)" },
+  labCarouselHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 14, paddingHorizontal: 2 },
+  labCarouselEyebrow: { color: palette.cyan, fontSize: 11, fontWeight: "900", letterSpacing: 1.8 },
+  labCarouselContent: { paddingHorizontal: 2, gap: 12 },
+  labCarouselCard: { width: 200, minHeight: 140, borderRadius: 5, padding: 14, borderWidth: 1, backgroundColor: "rgba(3,6,11,0.48)", overflow: "hidden", justifyContent: "space-between" },
+  labCarouselThumb: { width: 48, height: 48, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", overflow: "hidden", marginBottom: 10 },
+  labCarouselName: { color: palette.text, fontWeight: "900", fontSize: 13, marginBottom: 4 },
+  labCarouselMeta: { flexDirection: "row", alignItems: "center", gap: 5 },
+  labCarouselCost: { fontWeight: "900", fontSize: 11 },
+  labCarouselActive: { position: "absolute", top: 8, right: 8, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 5, borderWidth: 1 },
+  labCarouselActiveText: { fontSize: 8, fontWeight: "900", letterSpacing: 0.8 },
+  // Subscription carousel
+  subCarouselContent: { gap: 12 },
+  subCarouselCard: { width: 280 },
   // Rankings
   rankingsSection: { marginTop: 8, paddingTop: 10, borderTopWidth: 1, borderTopColor: palette.line },
   rankingsList: { gap: 6 },

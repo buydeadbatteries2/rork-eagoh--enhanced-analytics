@@ -79,7 +79,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-const GENERIC_EAGOH_URI = "https://r2-pub.rork.com/projects/30jz62ydo3j4acgin2ijq/assets/3b1d40ba-55c7-455d-8f5b-62cb1162197a.png";
+const GENERIC_EAGOH_URI = "https://pub-e001eb4506b145aa938b5d3badbff6a5.r2.dev/attachments/pl6p26j6a1qg1xdfjloo1.png";
 
 type OptionTone = "cyan" | "gold" | "violet" | "ember" | "success";
 type ForgeOption = { id: string; label: string; detail?: string; tone: OptionTone };

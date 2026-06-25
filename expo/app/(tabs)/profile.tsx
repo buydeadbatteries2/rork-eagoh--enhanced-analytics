@@ -1,5 +1,6 @@
 import { palette } from "@/constants/colors";
 import { LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/components/PerformancePrimitives";
+import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
@@ -11,6 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/providers/AuthProvider";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useEagohs } from "@/providers/EagohProvider";
+import type { EagohRecord } from "@/services/eagohs";
 import type { SubscriptionTier } from "@/services/profile";
 import {
   getEagohReputationDisplay,
@@ -134,8 +136,10 @@ function SectionTitle({ eyebrow, title }: { eyebrow: string; title: string }): J
   );
 }
 
-function ProfileChamber({ lab }: { lab: LabEnvironment }): JSX.Element {
+function ProfileChamber({ lab, eagoh }: { lab: LabEnvironment; eagoh?: EagohRecord }): JSX.Element {
   const accent = toneColor(lab.tone);
+  const eagohName = eagoh?.name ?? "No EAGOH";
+  const renderUri = eagoh?.image_url ?? eagoh?.image_thumb_url ?? null;
   return (
     <View style={styles.chamber}>
       <LinearGradient colors={[`${accent}33`, "rgba(10,18,30,0.88)", "rgba(3,6,11,0.98)"]} style={StyleSheet.absoluteFill} />
@@ -145,9 +149,15 @@ function ProfileChamber({ lab }: { lab: LabEnvironment }): JSX.Element {
       <View style={styles.scanPanelLeft}><Text style={[styles.scanText, { color: accent }]}>{lab.grid}</Text></View>
       <View style={styles.scanPanelRight}><Radar color={accent} size={20} /><Text style={styles.scanSub}>LIVE MOCK</Text></View>
       <View style={styles.eagohBody}>
-        <OptimizedEagohImage tone={lab.tone} label="NOVA" size="profile" highResolution />
-        <View style={styles.armLeft} /><View style={styles.armRight} />
-        <View style={styles.legWrap}><View style={styles.leg} /><View style={styles.leg} /></View>
+        {renderUri ? (
+          <View style={[styles.chamberRender, { borderColor: `${accent}66`, shadowColor: accent }]}>
+            <Image source={{ uri: renderUri }} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" transition={160} recyclingKey={eagoh?.id ?? eagohName} placeholder={{ blurhash: "L03RUkfQfQfQfQfQfQfQfQfQfQfQ" }} />
+            <LinearGradient colors={["transparent", "rgba(3,6,11,0.42)"]} style={StyleSheet.absoluteFill} />
+          </View>
+        ) : (
+          <OptimizedEagohImage tone={lab.tone} label={eagohName.slice(0, 8).toUpperCase()} size="profile" highResolution />
+        )}
+        <Text style={[styles.chamberEagohName, { color: accent }]} numberOfLines={1}>{eagohName}</Text>
       </View>
       <View style={styles.chamberFooter}>
         <Text style={styles.chamberName}>{lab.name}</Text>
@@ -287,7 +297,7 @@ export default function ProfileScreen(): JSX.Element {
       return (
         <View>
           <View style={styles.topline}><View><Text style={styles.kicker}>PROFILE CHAMBER</Text><Text style={styles.title} numberOfLines={1}>{displayAlias}</Text></View><View style={[styles.rankPill, reputation ? { borderColor: `${repRankColor(reputation.rank)}66`, backgroundColor: `${repRankColor(reputation.rank)}22` } : undefined]}><Crown color={reputation ? repRankColor(reputation.rank) : palette.gold} size={16} /><Text style={[styles.rankText, reputation ? { color: repRankColor(reputation.rank) } : undefined]}>{reputation?.rank ?? "No Rank"}</Text></View></View>
-          <ProfileChamber lab={selectedLab} />
+          <ProfileChamber lab={selectedLab} eagoh={primaryEagoh} />
           <Pressable onPress={handleSignOut} disabled={signOutState.isPending} style={({ pressed }) => [styles.signOutButton, pressed && { opacity: 0.85 }]}>
             {signOutState.isPending ? <ActivityIndicator color={palette.ember} /> : <LogOut color={palette.ember} size={16} />}
             <Text style={styles.signOutText}>{signOutState.isPending ? "Signing out…" : "Sign out"}</Text>
@@ -616,6 +626,8 @@ const styles = StyleSheet.create({
   scanPanelRight: { position: "absolute", top: 20, right: 16, alignItems: "center", gap: 4 },
   scanSub: { color: palette.muted, fontSize: 9, fontWeight: "800" },
   eagohBody: { position: "absolute", top: 92, alignSelf: "center", alignItems: "center", width: 190, height: 330 },
+  chamberRender: { width: 180, height: 270, borderRadius: 5, borderWidth: 1, overflow: "hidden", backgroundColor: palette.void, shadowOpacity: 0.5, shadowRadius: 22, shadowOffset: { width: 0, height: 0 } },
+  chamberEagohName: { marginTop: 14, fontSize: 22, fontWeight: "900", letterSpacing: 0.4 },
   head: { width: 72, height: 80, borderRadius: 5, borderWidth: 2, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(244,250,255,0.08)" },
   headText: { fontSize: 20, fontWeight: "900" },
   shoulders: { width: 150, height: 38, borderTopLeftRadius: 5, borderTopRightRadius: 5, borderWidth: 1, marginTop: 8, backgroundColor: "rgba(244,250,255,0.08)" },

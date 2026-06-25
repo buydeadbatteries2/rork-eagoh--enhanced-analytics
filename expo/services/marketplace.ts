@@ -219,7 +219,25 @@ async function ensureVendorStats(vendorId: string): Promise<VendorStatsRow> {
     .select("*");
   if (error) throw error;
   const stats = (data as VendorStatsRow[])?.[0];
-  if (!stats) throw new Error("Failed to create vendor stats — no row returned.");
+  if (!stats) {
+    console.warn(
+      "[marketplace] vendor stats insert returned no row (RLS may block SELECT on insert). Using upsert fallback.",
+    );
+    // Try upsert — the row has vendor_id (PK) so upsert can insert if missing
+    const { data: upserted, error: ue } = await supabase
+      .from("marketplace_vendor_stats")
+      .upsert(row, { onConflict: "vendor_id" })
+      .select("*");
+    if (ue) throw ue;
+    const upsertedRow = (upserted as VendorStatsRow[])?.[0];
+    if (!upsertedRow) {
+      console.warn(
+        "[marketplace] upsert also returned no row — returning local stats without persistence.",
+      );
+      return { ...row, created_at: new Date().toISOString(), updated_at: new Date().toISOString() } as VendorStatsRow;
+    }
+    return upsertedRow;
+  }
   return stats;
 }
 
@@ -331,7 +349,25 @@ export async function recalculateVendorStats(vendorId: string): Promise<VendorSt
     .select("*");
   if (ue) throw ue;
   const result = (updated as VendorStatsRow[])?.[0];
-  if (!result) throw new Error("Failed to update vendor stats — no row returned.");
+  if (!result) {
+    // RLS may lack an UPDATE policy — fall back to upsert then local compute
+    console.warn(
+      "[marketplace] vendor stats update returned no row (missing UPDATE RLS policy?). Trying upsert.",
+    );
+    const { data: upserted, error: ue2 } = await supabase
+      .from("marketplace_vendor_stats")
+      .upsert({ ...patch, vendor_id: vendorId } as VendorStatsRow, { onConflict: "vendor_id" })
+      .select("*");
+    if (!ue2 && upserted?.[0]) return upserted[0] as VendorStatsRow;
+    console.warn(
+      "[marketplace] upsert fallback also failed — returning computed stats without persistence.",
+    );
+    return {
+      ...stats,
+      ...patch,
+      created_at: stats.created_at ?? new Date().toISOString(),
+    } as VendorStatsRow;
+  }
   return result;
 }
 

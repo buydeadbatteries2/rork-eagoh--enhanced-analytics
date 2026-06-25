@@ -607,12 +607,20 @@ alter table public.marketplace_vendor_stats enable row level security;
 
 drop policy if exists "mvs_select_all" on public.marketplace_vendor_stats;
 drop policy if exists "mvs_vendor_insert" on public.marketplace_vendor_stats;
+drop policy if exists "mvs_vendor_update" on public.marketplace_vendor_stats;
+drop policy if exists "mvs_vendor_delete" on public.marketplace_vendor_stats;
 
 create policy "mvs_select_all" on public.marketplace_vendor_stats
   for select using (true);
 
 create policy "mvs_vendor_insert" on public.marketplace_vendor_stats
   for insert with check (auth.uid() = vendor_id);
+
+create policy "mvs_vendor_update" on public.marketplace_vendor_stats
+  for update using (auth.uid() = vendor_id) with check (auth.uid() = vendor_id);
+
+create policy "mvs_vendor_delete" on public.marketplace_vendor_stats
+  for delete using (auth.uid() = vendor_id);
 
 -- =============================================================================
 -- SPONSORED BANNERS (active banner placements)

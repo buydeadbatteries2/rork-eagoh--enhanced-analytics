@@ -157,10 +157,11 @@ async function ensureVendorStats(vendorId: string): Promise<VendorStatsRow> {
   const { data, error } = await supabase
     .from("marketplace_vendor_stats")
     .insert(row)
-    .select("*")
-    .single();
+    .select("*");
   if (error) throw error;
-  return data as VendorStatsRow;
+  const stats = (data as VendorStatsRow[])?.[0];
+  if (!stats) throw new Error("Failed to create vendor stats — no row returned.");
+  return stats;
 }
 
 /** Recalculate vendor stats from live data. */
@@ -268,10 +269,11 @@ export async function recalculateVendorStats(vendorId: string): Promise<VendorSt
     .from("marketplace_vendor_stats")
     .update(patch)
     .eq("vendor_id", vendorId)
-    .select("*")
-    .single();
+    .select("*");
   if (ue) throw ue;
-  return updated as VendorStatsRow;
+  const result = (updated as VendorStatsRow[])?.[0];
+  if (!result) throw new Error("Failed to update vendor stats — no row returned.");
+  return result;
 }
 
 // ── Listings CRUD ──────────────────────────────────────────────────────
@@ -442,14 +444,15 @@ export async function createListing(input: CreateListingInput): Promise<Marketpl
   const { data, error } = await supabase
     .from("marketplace_listings")
     .insert(row)
-    .select("*")
-    .single();
+    .select("*");
   if (error) throw error;
+  const listing = (data as MarketplaceListingRow[])?.[0];
+  if (!listing) throw new Error("Failed to create listing — no row returned.");
 
   // Recalc vendor stats
   await recalculateVendorStats(input.vendorId);
 
-  return data as MarketplaceListingRow;
+  return listing;
 }
 
 export async function toggleListingActive(listingId: string, active: boolean): Promise<void> {

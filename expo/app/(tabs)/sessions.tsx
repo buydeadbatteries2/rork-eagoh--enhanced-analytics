@@ -15,6 +15,7 @@ import * as Haptics from "expo-haptics";
 import {
   Activity,
   ArrowLeft,
+  Award,
   BarChart3,
   BrainCircuit,
   Check,
@@ -25,13 +26,20 @@ import {
   Cpu,
   Eye,
   Flame,
+  Globe,
   Hash,
   Orbit,
   Plus,
   Save,
   Search,
+  Shield,
   Sparkles,
+  Star,
+  Swords,
   Tag,
+  TrendingUp,
+  Trophy,
+  Users,
   X,
   Zap,
 } from "lucide-react-native";
@@ -52,6 +60,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
+import { useAuth } from "@/providers/AuthProvider";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useEagohs } from "@/providers/EagohProvider";
@@ -73,6 +82,32 @@ import {
   type ConfidenceLevel,
   type OpenIntelligenceRow,
 } from "@/services/openIntelligence";
+import {
+  canParticipateInFactions,
+  getFactionLimit,
+  getFactionFull,
+  getMemberStatusColor,
+  getMemberStatusLabel,
+  getRoleLabel,
+  listAllFactions,
+  listUserFactions,
+  listPendingInvites,
+  type FactionRow,
+  type FactionInviteRow,
+  type MemberStatus,
+} from "@/services/factions";
+import {
+  getUserRankings,
+  type LeaderboardEntry,
+} from "@/services/leaderboards";
+import {
+  getEagohReputationDisplay,
+  rankColor as repRankColor,
+  RANK_TIERS,
+  BADGE_DEFINITIONS,
+  type EagohReputationDisplay,
+  type RankTier,
+} from "@/services/reputation";
 
 type SessionTone = "cyan" | "gold" | "violet" | "ember" | "success";
 
@@ -96,6 +131,8 @@ const sessionTypes: SessionType[] = [
   { id: "oracle", name: "Oracle Deep Dive", description: "Elite predictive modeling", costRange: "150-300 Edge", minCost: 150, maxCost: 300, model: "Oracle-Synapse", duration: "~15 min", tone: "violet", active: false },
   { id: "premium-event", name: "Premium Event", description: "Event-focused intelligence", costRange: "75-150 Edge", minCost: 75, maxCost: 150, model: "Event-Lens Pro", duration: "~10 min", tone: "ember", active: false },
   { id: "open-intelligence", name: "Open Intelligence", description: "Feed observations to your EAGOH", costRange: "10-25 Edge", minCost: 10, maxCost: 25, model: "Open Intel", duration: "Per entry", tone: "gold", active: true },
+  { id: "faction-network", name: "Faction Network", description: "Intelligence alliance network", costRange: "Free", minCost: 0, maxCost: 0, model: "Network View", duration: "Live", tone: "violet", active: true },
+  { id: "my-rankings", name: "My Rankings", description: "Leaderboard positions & badges", costRange: "Free", minCost: 0, maxCost: 0, model: "Rankings View", duration: "Live", tone: "gold", active: true },
 ];
 
 type ChatMessage = { id: string; sender: "user" | "analyst"; text: string; confidence?: number; cost?: number };
@@ -129,6 +166,8 @@ function sessionIcon(id: string, color: string, size: number): React.ReactNode {
   if (id === "oracle") return <Orbit color={color} size={size} />;
   if (id === "premium-event") return <Flame color={color} size={size} />;
   if (id === "open-intelligence") return <Eye color={color} size={size} />;
+  if (id === "faction-network") return <Shield color={color} size={size} />;
+  if (id === "my-rankings") return <Trophy color={color} size={size} />;
   return <BrainCircuit color={color} size={size} />;
 }
 
@@ -1045,6 +1084,425 @@ function OpenIntelSession({
   );
 }
 
+// ── Faction Network Session ──
+function FactionNetworkSession({
+  selectedEagohId,
+  onBack,
+  onChangeEagoh,
+}: {
+  selectedEagohId: string;
+  onBack: () => void;
+  onChangeEagoh: () => void;
+}): JSX.Element {
+  const { eagohs } = useEagohs();
+  const { profile } = useProfile();
+  const tier = profile?.subscription_tier ?? "free";
+  const canParticipate = canParticipateInFactions(tier);
+
+  const selectedEagoh = useMemo(() => eagohs.find((e) => e.id === selectedEagohId), [eagohs, selectedEagohId]);
+  const userTier = profile?.subscription_tier ?? "free";
+  const domain = useMemo(() => INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh?.domain), [selectedEagoh]);
+  const domainTone = domain ? toneColor(domain.tone) : palette.cyan;
+
+  const userFactionsQuery = useQuery<FactionRow[]>({
+    queryKey: ["factions", "user", profile?.id],
+    enabled: !!profile?.id,
+    queryFn: () => profile?.id ? listUserFactions(profile.id) : Promise.resolve([]),
+  });
+
+  const allFactionsQuery = useQuery<FactionRow[]>({
+    queryKey: ["factions", "all"],
+    enabled: true,
+    queryFn: () => listAllFactions(),
+  });
+
+  const invitesQuery = useQuery<FactionInviteRow[]>({
+    queryKey: ["factions", "invites", profile?.id],
+    enabled: !!profile?.id,
+    queryFn: () => profile?.id ? listPendingInvites(profile.id) : Promise.resolve([]),
+  });
+
+  const userFactions = userFactionsQuery.data ?? [];
+  const allFactions = allFactionsQuery.data ?? [];
+  const invites = invitesQuery.data ?? [];
+  const userFactionIds = new Set(userFactions.map((f) => f.id));
+  const discoverable = allFactions.filter((f) => !userFactionIds.has(f.id));
+
+  const limits = getFactionLimit(tier);
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.setupWrap}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
+    >
+      <Pressable onPress={onBack} style={styles.backBtn}>
+        <ArrowLeft color={palette.muted} size={18} />
+        <Text style={styles.backText}>Sessions</Text>
+      </Pressable>
+
+      <ScrollView
+        style={styles.setupScroll}
+        contentContainerStyle={styles.setupScrollContent}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        showsVerticalScrollIndicator={false}
+      >
+        {/* EAGOH Hero Card */}
+        <SelectedEagohCard
+          eagoh={selectedEagoh ?? null}
+          onPress={onChangeEagoh}
+          hasMultiple={eagohs.length > 1}
+          userTier={userTier}
+        />
+
+        {/* Faction Network header */}
+        <View style={styles.oiHeader}>
+          <View style={[styles.setupIconRing, { borderColor: palette.violet }]}>
+            <Shield color={palette.violet} size={28} />
+          </View>
+          <Text style={styles.setupTitle}>Faction Network</Text>
+          <Text style={styles.oiSub}>
+            {canParticipate
+              ? `${tier.replace("_", " ")} tier · ${limits.maxFactions} Faction${limits.maxFactions !== 1 ? "s" : ""}, ${limits.includedSlots} slots`
+              : "Upgrade to Pro, Oracle Elite, or Syndicate to join Factions."}
+          </Text>
+        </View>
+
+        {/* My Factions */}
+        {userFactions.length > 0 ? (
+          <View style={styles.oiBlock}>
+            <Text style={styles.oiLabel}>MY FACTIONS</Text>
+            <View style={styles.fnFactionList}>
+              {userFactions.map((faction) => {
+                const facColor = getDomainColor(faction.intelligence_domain);
+                return (
+                  <View key={faction.id} style={[styles.fnFactionCard, { borderColor: `${facColor}33`, backgroundColor: `${facColor}0A` }]}>
+                    <View style={[styles.fnEmblem, { borderColor: facColor, backgroundColor: `${facColor}18` }]}>
+                      <Text style={[styles.fnEmblemText, { color: facColor }]}>
+                        {(faction.emblem ?? faction.name.slice(0, 2)).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={styles.fnFactionInfo}>
+                      <Text style={styles.fnFactionName} numberOfLines={1}>{faction.name}</Text>
+                      {faction.motto ? (
+                        <Text style={styles.fnFactionMotto} numberOfLines={1}>{faction.motto}</Text>
+                      ) : null}
+                      <View style={styles.fnFactionMeta}>
+                        <Users color={palette.muted} size={10} />
+                        <Text style={styles.fnFactionMetaText}>{faction.current_members}/{faction.max_members}</Text>
+                        <View style={[styles.fnDomainBadge, { backgroundColor: `${facColor}18`, borderColor: `${facColor}33` }]}>
+                          <Text style={[styles.fnDomainBadgeText, { color: facColor }]}>
+                            {INTELLIGENCE_DOMAINS.find((d) => d.id === faction.intelligence_domain)?.label ?? faction.intelligence_domain}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                    <View style={styles.fnFactionScore}>
+                      <Text style={[styles.fnFactionScoreValue, { color: facColor }]}>{faction.influence_score}</Text>
+                      <Text style={styles.fnFactionScoreLabel}>Inf.</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        ) : (
+          <View style={styles.fnEmptyBanner}>
+            <Globe color={palette.muted} size={18} />
+            <Text style={styles.fnEmptyText}>
+              {canParticipate
+                ? "You haven't joined any Factions yet. Browse discoverable Factions below."
+                : "Faction creation and membership require a paid subscription."}
+            </Text>
+          </View>
+        )}
+
+        {/* Invites */}
+        {invites.length > 0 ? (
+          <View style={styles.oiBlock}>
+            <Text style={styles.oiLabel}>PENDING INVITES ({invites.length})</Text>
+            <View style={styles.fnInviteList}>
+              {invites.map((invite) => {
+                const invRole = getRoleLabel(invite.role);
+                return (
+                  <View key={invite.id} style={styles.fnInviteCard}>
+                    <Shield color={palette.violet} size={16} />
+                    <View style={styles.fnInviteInfo}>
+                      <Text style={styles.fnInviteTitle}>Faction Invitation</Text>
+                      <Text style={styles.fnInviteRole}>{invRole}</Text>
+                    </View>
+                    <View style={styles.fnInviteStatus}>
+                      <Clock color={palette.muted} size={12} />
+                      <Text style={styles.fnInviteStatusText}>Pending</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
+
+        {/* Discoverable Factions */}
+        {discoverable.length > 0 ? (
+          <View style={styles.oiBlock}>
+            <Text style={styles.oiLabel}>DISCOVER FACTIONS</Text>
+            <View style={styles.fnFactionList}>
+              {discoverable.map((faction) => {
+                const facColor = getDomainColor(faction.intelligence_domain);
+                return (
+                  <View key={faction.id} style={[styles.fnDiscoverCard, { borderColor: `${facColor}22` }]}>
+                    <View style={[styles.fnEmblem, { borderColor: facColor, backgroundColor: `${facColor}14` }]}>
+                      <Text style={[styles.fnEmblemText, { color: facColor }]}>
+                        {(faction.emblem ?? faction.name.slice(0, 2)).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={styles.fnFactionInfo}>
+                      <Text style={styles.fnFactionName} numberOfLines={1}>{faction.name}</Text>
+                      <Text style={styles.fnFactionDesc} numberOfLines={2}>
+                        {faction.description || "No description provided."}
+                      </Text>
+                      <View style={styles.fnFactionMeta}>
+                        <Users color={palette.muted} size={10} />
+                        <Text style={styles.fnFactionMetaText}>{faction.current_members}/{faction.max_members} members</Text>
+                        {faction.fanatic_team_focus ? (
+                          <>
+                            <Swords color={palette.gold} size={10} />
+                            <Text style={[styles.fnFactionMetaText, { color: palette.gold }]}>{faction.fanatic_team_focus}</Text>
+                          </>
+                        ) : null}
+                      </View>
+                    </View>
+                    <View style={styles.fnFactionScore}>
+                      <Text style={[styles.fnFactionScoreValue, { color: facColor }]}>{faction.influence_score}</Text>
+                      <Text style={styles.fnFactionScoreLabel}>Inf.</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
+
+        {/* Empty state */}
+        {userFactions.length === 0 && discoverable.length === 0 ? (
+          <View style={styles.fnEmptyBanner}>
+            <Shield color={palette.violet} size={24} />
+            <Text style={styles.fnEmptyText}>No Factions available yet. Check back later or create your own!</Text>
+          </View>
+        ) : null}
+
+        <View style={{ height: 80 }} />
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+// ── My Rankings Session ──
+function MyRankingsSession({
+  selectedEagohId,
+  onBack,
+  onChangeEagoh,
+}: {
+  selectedEagohId: string;
+  onBack: () => void;
+  onChangeEagoh: () => void;
+}): JSX.Element {
+  const { eagohs } = useEagohs();
+  const { profile } = useProfile();
+  const { user } = useAuth();
+
+  const [reputation, setReputation] = useState<EagohReputationDisplay | null>(null);
+  const [rankings, setRankings] = useState<{ eagohEntries: LeaderboardEntry[]; bestCategory: string; rankChanges: any[] } | null>(null);
+
+  const selectedEagoh = useMemo(() => eagohs.find((e) => e.id === selectedEagohId), [eagohs, selectedEagohId]);
+  const userTier = profile?.subscription_tier ?? "free";
+  const domain = useMemo(() => INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh?.domain), [selectedEagoh]);
+  const domainTone = domain ? toneColor(domain.tone) : palette.cyan;
+
+  useEffect(() => {
+    if (!selectedEagoh?.id || !user?.id) return;
+    getEagohReputationDisplay(selectedEagoh.id, user.id)
+      .then(setReputation)
+      .catch(() => undefined);
+  }, [selectedEagoh?.id, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    getUserRankings(user.id)
+      .then(setRankings)
+      .catch(() => undefined);
+  }, [user?.id]);
+
+  const currentRank = reputation?.rank ?? "—";
+  const repScore = reputation?.reputationScore ?? 0;
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.setupWrap}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
+    >
+      <Pressable onPress={onBack} style={styles.backBtn}>
+        <ArrowLeft color={palette.muted} size={18} />
+        <Text style={styles.backText}>Sessions</Text>
+      </Pressable>
+
+      <ScrollView
+        style={styles.setupScroll}
+        contentContainerStyle={styles.setupScrollContent}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        showsVerticalScrollIndicator={false}
+      >
+        {/* EAGOH Hero Card */}
+        <SelectedEagohCard
+          eagoh={selectedEagoh ?? null}
+          onPress={onChangeEagoh}
+          hasMultiple={eagohs.length > 1}
+          userTier={userTier}
+        />
+
+        {/* My Rankings header */}
+        <View style={styles.oiHeader}>
+          <View style={[styles.setupIconRing, { borderColor: palette.gold }]}>
+            <Trophy color={palette.gold} size={28} />
+          </View>
+          <Text style={styles.setupTitle}>My Rankings</Text>
+          <Text style={styles.oiSub}>
+            Rank: {currentRank} · Reputation: {repScore}
+          </Text>
+        </View>
+
+        {/* Rank Progression */}
+        {reputation ? (
+          <View style={styles.oiBlock}>
+            <Text style={styles.oiLabel}>RANK PROGRESSION</Text>
+            <View style={styles.mrRankBar}>
+              {RANK_TIERS.map((tier) => {
+                const thresholds: Record<string, number> = {
+                  Dormant: 0, Activated: 1, Bronze: 15, Silver: 30, Gold: 45,
+                  Platinum: 60, Diamond: 75, Oracle: 88, "Syndicate Prime": 96,
+                };
+                const threshold = thresholds[tier] ?? 0;
+                const achieved = repScore >= threshold;
+                const tr = tier as RankTier;
+                const rc = repRankColor(tr);
+                return (
+                  <View key={tier} style={[styles.mrRankStep, achieved && { backgroundColor: rc }]}>
+                    <View style={[styles.mrRankStepDot, achieved && { backgroundColor: rc, borderColor: rc }]} />
+                  </View>
+                );
+              })}
+            </View>
+            <View style={styles.mrRankLabels}>
+              {RANK_TIERS.filter((_, i) => i % 2 === 0).map((tier) => (
+                <Text key={tier} style={styles.mrRankLabel} numberOfLines={1}>{tier}</Text>
+              ))}
+            </View>
+          </View>
+        ) : null}
+
+        {/* Leaderboard Rankings */}
+        {rankings && rankings.eagohEntries.length > 0 ? (
+          <View style={styles.oiBlock}>
+            <Text style={styles.oiLabel}>LEADERBOARD POSITIONS</Text>
+            <View style={styles.mrRankingList}>
+              {rankings.eagohEntries.slice(0, 10).map((entry) => {
+                const rc = repRankColor(entry.rank_tier as RankTier);
+                return (
+                  <View key={entry.eagoh_id} style={[styles.mrRankingCard, { borderColor: `${rc}22` }]}>
+                    <View style={[styles.mrRankMedal, entry.rank <= 3 && { borderColor: `${rc}44`, backgroundColor: `${rc}16` }]}>
+                      {entry.rank <= 3 ? (
+                        <Award color={rc} size={16} />
+                      ) : (
+                        <Text style={styles.mrRankMedalText}>#{entry.rank}</Text>
+                      )}
+                    </View>
+                    <View style={styles.mrRankingInfo}>
+                      <Text style={styles.mrRankingName} numberOfLines={1}>{entry.eagoh_name}</Text>
+                      <View style={styles.mrRankingMeta}>
+                        <View style={[styles.mrRankBadge, { borderColor: `${rc}44`, backgroundColor: `${rc}16` }]}>
+                          <Text style={[styles.mrRankBadgeText, { color: rc }]}>{entry.rank_tier}</Text>
+                        </View>
+                        <Text style={styles.mrRankingOwner}>by {entry.owner_username || "Anonymous"}</Text>
+                      </View>
+                    </View>
+                    <View style={styles.mrRankingScore}>
+                      <Text style={[styles.mrRankingScoreValue, { color: rc }]}>{entry.reputation_score}</Text>
+                      <Text style={styles.mrRankingScoreLabel}>Rep</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
+
+        {/* Best Category */}
+        {rankings?.bestCategory ? (
+          <View style={styles.mrBestCat}>
+            <Trophy color={palette.gold} size={16} />
+            <Text style={styles.mrBestCatLabel}>Strongest Category:</Text>
+            <Text style={styles.mrBestCatValue}>{rankings.bestCategory.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}</Text>
+          </View>
+        ) : null}
+
+        {/* Rank Changes */}
+        {rankings && rankings.rankChanges.length > 0 ? (
+          <View style={styles.oiBlock}>
+            <Text style={styles.oiLabel}>RECENT RANK CHANGES</Text>
+            <View style={styles.mrChangesList}>
+              {rankings.rankChanges.slice(0, 5).map((change: any, i: number) => (
+                <View key={i} style={styles.mrChangeRow}>
+                  <TrendingUp
+                    color={change.new_rank && change.previous_rank && change.new_rank !== change.previous_rank ? palette.success : palette.muted}
+                    size={14}
+                  />
+                  <Text style={styles.mrChangeText}>
+                    {change.previous_rank ?? "None"} → {change.new_rank}
+                  </Text>
+                  <Text style={styles.mrChangeDate}>{new Date(change.created_at).toLocaleDateString()}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : null}
+
+        {/* Badges */}
+        {reputation && reputation.badges.length > 0 ? (
+          <View style={styles.oiBlock}>
+            <Text style={styles.oiLabel}>EARNED BADGES</Text>
+            <View style={styles.mrBadgesGrid}>
+              {reputation.badges.map((badge) => (
+                <View key={badge.id} style={styles.mrBadgeCard}>
+                  <Award color={palette.gold} size={18} />
+                  <View style={styles.mrBadgeInfo}>
+                    <Text style={styles.mrBadgeName}>{badge.badge_name}</Text>
+                    <Text style={styles.mrBadgeDesc} numberOfLines={2}>{badge.badge_description}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : null}
+
+        {/* No data */}
+        {!reputation && !rankings?.eagohEntries.length ? (
+          <View style={styles.fnEmptyBanner}>
+            <BarChart3 color={palette.muted} size={24} />
+            <Text style={styles.fnEmptyText}>
+              No ranking data available yet. Forge an EAGOH and start building reputation to appear on leaderboards.
+            </Text>
+          </View>
+        ) : null}
+
+        <View style={{ height: 80 }} />
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
 // ── Main screen ──
 export default function SessionsScreen(): JSX.Element {
   const { eagohs } = useEagohs();
@@ -1110,6 +1568,44 @@ export default function SessionsScreen(): JSX.Element {
       return (
         <SafeAreaView style={styles.safe} edges={["top"]}>
           <OpenIntelSession
+            selectedEagohId={selectedEagohId}
+            onBack={handleBack}
+            onChangeEagoh={handleChangeEagoh}
+          />
+          {showPicker ? (
+            <EagohPicker
+              eagohs={eagohs}
+              selectedId={selectedEagohId}
+              onSelect={handleSelectEagoh}
+              onClose={() => setShowPicker(false)}
+            />
+          ) : null}
+        </SafeAreaView>
+      );
+    }
+    if (activeSession.id === "faction-network") {
+      return (
+        <SafeAreaView style={styles.safe} edges={["top"]}>
+          <FactionNetworkSession
+            selectedEagohId={selectedEagohId}
+            onBack={handleBack}
+            onChangeEagoh={handleChangeEagoh}
+          />
+          {showPicker ? (
+            <EagohPicker
+              eagohs={eagohs}
+              selectedId={selectedEagohId}
+              onSelect={handleSelectEagoh}
+              onClose={() => setShowPicker(false)}
+            />
+          ) : null}
+        </SafeAreaView>
+      );
+    }
+    if (activeSession.id === "my-rankings") {
+      return (
+        <SafeAreaView style={styles.safe} edges={["top"]}>
+          <MyRankingsSession
             selectedEagohId={selectedEagohId}
             onBack={handleBack}
             onChangeEagoh={handleChangeEagoh}
@@ -1733,4 +2229,182 @@ const styles = StyleSheet.create({
   oiFeedScoreLabel: { color: palette.muted, fontSize: 9, fontWeight: "700", textTransform: "uppercase" as const },
   oiFeedScoreVal: { fontSize: 11, fontWeight: "900" },
   oiFeedScoreDivider: { width: 1, height: 12, backgroundColor: palette.line },
+
+  // ── Faction Network ──────────────────────────────────────────────────
+  fnFactionList: { gap: 8 },
+  fnFactionCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 5,
+    padding: 12,
+    borderWidth: 1,
+  },
+  fnEmblem: {
+    width: 44,
+    height: 44,
+    borderRadius: 5,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fnEmblemText: { fontSize: 14, fontWeight: "900" },
+  fnFactionInfo: { flex: 1, gap: 2 },
+  fnFactionName: { color: palette.text, fontSize: 14, fontWeight: "900" },
+  fnFactionMotto: { color: palette.muted, fontSize: 11, fontWeight: "700", fontStyle: "italic" },
+  fnFactionMeta: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 2 },
+  fnFactionMetaText: { color: palette.muted, fontSize: 10, fontWeight: "700" },
+  fnDomainBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  fnDomainBadgeText: { fontSize: 9, fontWeight: "900" },
+  fnFactionScore: { alignItems: "center", minWidth: 40 },
+  fnFactionScoreValue: { fontSize: 18, fontWeight: "900" },
+  fnFactionScoreLabel: { color: palette.muted, fontSize: 9, fontWeight: "900", textTransform: "uppercase" },
+  fnDiscoverCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 5,
+    padding: 12,
+    borderWidth: 1,
+    backgroundColor: "rgba(10,18,30,0.40)",
+  },
+  fnFactionDesc: { color: palette.muted, fontSize: 10, fontWeight: "700", lineHeight: 14 },
+  fnEmptyBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 14,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(10,18,30,0.35)",
+    marginBottom: 14,
+  },
+  fnEmptyText: { color: palette.muted, fontSize: 12, fontWeight: "700", flex: 1, lineHeight: 17 },
+  fnInviteList: { gap: 6 },
+  fnInviteCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 5,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "rgba(138,92,255,0.28)",
+    backgroundColor: "rgba(138,92,255,0.06)",
+  },
+  fnInviteInfo: { flex: 1 },
+  fnInviteTitle: { color: palette.text, fontSize: 13, fontWeight: "900" },
+  fnInviteRole: { color: palette.muted, fontSize: 11, fontWeight: "700" },
+  fnInviteStatus: { flexDirection: "row", alignItems: "center", gap: 4 },
+  fnInviteStatusText: { color: palette.muted, fontSize: 10, fontWeight: "700" },
+
+  // ── My Rankings ──────────────────────────────────────────────────────
+  mrRankBar: {
+    flexDirection: "row",
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    overflow: "hidden",
+  },
+  mrRankStep: { flex: 1 },
+  mrRankStepDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    alignSelf: "center",
+    marginTop: -1,
+  },
+  mrRankLabels: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 8,
+    paddingHorizontal: 2,
+  },
+  mrRankLabel: { color: palette.muted, fontSize: 9, fontWeight: "800", flex: 1, textAlign: "center" },
+  mrRankingList: { gap: 6 },
+  mrRankingCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 5,
+    padding: 10,
+    borderWidth: 1,
+    backgroundColor: "rgba(10,18,30,0.40)",
+  },
+  mrRankMedal: {
+    width: 36,
+    height: 36,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: palette.line,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(3,6,11,0.5)",
+  },
+  mrRankMedalText: { color: palette.muted, fontSize: 13, fontWeight: "900" },
+  mrRankingInfo: { flex: 1, gap: 3 },
+  mrRankingName: { color: palette.text, fontSize: 14, fontWeight: "900" },
+  mrRankingMeta: { flexDirection: "row", alignItems: "center", gap: 6 },
+  mrRankBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  mrRankBadgeText: { fontSize: 9, fontWeight: "900" },
+  mrRankingOwner: { color: palette.muted, fontSize: 10, fontWeight: "700" },
+  mrRankingScore: { alignItems: "center", minWidth: 44 },
+  mrRankingScoreValue: { fontSize: 18, fontWeight: "900" },
+  mrRankingScoreLabel: { color: palette.muted, fontSize: 9, fontWeight: "900", textTransform: "uppercase" },
+  mrBestCat: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 12,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "rgba(255,184,77,0.28)",
+    backgroundColor: "rgba(255,184,77,0.08)",
+    marginBottom: 14,
+  },
+  mrBestCatLabel: { color: palette.muted, fontSize: 12, fontWeight: "700" },
+  mrBestCatValue: { color: palette.gold, fontSize: 13, fontWeight: "900", flex: 1 },
+  mrChangesList: { gap: 4 },
+  mrChangeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 6,
+  },
+  mrChangeText: { color: palette.text, fontSize: 12, fontWeight: "700", flex: 1 },
+  mrChangeDate: { color: palette.muted, fontSize: 10, fontWeight: "700" },
+  mrBadgesGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  mrBadgeCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    padding: 10,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(10,18,30,0.40)",
+    flexBasis: "47%",
+    flexGrow: 1,
+  },
+  mrBadgeInfo: { flex: 1, gap: 2 },
+  mrBadgeName: { color: palette.text, fontSize: 12, fontWeight: "900" },
+  mrBadgeDesc: { color: palette.muted, fontSize: 10, fontWeight: "700", lineHeight: 14 },
 });

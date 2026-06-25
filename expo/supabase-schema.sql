@@ -42,6 +42,28 @@ create policy "profiles_self_update"
   on public.profiles for update
   using (auth.uid() = id);
 
+-- ---------------------------------------------------------------------------
+-- Trigger: auto-create public.profiles when a new auth.users row is inserted
+-- The app may also handle this client-side; this trigger acts as a safe fallback.
+-- ---------------------------------------------------------------------------
+create or replace function public.handle_new_user()
+returns trigger as $$
+begin
+  insert into public.profiles (id, username)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data ->> 'username', split_part(new.email, '@', 1))
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$ language plpgsql security definer;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
 -- =============================================================================
 -- EAGOHS (core identity)
 -- =============================================================================
@@ -49,7 +71,7 @@ create table if not exists public.eagohs (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
-  sport text not null,
+  sport text,
   gender text,
   domain text,
   body_type text,
@@ -409,8 +431,15 @@ drop policy if exists "fsi_select_all" on public.faction_shared_intelligence;
 drop policy if exists "fsi_self_insert" on public.faction_shared_intelligence;
 drop policy if exists "fsi_commander_delete" on public.faction_shared_intelligence;
 
-create policy "fsi_select_all" on public.faction_shared_intelligence
-  for select using (true);
+create policy "fsi_select_faction_members" on public.faction_shared_intelligence
+  for select using (
+    exists (
+      select 1 from public.faction_members fm
+      where fm.faction_id = faction_id
+        and fm.user_id = auth.uid()
+        and fm.status = 'active'
+    )
+  );
 
 create policy "fsi_self_insert" on public.faction_shared_intelligence
   for insert with check (auth.uid() = user_id);
@@ -758,3 +787,24 @@ create policy "eb_owner_insert" on public.eagoh_badges
 insert into storage.buckets (id, name, public)
   values ('eagoh-renders', 'eagoh-renders', true)
   on conflict (id) do nothing;
+
+-- Storage policies for eagoh-renders bucket
+-- Authenticated users can read all renders (bucket is public)
+create policy "eagoh_renders_select_authenticated"
+  on storage.objects for select
+  using (bucket_id = 'eagoh-renders' and auth.role() = 'authenticated');
+
+-- Authenticated users can upload their own renders
+create policy "eagoh_renders_insert_authenticated"
+  on storage.objects for insert
+  with check (bucket_id = 'eagoh-renders' and auth.role() = 'authenticated');
+
+-- Users can update only their own renders
+create policy "eagoh_renders_update_owner"
+  on storage.objects for update
+  using (bucket_id = 'eagoh-renders' and auth.uid() = owner);
+
+-- Users can delete only their own renders
+create policy "eagoh_renders_delete_owner"
+  on storage.objects for delete
+  using (bucket_id = 'eagoh-renders' and auth.uid() = owner);

@@ -1,8 +1,10 @@
 /**
  * EAGOH Forge — stepped wizard creation flow.
  *
- * Keeps the existing Forge generation pipeline intact while replacing the
- * collapsible customization panels with a guided step-by-step builder.
+ * Removed Face & Features step. Customization fields (headwear, body gear,
+ * footwear, accessories, notes) are now free-text descriptions. Sport and
+ * Fanatic Teams only appear when the selected domain is Sports. Forge Lab
+ * is its own separate step.
  */
 
 import { palette } from "@/constants/colors";
@@ -20,7 +22,6 @@ import {
   Check,
   Cpu,
   Crown,
-  Eye,
   Footprints,
   Gem,
   Heart,
@@ -52,7 +53,6 @@ type WizardStepId =
   | "domain"
   | "gender"
   | "bodyType"
-  | "face"
   | "headwear"
   | "bodyGear"
   | "footwear"
@@ -61,8 +61,9 @@ type WizardStepId =
   | "cybernetic"
   | "pose"
   | "dna"
+  | "sport"
   | "teams"
-  | "sportLab";
+  | "lab";
 
 type WizardStep = {
   id: WizardStepId;
@@ -85,34 +86,6 @@ const bodyTypes: ForgeOption[] = [
   { id: "heavy-husky", label: "Heavy / Husky", tone: "violet" },
 ];
 
-const headwearOptions: ForgeOption[] = [
-  { id: "cowboy-hat", label: "Cowboy hat", tone: "gold" },
-  { id: "tactical-hood", label: "Tactical hood", tone: "ember" },
-  { id: "cyber-helmet", label: "Cyber helmet", tone: "cyan" },
-  { id: "sports-visor", label: "Sports visor", tone: "success" },
-];
-
-const bodyGearOptions: ForgeOption[] = [
-  { id: "football-pads", label: "Football pads", tone: "gold" },
-  { id: "tactical-jacket", label: "Tactical jacket", tone: "ember" },
-  { id: "cyber-armor", label: "Cyber armor", tone: "cyan" },
-  { id: "sports-gear", label: "Sports gear", tone: "success" },
-];
-
-const footwearOptions: ForgeOption[] = [
-  { id: "running-shoes", label: "Running shoes", tone: "success" },
-  { id: "tactical-boots", label: "Tactical boots", tone: "ember" },
-  { id: "futuristic-cleats", label: "Futuristic cleats", tone: "cyan" },
-];
-
-const accessoryOptions: ForgeOption[] = [
-  { id: "diamond-chains", label: "Diamond chains", tone: "gold" },
-  { id: "watches", label: "Watches", tone: "cyan" },
-  { id: "rings", label: "Rings", tone: "violet" },
-  { id: "pendants", label: "Pendants", tone: "success" },
-  { id: "visors", label: "Visors", tone: "ember" },
-];
-
 const intensities: ForgeOption[] = [
   { id: "minimal", label: "Minimal", detail: "subtle neural seams", tone: "success" },
   { id: "moderate", label: "Moderate", detail: "visible optic glow", tone: "cyan" },
@@ -121,10 +94,16 @@ const intensities: ForgeOption[] = [
 ];
 
 const poses: ForgeOption[] = [
-  { id: "arms-crossed", label: "Arms crossed", detail: "unshaken authority", tone: "gold" },
-  { id: "strategist-stance", label: "Strategist stance", detail: "mid-call calculation", tone: "violet" },
-  { id: "relaxed-confidence", label: "Relaxed confidence", detail: "premium calm", tone: "success" },
-  { id: "tactical-stance", label: "Tactical stance", detail: "ready to deploy", tone: "cyan" },
+  { id: "arms-crossed", label: "Arms Crossed", detail: "unshaken authority", tone: "gold" },
+  { id: "strategist-stance", label: "Strategist Stance", detail: "mid-call calculation", tone: "violet" },
+  { id: "tactical-ready", label: "Tactical Ready", detail: "ready to deploy", tone: "cyan" },
+  { id: "confident-walk", label: "Confident Walk", detail: "powerful stride", tone: "ember" },
+  { id: "power-stance", label: "Power Stance", detail: "commanding presence", tone: "gold" },
+  { id: "hands-behind-back", label: "Hands Behind Back", detail: "calm composure", tone: "success" },
+  { id: "one-hand-forward", label: "One Hand Forward", detail: "directive gesture", tone: "cyan" },
+  { id: "champion-pose", label: "Champion Pose", detail: "victory stance", tone: "gold" },
+  { id: "leaning-forward", label: "Leaning Forward", detail: "intense focus", tone: "violet" },
+  { id: "calm-sentinel", label: "Calm Sentinel", detail: "serene guardian", tone: "success" },
 ];
 
 const archetypes: ForgeOption[] = [
@@ -317,13 +296,12 @@ export default function ForgeScreen(): JSX.Element {
   const [gender, setGender] = useState<string>("neutral");
   const [domain, setDomain] = useState<string>("sports");
   const [bodyType, setBodyType] = useState<string>("average");
-  const [faceFeatures, setFaceFeatures] = useState<string>("");
   const [styleNotes, setStyleNotes] = useState<string>("");
   const [dna, setDna] = useState<string[]>([]);
   const [teams, setTeams] = useState<string[]>([]);
   const [appearance, setAppearance] = useState<Record<string, string>>({});
   const [cyberneticIntensity, setCyberneticIntensity] = useState<string>("moderate");
-  const [pose, setPose] = useState<string>("relaxed-confidence");
+  const [pose, setPose] = useState<string>("calm-sentinel");
   const [lab, setLab] = useState<string>("neon-vault");
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
   const [forgeError, setForgeError] = useState<string | null>(null);
@@ -333,24 +311,32 @@ export default function ForgeScreen(): JSX.Element {
   const maxEagohs = TIER_MAX_EAGOHS[currentTier] ?? 0;
   const forgeCost = getForgeCost("initial");
   const domainLabel = INTELLIGENCE_DOMAINS.find((d) => d.id === domain)?.label ?? domain;
+  const isSportsDomain = domain === "sports";
 
-  const wizardSteps: WizardStep[] = useMemo(() => [
-    { id: "name", title: "EAGOH Name", eyebrow: "Step 01", hint: "Give your intelligence unit a memorable identity.", icon: <Crown color={palette.gold} size={15} /> },
-    { id: "domain", title: "Intelligence Domain", eyebrow: "Step 02", hint: "This controls what your EAGOH is allowed to answer.", icon: <BrainCircuit color={palette.violet} size={15} /> },
-    { id: "gender", title: "Gender", eyebrow: "Step 03", hint: "Choose the presentation direction for the chassis.", icon: <ScanFace color={palette.cyan} size={15} /> },
-    { id: "bodyType", title: "Body Type", eyebrow: "Step 04", hint: "Tune the physical silhouette without changing the core EAGOH chassis.", icon: <Shirt color={palette.ember} size={15} /> },
-    { id: "face", title: "Face & Features", eyebrow: "Step 05", hint: "Describe facial details, optics, dome features, or expression.", icon: <Eye color={palette.success} size={15} /> },
-    { id: "headwear", title: "Headwear", eyebrow: "Step 06", hint: "Add headwear that modifies the glass-dome chassis.", icon: <Crown color={palette.gold} size={15} /> },
-    { id: "bodyGear", title: "Body Gear", eyebrow: "Step 07", hint: "Select armor, jackets, pads, or other body gear.", icon: <Shirt color={palette.cyan} size={15} /> },
-    { id: "footwear", title: "Footwear", eyebrow: "Step 08", hint: "Choose how the lower chassis is finished.", icon: <Footprints color={palette.success} size={15} /> },
-    { id: "accessories", title: "Accessories", eyebrow: "Step 09", hint: "Add premium details that do not replace the EAGOH frame.", icon: <Gem color={palette.violet} size={15} /> },
-    { id: "notes", title: "Additional Notes", eyebrow: "Step 10", hint: "Optional style, material, and attitude notes.", icon: <SlidersHorizontal color={palette.gold} size={15} /> },
-    { id: "cybernetic", title: "Cybernetic Intensity", eyebrow: "Step 11", hint: "Set how mechanical and activated the EAGOH feels.", icon: <Cpu color={palette.ember} size={15} /> },
-    { id: "pose", title: "Fixed Pose", eyebrow: "Step 12", hint: "Pick the final full-body stance used for generation.", icon: <ScanFace color={palette.cyan} size={15} /> },
-    { id: "dna", title: "DNA Archetypes", eyebrow: "Step 13", hint: "Optional personality signals layered into the chassis.", icon: <Sparkles color={palette.violet} size={15} /> },
-    { id: "teams", title: "Fanatic Teams", eyebrow: "Step 14", hint: "Optional mock faction affinity — no real logos or marks.", icon: <Heart color={palette.ember} size={15} /> },
-    { id: "sportLab", title: "Sport & Lab", eyebrow: "Step 15", hint: "Finalize the sport signal and forge lab environment.", icon: <Zap color={palette.gold} size={15} /> },
-  ], []);
+  const wizardSteps: WizardStep[] = useMemo(() => {
+    const base: WizardStep[] = [
+      { id: "name", title: "EAGOH Name", eyebrow: "Step 01", hint: "Give your intelligence unit a memorable identity.", icon: <Crown color={palette.gold} size={15} /> },
+      { id: "domain", title: "Intelligence Domain", eyebrow: "Step 02", hint: "This controls what your EAGOH is allowed to answer.", icon: <BrainCircuit color={palette.violet} size={15} /> },
+      { id: "gender", title: "Gender", eyebrow: "Step 03", hint: "Choose the presentation direction for the chassis.", icon: <ScanFace color={palette.cyan} size={15} /> },
+      { id: "bodyType", title: "Body Type", eyebrow: "Step 04", hint: "Tune the physical silhouette without changing the core EAGOH chassis.", icon: <Shirt color={palette.ember} size={15} /> },
+      { id: "headwear", title: "Headwear", eyebrow: "Step 05", hint: "Describe the headwear — a helmet, hood, visor, or other head gear.", icon: <Crown color={palette.gold} size={15} /> },
+      { id: "bodyGear", title: "Body Gear", eyebrow: "Step 06", hint: "Describe armor, jackets, pads, or other body gear.", icon: <Shirt color={palette.cyan} size={15} /> },
+      { id: "footwear", title: "Footwear", eyebrow: "Step 07", hint: "Describe how the lower chassis is finished — boots, shoes, cleats.", icon: <Footprints color={palette.success} size={15} /> },
+      { id: "accessories", title: "Accessories", eyebrow: "Step 08", hint: "Describe premium details — chains, watches, rings, visors.", icon: <Gem color={palette.violet} size={15} /> },
+      { id: "notes", title: "Additional Notes", eyebrow: "Step 09", hint: "Optional style, material, and attitude notes.", icon: <SlidersHorizontal color={palette.gold} size={15} /> },
+      { id: "cybernetic", title: "Cybernetic Intensity", eyebrow: "Step 10", hint: "Set how mechanical and activated the EAGOH feels.", icon: <Cpu color={palette.ember} size={15} /> },
+      { id: "pose", title: "Fixed Pose", eyebrow: "Step 11", hint: "Pick the final full-body stance used for generation.", icon: <ScanFace color={palette.cyan} size={15} /> },
+      { id: "dna", title: "DNA Archetypes", eyebrow: "Step 12", hint: "Optional personality signals layered into the chassis.", icon: <Sparkles color={palette.violet} size={15} /> },
+    ];
+
+    if (isSportsDomain) {
+      base.push({ id: "sport", title: "Sport", eyebrow: "Step 13", hint: "Select the primary sport this EAGOH analyzes.", icon: <Zap color={palette.gold} size={15} /> });
+      base.push({ id: "teams", title: "Fanatic Teams", eyebrow: "Step 14", hint: "Optional mock faction affinity — no real logos or marks.", icon: <Heart color={palette.ember} size={15} /> });
+    }
+
+    base.push({ id: "lab", title: "Forge Lab", eyebrow: isSportsDomain ? "Step 15" : "Step 13", hint: "Select the lab environment for this EAGOH.", icon: <Cpu color={palette.cyan} size={15} /> });
+    return base;
+  }, [isSportsDomain]);
 
   const currentStep = wizardSteps[currentStepIndex];
   const isLastStep = currentStepIndex === wizardSteps.length - 1;
@@ -362,7 +348,6 @@ export default function ForgeScreen(): JSX.Element {
     gender,
     domain,
     bodyType,
-    faceFeatures,
     styleNotes,
     dna,
     teams,
@@ -370,10 +355,10 @@ export default function ForgeScreen(): JSX.Element {
     cyberneticIntensity,
     pose,
     lab,
-  }), [name, sport, gender, domain, bodyType, faceFeatures, styleNotes, dna, teams, appearance, cyberneticIntensity, pose, lab]);
+  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, appearance, cyberneticIntensity, pose, lab]);
 
-  const setAppearanceField = useCallback((category: string, optionId: string): void => {
-    setAppearance((prev) => ({ ...prev, [category]: optionId }));
+  const setAppearanceField = useCallback((category: string, text: string): void => {
+    setAppearance((prev) => ({ ...prev, [category]: text }));
   }, []);
 
   const toggleDna = useCallback((id: string): void => {
@@ -447,6 +432,18 @@ export default function ForgeScreen(): JSX.Element {
     cancelForge();
   }, [cancelForge]);
 
+  const renderTextInput = useCallback((value: string, onChange: (text: string) => void, placeholder: string): JSX.Element => (
+    <TextInput
+      value={value}
+      onChangeText={onChange}
+      placeholder={placeholder}
+      placeholderTextColor={palette.muted}
+      style={[styles.input, styles.textArea]}
+      multiline
+      returnKeyType="done"
+    />
+  ), []);
+
   const renderStepContent = useCallback((): JSX.Element => {
     if (currentStep.id === "name") {
       return (
@@ -492,33 +489,20 @@ export default function ForgeScreen(): JSX.Element {
       return <>{bodyTypes.map((opt) => <OptionChip key={opt.id} option={opt} selected={bodyType === opt.id} onPress={setBodyType} />)}</>;
     }
 
-    if (currentStep.id === "face") {
-      return (
-        <TextInput
-          value={faceFeatures}
-          onChangeText={setFaceFeatures}
-          placeholder="e.g. angular jaw, neon optic visor…"
-          placeholderTextColor={palette.muted}
-          style={[styles.input, styles.textArea]}
-          multiline
-        />
-      );
-    }
-
     if (currentStep.id === "headwear") {
-      return <>{headwearOptions.map((opt) => <OptionChip key={opt.id} option={opt} selected={appearance.headwear === opt.id} onPress={(id) => setAppearanceField("headwear", id)} />)}</>;
+      return renderTextInput(appearance.headwear ?? "", (text) => setAppearanceField("headwear", text), "e.g. a sleek futuristic helmet with neon visor, tactical hood with optic glow…");
     }
 
     if (currentStep.id === "bodyGear") {
-      return <>{bodyGearOptions.map((opt) => <OptionChip key={opt.id} option={opt} selected={appearance.body === opt.id} onPress={(id) => setAppearanceField("body", id)} />)}</>;
+      return renderTextInput(appearance.body ?? "", (text) => setAppearanceField("body", text), "e.g. form-fitting cyber armor with layered alloy plates, tactical jacket with utility seams…");
     }
 
     if (currentStep.id === "footwear") {
-      return <>{footwearOptions.map((opt) => <OptionChip key={opt.id} option={opt} selected={appearance.footwear === opt.id} onPress={(id) => setAppearanceField("footwear", id)} />)}</>;
+      return renderTextInput(appearance.footwear ?? "", (text) => setAppearanceField("footwear", text), "e.g. reinforced tactical boots with carbon plating, futuristic cleats with neon soles…");
     }
 
     if (currentStep.id === "accessories") {
-      return <>{accessoryOptions.map((opt) => <OptionChip key={opt.id} option={opt} selected={appearance.accessories === opt.id} onPress={(id) => setAppearanceField("accessories", id)} />)}</>;
+      return renderTextInput(appearance.accessories ?? "", (text) => setAppearanceField("accessories", text), "e.g. premium diamond chains, oversized cybernetic wrist module, stacked metallic rings…");
     }
 
     if (currentStep.id === "notes") {
@@ -526,7 +510,7 @@ export default function ForgeScreen(): JSX.Element {
         <TextInput
           value={styleNotes}
           onChangeText={setStyleNotes}
-          placeholder="e.g. matte black finish, gold trim…"
+          placeholder="e.g. matte black finish, gold trim, holographic accents…"
           placeholderTextColor={palette.muted}
           style={[styles.input, styles.textArea]}
           multiline
@@ -546,6 +530,15 @@ export default function ForgeScreen(): JSX.Element {
       return <>{archetypes.map((opt) => <OptionChip key={opt.id} option={opt} selected={dna.includes(opt.id)} onPress={toggleDna} />)}</>;
     }
 
+    if (currentStep.id === "sport") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Primary sport focus for this EAGOH.</Text>
+          {sports.map((opt) => <OptionChip key={opt.id} option={opt} selected={sport === opt.id} onPress={setSport} />)}
+        </>
+      );
+    }
+
     if (currentStep.id === "teams") {
       return (
         <>
@@ -557,28 +550,23 @@ export default function ForgeScreen(): JSX.Element {
 
     return (
       <>
-        <Text style={styles.sectionHint}>Primary sport</Text>
-        {sports.map((opt) => <OptionChip key={opt.id} option={opt} selected={sport === opt.id} onPress={setSport} />)}
-        <Text style={[styles.sectionHint, styles.labHint]}>Forge lab</Text>
+        <Text style={styles.sectionHint}>Select the forge lab environment for image generation.</Text>
         {labs.map((opt) => <OptionChip key={opt.id} option={opt} selected={lab === opt.id} onPress={setLab} />)}
       </>
     );
   }, [
-    appearance.accessories,
-    appearance.body,
-    appearance.footwear,
-    appearance.headwear,
+    appearance,
     bodyType,
     currentStep.id,
     cyberneticIntensity,
     dna,
     domain,
-    faceFeatures,
     gender,
     goNext,
     lab,
     name,
     pose,
+    renderTextInput,
     setAppearanceField,
     sport,
     styleNotes,
@@ -592,7 +580,7 @@ export default function ForgeScreen(): JSX.Element {
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <View style={[styles.previewArea, { height: previewHeight }]}> 
+        <View style={[styles.previewArea, { height: previewHeight }]}>
           <ForgePreview
             name={name}
             sport={sport}
@@ -604,7 +592,7 @@ export default function ForgeScreen(): JSX.Element {
           />
           <View style={[styles.tierChipFloat, currentTier !== "free" && styles.tierChipFloatPaid]}>
             <Zap color={currentTier !== "free" ? palette.cyan : palette.muted} size={11} />
-            <Text style={[styles.tierChipFloatText, currentTier !== "free" && { color: palette.cyan }]}> 
+            <Text style={[styles.tierChipFloatText, currentTier !== "free" && { color: palette.cyan }]}>
               {currentTier.replace("_", " ").toUpperCase()}
             </Text>
           </View>
@@ -842,7 +830,6 @@ const styles = StyleSheet.create({
   permanenceNote: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 5, backgroundColor: "rgba(255,184,77,0.12)", borderWidth: 1, borderColor: "rgba(255,184,77,0.30)", marginBottom: 4 },
   permanenceIcon: { color: palette.gold, fontSize: 16, fontWeight: "900" },
   permanenceText: { color: palette.gold, fontSize: 10, fontWeight: "800", flex: 1 },
-  labHint: { marginTop: 10 },
   input: {
     color: palette.text,
     fontSize: 13,

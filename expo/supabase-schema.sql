@@ -49,6 +49,9 @@ create table if not exists public.eagohs (
   name text not null,
   sport text not null,
   gender text,
+  domain text,
+  body_type text,
+  style_notes text,
   cybernetic_intensity text,
   pose text,
   lab text,
@@ -62,6 +65,9 @@ create table if not exists public.eagohs (
 );
 
 -- additive migrations for existing rows
+alter table public.eagohs add column if not exists domain text;
+alter table public.eagohs add column if not exists body_type text;
+alter table public.eagohs add column if not exists style_notes text;
 alter table public.eagohs add column if not exists image_thumb_url text;
 alter table public.eagohs add column if not exists image_prompt text;
 alter table public.eagohs add column if not exists image_generated_at timestamptz;

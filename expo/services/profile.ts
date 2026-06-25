@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { TIER_MONTHLY_ALLOCATION } from "@/services/edge";
 
 /**
  * Profile service – persists user profile data in the `profiles` Supabase table.
@@ -100,4 +101,16 @@ export async function setSelectedEagohs(userId: string, eagohs: string[]): Promi
 
 export async function setPreferences(userId: string, preferences: ProfilePreferences): Promise<UserProfile> {
   return updateProfile(userId, { preferences });
+}
+
+/**
+ * Subscription Testing Mode — sets tier AND refills subscription Edge.
+ * Does NOT touch purchased Edge. Only for dev/internal testing.
+ */
+export async function setTestTier(userId: string, tier: SubscriptionTier): Promise<UserProfile> {
+  const allocation = TIER_MONTHLY_ALLOCATION[tier] ?? 0;
+  return updateProfile(userId, {
+    subscription_tier: tier,
+    edge_subscription: allocation,
+  });
 }

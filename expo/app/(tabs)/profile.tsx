@@ -3,13 +3,15 @@ import { LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/components/Pe
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
-import { Activity, Award, BadgeCheck, BarChart3, BrainCircuit, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Shield, Sparkles, Swords, TrendingUp, Trophy, WalletCards, Zap } from "lucide-react-native";
+import { Activity, Award, BadgeCheck, BarChart3, BrainCircuit, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Shield, Sparkles, Swords, TrendingUp, Trophy, Wrench, WalletCards, Zap } from "lucide-react-native";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/providers/AuthProvider";
+import { useProfile } from "@/providers/ProfileProvider";
 import { useEagohs } from "@/providers/EagohProvider";
+import type { SubscriptionTier } from "@/services/profile";
 import {
   getEagohReputationDisplay,
   computeRank,
@@ -31,7 +33,7 @@ type LabEnvironment = {
   tone: LabTone;
   grid: string;
 };
-type ProfileSection = { id: string; kind: "hero" | "stats" | "identity" | "features" | "wallet" | "subscriptions" | "edge" | "labs" };
+type ProfileSection = { id: string; kind: "hero" | "stats" | "identity" | "features" | "wallet" | "subscriptions" | "edge" | "labs" | "testMode" };
 type MultiplierTier = { name: string; value: string; detail: string; active: boolean; tone: LabTone };
 type UsageMetric = { label: string; value: string; detail: string; progress: number; tone: LabTone };
 type SubscriptionPlan = {
@@ -50,6 +52,7 @@ type SubscriptionPlan = {
 type Stat = { label: string; value: string; detail: string; tone: LabTone };
 
 const sections: ProfileSection[] = [
+  ...(__DEV__ ? [{ id: "testMode", kind: "testMode" as const }] : []),
   { id: "hero", kind: "hero" },
   { id: "stats", kind: "stats" },
   { id: "features", kind: "features" },
@@ -224,6 +227,7 @@ const LabCard = memo(function LabCard({ item, selected, onPress }: { item: LabEn
 export default function ProfileScreen(): JSX.Element {
   const { user, signOut, signOutState } = useAuth();
   const { eagohs } = useEagohs();
+  const { profile, setTestTier, setSubscriptionTier } = useProfile();
   const router = useRouter();
   const handleSignOut = useCallback((): void => {
     Haptics.selectionAsync().catch(() => undefined);
@@ -268,6 +272,11 @@ export default function ProfileScreen(): JSX.Element {
     ];
   }, [reputation]);
 
+  const currentTier = profile?.subscription_tier ?? "free";
+  const handleSetTestTier = useCallback((tier: SubscriptionTier): void => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+    setTestTier(tier).catch((err: unknown) => console.warn("[testMode] setTestTier failed", err));
+  }, [setTestTier]);
   const handleLabPress = useCallback((id: string): void => {
     setSelectedLabId(id);
     Haptics.selectionAsync().catch(() => undefined);
@@ -526,6 +535,50 @@ export default function ProfileScreen(): JSX.Element {
         </View>
       );
     }
+    if (item.kind === "testMode") {
+      const tiers: { tier: SubscriptionTier; label: string; edge: number; tone: LabTone }[] = [
+        { tier: "free", label: "Free", edge: 0, tone: "cyan" },
+        { tier: "pro", label: "Pro", edge: 600, tone: "cyan" },
+        { tier: "oracle_elite", label: "Oracle Elite", edge: 1400, tone: "gold" },
+        { tier: "syndicate", label: "Syndicate", edge: 3700, tone: "violet" },
+      ];
+      return (
+        <View style={styles.testPanel}>
+          <LinearGradient colors={["rgba(255,107,53,0.14)", "rgba(10,18,30,0.90)", "rgba(3,6,11,0.98)"]} style={StyleSheet.absoluteFill} />
+          <View style={styles.testBanner}>
+            <Wrench color={palette.gold} size={16} />
+            <Text style={styles.testBannerText}>Subscription Test Mode</Text>
+          </View>
+          <Text style={styles.testHint}>RevenueCat not connected</Text>
+          <View style={styles.testButtonGrid}>
+            {tiers.map((t) => {
+              const isActive = currentTier === t.tier;
+              const accent = toneColor(t.tone);
+              const handlePress = (): void => handleSetTestTier(t.tier);
+              return (
+                <Pressable
+                  key={t.tier}
+                  onPress={handlePress}
+                  style={({ pressed }) => [
+                    styles.testButton,
+                    { borderColor: isActive ? accent : palette.line },
+                    isActive && { backgroundColor: `${accent}18` },
+                    pressed && { opacity: 0.8 },
+                  ]}
+                >
+                  <Text style={[styles.testButtonLabel, { color: accent }]}>{t.label}</Text>
+                  <Text style={styles.testButtonEdge}>{t.edge} Edge</Text>
+                  {isActive && <View style={[styles.testActiveDot, { backgroundColor: accent }]} />}
+                </Pressable>
+              );
+            })}
+          </View>
+          <Text style={styles.testCurrentLabel}>
+            Current: <Text style={{ fontWeight: "900", color: palette.text }}>{currentTier.replace("_", " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}</Text>
+          </Text>
+        </View>
+      );
+    }
     return (
       <View style={styles.panel}>
         <SectionTitle eyebrow="LAB ENVIRONMENTS" title="Choose the profile headquarters" />
@@ -533,7 +586,7 @@ export default function ProfileScreen(): JSX.Element {
         <FlatList data={labs} keyExtractor={(lab) => lab.id} renderItem={({ item: lab }) => <LabCard item={lab} selected={lab.id === selectedLabId} onPress={handleLabPress} />} scrollEnabled={false} {...LIST_PERFORMANCE_PROPS} />
       </View>
     );
-  }, [handleLabPress, selectedLab, selectedLabId, reputationStats, reputation]);
+  }, [handleLabPress, selectedLab, selectedLabId, reputationStats, reputation, currentTier, handleSetTestTier]);
 
   return (
     <LinearGradient colors={["#020409", "#07111D", "#03060B"]} style={styles.root}>
@@ -705,4 +758,15 @@ const styles = StyleSheet.create({
   featureInfo: { flex: 1 },
   featureTitle: { color: palette.text, fontSize: 13, fontWeight: "900" },
   featureDesc: { color: palette.muted, fontSize: 11, lineHeight: 16, marginTop: 3 },
+  // Subscription Test Mode
+  testPanel: { borderRadius: 5, padding: 14, backgroundColor: "rgba(10,18,30,0.88)", borderWidth: 1, borderColor: "rgba(255,77,109,0.28)", gap: 12, overflow: "hidden" as const },
+  testBanner: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
+  testBannerText: { color: palette.gold, fontSize: 14, fontWeight: "900" as const, letterSpacing: 1 },
+  testHint: { color: palette.ember, fontSize: 10, fontWeight: "800" as const, letterSpacing: 1.2, textTransform: "uppercase" as const },
+  testButtonGrid: { flexDirection: "row" as const, gap: 8 },
+  testButton: { flex: 1, paddingVertical: 13, paddingHorizontal: 6, borderRadius: 5, borderWidth: 1, alignItems: "center" as const, gap: 6, backgroundColor: "rgba(16,27,42,0.62)", minHeight: 88, position: "relative" as const },
+  testButtonLabel: { fontSize: 11, fontWeight: "900" as const, letterSpacing: 0.8, textTransform: "uppercase" as const },
+  testButtonEdge: { color: palette.muted, fontSize: 10, fontWeight: "800" as const },
+  testActiveDot: { position: "absolute" as const, top: 6, right: 6, width: 8, height: 8, borderRadius: 4 },
+  testCurrentLabel: { color: palette.muted, fontSize: 11, fontWeight: "800" as const, marginTop: 2 },
 });

@@ -538,78 +538,70 @@ function AuthScreen(): JSX.Element {
 
   return (
     <LinearGradient colors={["#03060B", "#111B29"]} style={styles.fullPadded}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.authFlex}>
-        <ScrollView
-          style={styles.authFlex}
-          contentContainerStyle={styles.authScrollContent}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          showsVerticalScrollIndicator={false}
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.authFlex}>
+        <LogoMark size={72} />
+        <Text style={styles.authTitle}>{mode === "signin" ? "Rejoin the grid" : "Create your signal"}</Text>
+        <Text style={styles.authBody}>Sign {mode === "signin" ? "in" : "up"} to access factions, labs, and your EAGOH command layer.</Text>
+        {mode === "signup" ? (
+          <View style={styles.inputField}>
+            <Text style={styles.fieldLabel}>Alias</Text>
+            <TextInput
+              value={username}
+              onChangeText={setUsername}
+              placeholder="nova.eagoh"
+              placeholderTextColor={palette.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.inputControl}
+              editable={!isPending}
+            />
+          </View>
+        ) : null}
+        <View style={styles.inputField}>
+          <Text style={styles.fieldLabel}>Email</Text>
+          <TextInput
+            value={email}
+            onChangeText={setEmail}
+            placeholder="you@signal.net"
+            placeholderTextColor={palette.muted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
+            textContentType="emailAddress"
+            style={styles.inputControl}
+            editable={!isPending}
+          />
+        </View>
+        <View style={styles.inputField}>
+          <Text style={styles.fieldLabel}>Passcode</Text>
+          <TextInput
+            value={password}
+            onChangeText={setPassword}
+            placeholder="••••••••"
+            placeholderTextColor={palette.muted}
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            textContentType={mode === "signup" ? "newPassword" : "password"}
+            style={styles.inputControl}
+            editable={!isPending}
+          />
+        </View>
+        {errorText ? <Text style={styles.errorText}>{errorText}</Text> : null}
+        <Pressable
+          onPress={submit}
+          disabled={isPending}
+          style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed, isPending && styles.primaryButtonDisabled]}
         >
-          <LogoMark size={72} />
-          <Text style={styles.authTitle}>{mode === "signin" ? "Rejoin the grid" : "Create your signal"}</Text>
-          <Text style={styles.authBody}>Sign {mode === "signin" ? "in" : "up"} to access factions, labs, and your EAGOH command layer.</Text>
-          {mode === "signup" ? (
-            <View style={styles.inputField}>
-              <Text style={styles.fieldLabel}>Alias</Text>
-              <TextInput
-                value={username}
-                onChangeText={setUsername}
-                placeholder="nova.eagoh"
-                placeholderTextColor={palette.muted}
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={styles.inputControl}
-                editable={!isPending}
-              />
-            </View>
-          ) : null}
-          <View style={styles.inputField}>
-            <Text style={styles.fieldLabel}>Email</Text>
-            <TextInput
-              value={email}
-              onChangeText={setEmail}
-              placeholder="you@signal.net"
-              placeholderTextColor={palette.muted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="email-address"
-              textContentType="emailAddress"
-              style={styles.inputControl}
-              editable={!isPending}
-            />
-          </View>
-          <View style={styles.inputField}>
-            <Text style={styles.fieldLabel}>Passcode</Text>
-            <TextInput
-              value={password}
-              onChangeText={setPassword}
-              placeholder="••••••••"
-              placeholderTextColor={palette.muted}
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-              textContentType={mode === "signup" ? "newPassword" : "password"}
-              style={styles.inputControl}
-              editable={!isPending}
-            />
-          </View>
-          {errorText ? <Text style={styles.errorText}>{errorText}</Text> : null}
-          <Pressable
-            onPress={submit}
-            disabled={isPending}
-            style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed, isPending && styles.primaryButtonDisabled]}
-          >
-            {isPending ? (
-              <ActivityIndicator color={palette.void} />
-            ) : (
-              <Text style={styles.primaryButtonText}>{mode === "signin" ? "Sign in" : "Create account"}</Text>
-            )}
-          </Pressable>
-          <Pressable onPress={toggleMode} disabled={isPending} style={styles.ghostButton}>
-            <Text style={styles.ghostText}>{mode === "signin" ? "Need an identity? Create one" : "Already verified? Sign in"}</Text>
-          </Pressable>
-        </ScrollView>
+          {isPending ? (
+            <ActivityIndicator color={palette.void} />
+          ) : (
+            <Text style={styles.primaryButtonText}>{mode === "signin" ? "Sign in" : "Create account"}</Text>
+          )}
+        </Pressable>
+        <Pressable onPress={toggleMode} disabled={isPending} style={styles.ghostButton}>
+          <Text style={styles.ghostText}>{mode === "signin" ? "Need an identity? Create one" : "Already verified? Sign in"}</Text>
+        </Pressable>
       </KeyboardAvoidingView>
     </LinearGradient>
   );
@@ -773,13 +765,8 @@ function BannerPurchaseModal({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={() => { reset(); onClose(); }}>
       <View style={styles.modalOverlay}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-          keyboardVerticalOffset={Platform.OS === "ios" ? 24 : 0}
-          style={styles.modalKeyboardWrap}
-        >
-          <View style={styles.modalSheet}>
-            <LinearGradient colors={["#0A1628", "#050D18"]} style={StyleSheet.absoluteFill} />
+        <View style={styles.modalSheet}>
+          <LinearGradient colors={["#0A1628", "#050D18"]} style={StyleSheet.absoluteFill} />
           <View style={styles.modalHandle} />
           <View style={styles.modalHeaderRow}>
             <Megaphone color={palette.cyan} size={20} />
@@ -789,15 +776,9 @@ function BannerPurchaseModal({
             </Pressable>
           </View>
 
-            <ScrollView
-              contentContainerStyle={styles.modalScrollContent}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="interactive"
-              showsVerticalScrollIndicator={false}
-            >
           {/* Select EAGOH */}
           <Text style={styles.modalSectionLabel}>Select EAGOH</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRail} keyboardShouldPersistTaps="handled">
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRail}>
             {myEagohs.map((e: EagohRecord) => (
               <Pressable
                 key={e.id}
@@ -903,9 +884,7 @@ function BannerPurchaseModal({
               </>
             )}
           </Pressable>
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
+        </View>
       </View>
     </Modal>
   );
@@ -991,7 +970,6 @@ const styles = StyleSheet.create({
   authTitle: { color: palette.text, fontSize: 36, lineHeight: 40, fontWeight: "900", marginTop: 34 },
   authBody: { color: palette.muted, fontSize: 15, lineHeight: 22, marginTop: 10, marginBottom: 26 },
   authFlex: { flex: 1 },
-  authScrollContent: { flexGrow: 1, paddingBottom: 34 },
   inputField: { borderWidth: 1, borderColor: palette.line, backgroundColor: palette.panel, borderRadius: 5, padding: 14, marginBottom: 12 },
   fieldLabel: { color: palette.muted, fontSize: 12, letterSpacing: 1.5, textTransform: "uppercase" },
   inputControl: { color: palette.text, fontSize: 16, fontWeight: "700", marginTop: 8, padding: 0 },
@@ -1085,7 +1063,6 @@ const styles = StyleSheet.create({
   promoteBannerText: { color: palette.cyan, fontSize: 13, fontWeight: "900" },
   // Modal (shared pattern with marketplace)
   modalOverlay: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.72)" },
-  modalKeyboardWrap: { justifyContent: "flex-end" },
   modalSheet: {
     maxHeight: "88%",
     borderRadius: 5,
@@ -1097,7 +1074,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderColor: "rgba(255,255,255,0.10)",
   },
-  modalScrollContent: { gap: 12, paddingBottom: 8 },
   modalHandle: { width: 42, height: 4, borderRadius: 5, backgroundColor: "rgba(255,255,255,0.18)", alignSelf: "center", marginBottom: 6 },
   modalHeaderRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   modalTitle: { color: palette.text, fontSize: 18, fontWeight: "900", flex: 1 },

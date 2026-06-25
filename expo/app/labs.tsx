@@ -30,7 +30,7 @@ import {
   Waves,
 } from "lucide-react-native";
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, DimensionValue, Easing, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Animated, DimensionValue, Easing, FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useEdge } from "@/providers/EdgeProvider";
 import { getQuickCheckCost, runQuickCheck, type AnalystRequestKind } from "@/services/analyst";
@@ -561,11 +561,11 @@ export default function LabsScreen(): JSX.Element {
     </>
   ), [activeStep, completion, forgeState, goBack, goNext, mode, renderAnalystChat, renderOpenIntelligence, renderStep, stepIndex]);
 
-  return <LinearGradient colors={["#03060B", "#07151E", "#03060B"]} style={styles.root}><SafeAreaView edges={["top"]} style={styles.safe}><KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0} style={styles.keyboardWrap}><FlatList data={labSections} keyExtractor={(item) => item.id} renderItem={renderLabContent} contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" {...LIST_PERFORMANCE_PROPS} /></KeyboardAvoidingView></SafeAreaView></LinearGradient>;
+  return <LinearGradient colors={["#03060B", "#07151E", "#03060B"]} style={styles.root}><SafeAreaView edges={["top"]} style={styles.safe}><FlatList data={labSections} keyExtractor={(item) => item.id} renderItem={renderLabContent} contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} {...LIST_PERFORMANCE_PROPS} /></SafeAreaView></LinearGradient>;
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 }, safe: { flex: 1 }, keyboardWrap: { flex: 1 }, scroll: { padding: 18, paddingBottom: 120, gap: 16 },
+  root: { flex: 1 }, safe: { flex: 1 }, scroll: { padding: 18, paddingBottom: 120, gap: 16 },
   modeSwitch: { flexDirection: "row", gap: 10, padding: 5, borderRadius: 5, borderWidth: 1, borderColor: palette.line, backgroundColor: "rgba(255,255,255,0.04)" },
   modeButton: { flex: 1, minHeight: 48, borderRadius: 5, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 }, modeButtonActive: { backgroundColor: palette.cyan }, modeText: { color: palette.cyan, fontSize: 14, fontWeight: "900" }, modeTextActive: { color: palette.void },
   hero: { borderWidth: 1, borderColor: palette.line, borderRadius: 5, padding: 18, backgroundColor: "rgba(14, 24, 37, 0.82)", overflow: "hidden" }, intelHero: { borderWidth: 1, borderColor: "rgba(54,245,255,0.28)", borderRadius: 5, padding: 18, backgroundColor: "rgba(3,6,11,0.70)", overflow: "hidden", gap: 10 }, heroTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 16 }, kicker: { color: palette.cyan, fontSize: 12, fontWeight: "900", letterSpacing: 2.2 }, title: { color: palette.text, fontSize: 38, fontWeight: "900", letterSpacing: -1.4, marginTop: 4 }, orbit: { width: 54, height: 54, borderRadius: 5, alignItems: "center", justifyContent: "center", backgroundColor: palette.cyanSoft, borderWidth: 1, borderColor: "rgba(54,245,255,0.32)" }, heroText: { color: palette.muted, fontSize: 14, lineHeight: 21, marginTop: 12, fontWeight: "700" },

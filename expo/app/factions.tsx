@@ -68,9 +68,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -168,23 +166,13 @@ function CreateFactionModal({
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <LinearGradient colors={["#03060B", "#07101B", "#101420"]} style={styles.modalRoot}>
         <SafeAreaView edges={["top"]} style={styles.modalSafe}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
-            keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
-            style={styles.modalKeyboardWrap}
-          >
           <View style={styles.modalHeader}>
             <Pressable onPress={onClose} hitSlop={12}><X color={palette.muted} size={22} /></Pressable>
             <Text style={styles.modalTitle}>Create Faction</Text>
             <View style={{ width: 22 }} />
           </View>
 
-          <ScrollView
-            contentContainerStyle={styles.modalBody}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="interactive"
-            showsVerticalScrollIndicator={false}
-          >
+          <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
             {/* Name */}
             <Text style={styles.fieldLabel}>FACTION NAME</Text>
             <TextInput
@@ -278,7 +266,6 @@ function CreateFactionModal({
               )}
             </Pressable>
           </ScrollView>
-          </KeyboardAvoidingView>
         </SafeAreaView>
       </LinearGradient>
     </Modal>
@@ -1208,8 +1195,6 @@ export default function FactionsScreen(): JSX.Element {
             renderItem={renderSection}
             contentContainerStyle={styles.scroll}
             showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="interactive"
             {...LIST_PERFORMANCE_PROPS}
           />
         )}
@@ -1601,7 +1586,6 @@ const styles = StyleSheet.create({
   // Modal (Create Faction)
   modalRoot: { flex: 1 },
   modalSafe: { flex: 1 },
-  modalKeyboardWrap: { flex: 1 },
   modalHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -1612,7 +1596,7 @@ const styles = StyleSheet.create({
     borderBottomColor: palette.line,
   },
   modalTitle: { color: palette.text, fontSize: 17, fontWeight: "900" as const },
-  modalBody: { padding: 18, paddingBottom: 42, gap: 14 },
+  modalBody: { padding: 18, gap: 14 },
   fieldLabel: { color: palette.cyan, fontSize: 10, fontWeight: "900" as const, letterSpacing: 2, marginTop: 4, textTransform: "uppercase" as const },
   fieldHint: { color: palette.muted, fontSize: 10, fontWeight: "700" as const, textAlign: "right" as const, marginTop: -8 },
   fieldInput: {

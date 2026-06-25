@@ -30,9 +30,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -247,7 +245,6 @@ function FilterPanel({
           placeholder="Search EAGOH, vendor, team..."
           placeholderTextColor={palette.muted}
           style={styles.searchInput}
-          returnKeyType="search"
         />
       </View>
       <View style={styles.filterHeader}>
@@ -583,29 +580,18 @@ function CreateListingModal({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-          keyboardVerticalOffset={Platform.OS === "ios" ? 24 : 0}
-          style={styles.modalKeyboardWrap}
-        >
-          <View style={styles.modalSheet}>
-            <LinearGradient colors={["#0A1628", "#050D18"]} style={StyleSheet.absoluteFill} />
-            <View style={styles.modalHandle} />
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Create Listing</Text>
-              <Pressable onPress={() => { reset(); onClose(); }} style={styles.modalClose}>
-                <X color={palette.muted} size={20} />
-              </Pressable>
-            </View>
+        <View style={styles.modalSheet}>
+          <LinearGradient colors={["#0A1628", "#050D18"]} style={StyleSheet.absoluteFill} />
+          <View style={styles.modalHandle} />
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Create Listing</Text>
+            <Pressable onPress={() => { reset(); onClose(); }} style={styles.modalClose}>
+              <X color={palette.muted} size={20} />
+            </Pressable>
+          </View>
 
-            <ScrollView
-              contentContainerStyle={styles.modalScrollContent}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="interactive"
-              showsVerticalScrollIndicator={false}
-            >
-              <Text style={styles.modalSectionLabel}>Select EAGOH</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRail} keyboardShouldPersistTaps="handled">
+          <Text style={styles.modalSectionLabel}>Select EAGOH</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRail}>
             {myEagohs.map((e: EagohRecord) => (
               <Pressable
                 key={e.id}
@@ -670,9 +656,7 @@ function CreateListingModal({
               </>
             )}
           </Pressable>
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
+        </View>
       </View>
     </Modal>
   );
@@ -1213,8 +1197,6 @@ export default function MarketplaceScreen(): JSX.Element {
           keyExtractor={() => "dummy"}
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
           {...LIST_PERFORMANCE_PROPS}
         />
       </SafeAreaView>
@@ -1584,7 +1566,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.65)",
     justifyContent: "flex-end",
   },
-  modalKeyboardWrap: { justifyContent: "flex-end" },
   modalSheet: {
     maxHeight: "85%",
     borderTopLeftRadius: 5,
@@ -1615,7 +1596,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.08)",
   },
-  modalScrollContent: { gap: 10, paddingBottom: 8 },
   modalSectionLabel: { color: palette.muted, fontSize: 11, fontWeight: "900", letterSpacing: 1, marginBottom: 4, marginTop: 12 },
   modalSectionDesc: { color: palette.text, fontSize: 12, fontWeight: "700", marginBottom: 8, lineHeight: 17 },
 

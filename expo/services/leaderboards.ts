@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { getTeamById } from "@/data/teams";
 import type { RankTier } from "./reputation";
 
 // ── Categories ──────────────────────────────────────────────────────────
@@ -210,8 +211,12 @@ export async function getLeaderboard(
   // Post-filter: fanaticTeam and factionId are applied client-side since they need subqueries
   let filtered = entries;
   if (filters.fanaticTeam) {
+    const teamQuery = filters.fanaticTeam!.toLowerCase();
     filtered = filtered.filter((e) =>
-      e.fanatic_teams.some((t) => t.toLowerCase().includes(filters.fanaticTeam!.toLowerCase())),
+      e.fanatic_teams.some((t) => {
+        const display = getTeamById(t)?.display_name ?? "";
+        return t.toLowerCase().includes(teamQuery) || display.toLowerCase().includes(teamQuery);
+      }),
     );
   }
   if (filters.factionId) {

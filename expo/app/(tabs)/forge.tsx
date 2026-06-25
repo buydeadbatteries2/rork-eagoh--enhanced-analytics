@@ -29,6 +29,7 @@ import {
 import { TIER_MAX_EAGOHS, TIER_MULTIPLIER, getForgeCost } from "@/services/edge";
 import type { EagohDraft } from "@/services/eagohs";
 import * as Haptics from "expo-haptics";
+import TeamSelector from "@/app/components/TeamSelector";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   AlertTriangle,
@@ -147,13 +148,6 @@ const labs: ForgeOption[] = [
   { id: "neon-vault", label: "Neon Vault", detail: "identity calibration", tone: "cyan" },
   { id: "obsidian-bay", label: "Obsidian Bay", detail: "armor diagnostics", tone: "violet" },
   { id: "gold-ring", label: "Gold Ring", detail: "fanatic resonance", tone: "gold" },
-];
-
-const fanaticTeams: ForgeOption[] = [
-  { id: "austin", label: "Austin Fanatics", detail: "loyalty heat 92", tone: "cyan" },
-  { id: "metro", label: "Metro Ultras", detail: "chant network active", tone: "gold" },
-  { id: "north", label: "North End Loyal", detail: "heritage faction", tone: "success" },
-  { id: "coastal", label: "Coastal Signal", detail: "rivalry pulse high", tone: "violet" },
 ];
 
 function toneColor(tone: OptionTone): string {
@@ -403,8 +397,8 @@ export default function ForgeScreen(): JSX.Element {
     ];
 
     if (isSportsDomain) {
-      base.push({ id: "sport", title: "Sport", eyebrow: "Step 13", hint: "Select the primary sport this EAGOH analyzes.", icon: <Zap color={palette.gold} size={15} /> });
-      base.push({ id: "teams", title: "Fanatic Teams", eyebrow: "Step 14", hint: "Optional mock faction affinity — no real logos or marks.", icon: <Heart color={palette.ember} size={15} /> });
+      base.push({ id: "sport", title: "Sport Type", eyebrow: "Step 13", hint: "Select the primary sport this EAGOH analyzes.", icon: <Zap color={palette.gold} size={15} /> });
+      base.push({ id: "teams", title: "Team / College Focus", eyebrow: "Step 14", hint: "Search and select real pro or college teams as canonical references for filtering and rankings.", icon: <Heart color={palette.ember} size={15} /> });
     }
 
     base.push({ id: "lab", title: "Forge Lab", eyebrow: isSportsDomain ? "Step 15" : "Step 13", hint: "Select the lab environment for this EAGOH.", icon: <Cpu color={palette.cyan} size={15} /> });
@@ -743,10 +737,12 @@ export default function ForgeScreen(): JSX.Element {
 
     if (currentStep.id === "teams") {
       return (
-        <>
-          <Text style={styles.sectionHint}>Mock faction affinity only — no real team logos or marks.</Text>
-          {fanaticTeams.map((opt) => <OptionChip key={opt.id} option={opt} selected={teams.includes(opt.id)} onPress={toggleTeams} />)}
-        </>
+        <TeamSelector
+          selectedIds={teams}
+          onToggle={toggleTeams}
+          mode="multi"
+          placeholder="Search NFL, NBA, MLB, NHL, WNBA, NCAAF, NCAAB…"
+        />
       );
     }
 

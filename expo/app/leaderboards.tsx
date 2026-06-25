@@ -1,4 +1,5 @@
 import { palette } from "@/constants/colors";
+import { getTeamById } from "@/data/teams";
 import { HORIZONTAL_LIST_PERFORMANCE_PROPS, LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/components/PerformancePrimitives";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
@@ -138,7 +139,7 @@ const LeaderboardCard = React.memo(function LeaderboardCard({ item }: { item: Le
           </View>
         )}
         {item.fanatic_teams.length > 0 && (
-          <Text style={styles.teamText} numberOfLines={1}>{item.fanatic_teams.join(" · ")}</Text>
+          <Text style={styles.teamText} numberOfLines={1}>{item.fanatic_teams.map((id: string) => getTeamById(id)?.display_name ?? id).join(" · ")}</Text>
         )}
       </View>
 

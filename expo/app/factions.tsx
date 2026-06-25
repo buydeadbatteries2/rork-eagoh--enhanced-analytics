@@ -39,6 +39,7 @@ import { INTELLIGENCE_DOMAINS, getDomainColor } from "@/services/domains";
 import { getBulkReputations, rankColor as repRankColor, RANK_TIERS, type RankTier } from "@/services/reputation";
 import type { ReputationRow } from "@/services/reputation";
 import { supabase } from "@/lib/supabase";
+import TeamSelector from "@/app/components/TeamSelector";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -152,7 +153,7 @@ function CreateFactionModal({
       name: trimmedName,
       description: description.trim(),
       motto: motto.trim(),
-      fanaticTeamFocus: fanaticTeamFocus.trim(),
+      fanaticTeamFocus,
       domain,
     });
     reset();
@@ -240,13 +241,14 @@ function CreateFactionModal({
 
             {/* Fanatic Team Focus */}
             <Text style={styles.fieldLabel}>FANATIC TEAM FOCUS (OPTIONAL)</Text>
-            <TextInput
-              style={styles.fieldInput}
-              value={fanaticTeamFocus}
-              onChangeText={setFanaticTeamFocus}
-              placeholder="e.g. Lakers, Yankees, Arsenal"
-              placeholderTextColor={palette.muted}
-              maxLength={60}
+            <TeamSelector
+              selectedIds={fanaticTeamFocus ? [fanaticTeamFocus] : []}
+              onToggle={(id: string): void => {
+                setFanaticTeamFocus(prev => prev === id ? "" : id);
+              }}
+              mode="single"
+              placeholder="Search NFL, NBA, MLB, NHL, WNBA, NCAAF, NCAAB…"
+              maxSuggestions={8}
             />
 
             {/* Emblem placeholder note */}

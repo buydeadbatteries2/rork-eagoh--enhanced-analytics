@@ -2,6 +2,7 @@ import { supabase } from "@/lib/supabase";
 import { spendEdge, addSubscriptionEdge } from "@/services/edge";
 import type { UserProfile, SubscriptionTier } from "@/services/profile";
 import type { EagohRecord } from "@/services/eagohs";
+import { getTeamById } from "@/data/teams";
 
 /**
  * Marketplace v2 service.
@@ -344,8 +345,12 @@ export async function listActiveListings(
     result = result.filter((l) => l.eagoh?.sport === filters.sport);
   }
   if (filters.team) {
+    const teamQuery = filters.team!.toLowerCase();
     result = result.filter((l) =>
-      l.fanatic_teams.some((t) => t.toLowerCase().includes(filters.team!.toLowerCase())),
+      l.fanatic_teams.some((t) => {
+        const display = getTeamById(t)?.display_name ?? "";
+        return t.toLowerCase().includes(teamQuery) || display.toLowerCase().includes(teamQuery);
+      }),
     );
   }
   if (filters.dna) {

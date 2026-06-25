@@ -39,6 +39,7 @@ import {
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -51,6 +52,8 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+const GENERIC_EAGOH_URI = "https://r2-pub.rork.com/projects/30jz62ydo3j4acgin2ijq/assets/3b1d40ba-55c7-455d-8f5b-62cb1162197a.png";
 
 type OptionTone = "cyan" | "gold" | "violet" | "ember" | "success";
 type ForgeOption = { id: string; label: string; detail?: string; tone: OptionTone };
@@ -176,35 +179,12 @@ const ForgePreview = memo(function ForgePreview({
         style={StyleSheet.absoluteFill}
       />
       <View style={[styles.stageRing, { borderColor: isFree ? "rgba(107,114,128,0.15)" : `${accent}22` }]} />
-      <View style={[styles.glassDome, { borderColor: `rgba(255,255,255,${isFree ? "0.14" : "0.32"})` }]}>
-        <View style={[styles.glassDomeInner, { backgroundColor: `rgba(255,255,255,${isFree ? "0.04" : "0.10"})` }]}>
-          <View style={[styles.brainCore, { backgroundColor: brainGlow }]}>
-            <BrainCircuit color={isFree ? "#6B7280" : accent} size={32} />
-          </View>
-          {isFree ? <View style={styles.crack} /> : null}
-          {isFree ? <View style={styles.crack2} /> : null}
-        </View>
-      </View>
-      <View style={[styles.bodyFrame, { borderColor: chassisBorder, backgroundColor: chassisBg }]}>
-        <View style={styles.neckConnector} />
-        <View style={[styles.shoulderLeft, { backgroundColor: isFree ? "rgba(75,85,99,0.4)" : `${accent}44` }]} />
-        <View style={[styles.shoulderRight, { backgroundColor: isFree ? "rgba(75,85,99,0.4)" : `${accent}44` }]} />
-        <View style={styles.torsoCore}>
-          <LinearGradient
-            colors={isFree ? ["rgba(55,55,60,0.5)", "rgba(30,30,35,0.7)"] : [`${accent}30`, "rgba(10,15,26,0.8)"]}
-            style={StyleSheet.absoluteFill}
-          />
-          <Cpu color={isFree ? "#6B7280" : accent} size={28} />
-        </View>
-        <View style={[styles.legLeft, { backgroundColor: isFree ? "rgba(75,85,99,0.3)" : `${accent}33` }]} />
-        <View style={[styles.legRight, { backgroundColor: isFree ? "rgba(75,85,99,0.3)" : `${accent}33` }]} />
-        {isFree ? (
-          <>
-            <View style={styles.exposedWire} />
-            <View style={styles.exposedWire2} />
-          </>
-        ) : null}
-      </View>
+      <View style={[styles.eagohGlow, { backgroundColor: brainGlow }]} />
+      <Image
+        source={{ uri: GENERIC_EAGOH_URI }}
+        style={styles.eagohImage}
+        resizeMode="contain"
+      />
     </View>
   );
 });
@@ -677,7 +657,7 @@ export default function ForgeScreen(): JSX.Element {
     toggleTeams,
   ]);
 
-  const previewHeight = Math.min(windowHeight * 0.36, 330);
+  const previewHeight = Math.min(windowHeight * 0.27, 248);
 
   // ══════════════════════════════════════════════════════════════════
   //  LAYOUT
@@ -837,6 +817,8 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(3,6,11,0.6)",
   },
   stageRing: { position: "absolute", width: "92%", height: "88%", borderRadius: 5, borderWidth: 1 },
+  eagohGlow: { position: "absolute", width: 140, height: 140, borderRadius: 70, opacity: 0.35 },
+  eagohImage: { width: "82%", height: "92%" },
   glassDome: {
     width: 110,
     height: 120,

@@ -39,7 +39,7 @@ import {
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Image,
+
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -52,8 +52,6 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-
-const GENERIC_EAGOH_URI = "https://r2-pub.rork.com/projects/30jz62ydo3j4acgin2ijq/assets/3b1d40ba-55c7-455d-8f5b-62cb1162197a.png";
 
 type OptionTone = "cyan" | "gold" | "violet" | "ember" | "success";
 type ForgeOption = { id: string; label: string; detail?: string; tone: OptionTone };
@@ -169,6 +167,10 @@ const ForgePreview = memo(function ForgePreview({
   const chassisBorder = isFree ? "rgba(107,114,128,0.4)" : `${accent}66`;
   const chassisBg = isFree ? "rgba(45,45,50,0.6)" : `${accent}15`;
   const brainGlow = isFree ? "rgba(75,85,99,0.4)" : `${accent}88`;
+  const domeBorder = isFree ? "rgba(107,114,128,0.30)" : `${accent}55`;
+  const domeBg = isFree ? "rgba(45,45,50,0.35)" : `${accent}12`;
+  const brainFill = isFree ? "#4B5563" : accent;
+  const bodyAccent = isFree ? "rgba(107,114,128,0.18)" : `${accent}22`;
 
   return (
     <View style={styles.previewStage}>
@@ -180,11 +182,74 @@ const ForgePreview = memo(function ForgePreview({
       />
       <View style={[styles.stageRing, { borderColor: isFree ? "rgba(107,114,128,0.15)" : `${accent}22` }]} />
       <View style={[styles.eagohGlow, { backgroundColor: brainGlow }]} />
-      <Image
-        source={{ uri: GENERIC_EAGOH_URI }}
-        style={styles.eagohImage}
-        resizeMode="contain"
-      />
+
+      {/* ── Custom Rendered EAGOH Figure ───────────────────── */}
+      <View style={styles.eagohFigure}>
+        {/* Glass Dome (Head) */}
+        <View style={[styles.glassDome, { borderColor: domeBorder, backgroundColor: domeBg }]}>
+          <LinearGradient
+            colors={isFree ? ["rgba(255,255,255,0.04)", "transparent"] : [`${accent}18`, "transparent"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={[styles.glassDomeInner, { borderColor: `${domeBorder}88` }]}>
+            {/* Brain core with sulci pattern */}
+            <View style={[styles.brainCore, { backgroundColor: `${brainFill}20` }]}>
+              <LinearGradient
+                colors={isFree ? ["rgba(107,114,128,0.30)", "rgba(107,114,128,0.08)"] : [`${accent}50`, `${accent}10`]}
+                style={StyleSheet.absoluteFill}
+              />
+              {/* Brain sulci lines */}
+              <View style={[styles.sulcus, styles.sulcus1, { backgroundColor: brainFill }]} />
+              <View style={[styles.sulcus, styles.sulcus2, { backgroundColor: brainFill }]} />
+              <View style={[styles.sulcus, styles.sulcus3, { backgroundColor: brainFill }]} />
+              <View style={[styles.brainCenter, { borderColor: `${brainFill}aa`, backgroundColor: `${brainFill}30` }]}>
+                <View style={[styles.brainPulse, { backgroundColor: brainFill }]} />
+              </View>
+            </View>
+          </View>
+          {/* Dome cracks */}
+          <View style={[styles.crack, { backgroundColor: isFree ? "#4B5563" : `${accent}55` }]} />
+          <View style={[styles.crack2, { backgroundColor: isFree ? "#4B5563" : `${accent}55` }]} />
+          {/* Dome highlight */}
+          <View style={[styles.domeHighlight, { backgroundColor: isFree ? "rgba(255,255,255,0.04)" : `${accent}0a` }]} />
+        </View>
+
+        {/* Neck Connector */}
+        <View style={[styles.neckConnector, { backgroundColor: bodyAccent, borderColor: `${bodyAccent}88` }]} />
+
+        {/* Body Frame */}
+        <View style={[styles.bodyFrame, { borderColor: chassisBorder, backgroundColor: chassisBg }]}>
+          {/* Shoulders */}
+          <View style={[styles.shoulderLeft, { backgroundColor: `${bodyAccent}cc` }]} />
+          <View style={[styles.shoulderRight, { backgroundColor: `${bodyAccent}cc` }]} />
+
+          {/* Torso with cybernetic core */}
+          <View style={[styles.torsoCore, { borderColor: `${bodyAccent}88` }]}>
+            <LinearGradient
+              colors={isFree ? ["rgba(107,114,128,0.10)", "rgba(107,114,128,0.02)"] : [`${accent}12`, "transparent"]}
+              style={StyleSheet.absoluteFill}
+            />
+            {/* Chest plate lines */}
+            <View style={[styles.chestLine, styles.chestLineCenter, { backgroundColor: `${bodyAccent}cc` }]} />
+            <View style={[styles.chestLine, styles.chestLineLeft, { backgroundColor: `${bodyAccent}cc` }]} />
+            <View style={[styles.chestLine, styles.chestLineRight, { backgroundColor: `${bodyAccent}cc` }]} />
+            {/* Core reactor */}
+            <View style={[styles.reactor, { borderColor: `${brainFill}44`, backgroundColor: `${brainFill}15` }]}>
+              <View style={[styles.reactorGlow, { backgroundColor: brainFill }]} />
+            </View>
+          </View>
+
+          {/* Legs */}
+          <View style={[styles.legLeft, { backgroundColor: `${bodyAccent}cc` }]} />
+          <View style={[styles.legRight, { backgroundColor: `${bodyAccent}cc` }]} />
+
+          {/* Exposed wires */}
+          <View style={[styles.exposedWire, { backgroundColor: `${brainFill}55` }]} />
+          <View style={[styles.exposedWire2, { backgroundColor: `${brainFill}55` }]} />
+        </View>
+      </View>
     </View>
   );
 });
@@ -818,30 +883,143 @@ const styles = StyleSheet.create({
   },
   stageRing: { position: "absolute", width: "92%", height: "88%", borderRadius: 5, borderWidth: 1 },
   eagohGlow: { position: "absolute", width: 140, height: 140, borderRadius: 70, opacity: 0.35 },
-  eagohImage: { width: "82%", height: "92%" },
+
+  // ── Custom rendered EAGOH figure ─────────────────────────────────
+  eagohFigure: { alignItems: "center", justifyContent: "flex-end" },
+
+  // Glass dome (head)
   glassDome: {
-    width: 110,
-    height: 120,
+    width: 80,
+    height: 88,
     borderRadius: 5,
-    borderWidth: 2,
+    borderWidth: 1.5,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 8,
-    backgroundColor: "rgba(255,255,255,0.05)",
+    overflow: "hidden",
+    marginBottom: 2,
   },
-  glassDomeInner: { width: 84, height: 90, borderRadius: 5, alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  brainCore: { width: 54, height: 54, borderRadius: 5, alignItems: "center", justifyContent: "center" },
-  crack: { position: "absolute", top: 10, left: 12, width: 28, height: 2, backgroundColor: "#4B5563", transform: [{ rotate: "-28deg" }] },
-  crack2: { position: "absolute", bottom: 16, right: 10, width: 22, height: 2, backgroundColor: "#4B5563", transform: [{ rotate: "15deg" }] },
-  bodyFrame: { width: 150, height: 160, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  neckConnector: { position: "absolute", top: -5, width: 20, height: 12, backgroundColor: "rgba(255,255,255,0.14)", borderRadius: 5 },
-  shoulderLeft: { position: "absolute", top: 12, left: -16, width: 32, height: 68, borderRadius: 5 },
-  shoulderRight: { position: "absolute", top: 12, right: -16, width: 32, height: 68, borderRadius: 5 },
-  torsoCore: { width: 96, height: 100, borderRadius: 5, alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  legLeft: { position: "absolute", bottom: -32, left: 32, width: 26, height: 56, borderRadius: 5 },
-  legRight: { position: "absolute", bottom: -32, right: 32, width: 26, height: 56, borderRadius: 5 },
-  exposedWire: { position: "absolute", bottom: 34, left: 10, width: 16, height: 2, backgroundColor: "#4B5563", transform: [{ rotate: "35deg" }] },
-  exposedWire2: { position: "absolute", top: 44, right: 8, width: 12, height: 1.5, backgroundColor: "#4B5563", transform: [{ rotate: "-20deg" }] },
+  glassDomeInner: {
+    width: 62,
+    height: 66,
+    borderRadius: 5,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  domeHighlight: {
+    position: "absolute",
+    top: 4,
+    left: 6,
+    width: 28,
+    height: 12,
+    borderRadius: 3,
+    transform: [{ rotate: "-15deg" }],
+  },
+  brainCore: {
+    width: 46,
+    height: 48,
+    borderRadius: 5,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  sulcus: { position: "absolute", height: 2, borderRadius: 1, opacity: 0.5 },
+  sulcus1: { top: 12, left: 6, width: 20, transform: [{ rotate: "8deg" }] },
+  sulcus2: { top: 24, left: 10, width: 26, transform: [{ rotate: "-5deg" }] },
+  sulcus3: { top: 36, left: 6, width: 16, transform: [{ rotate: "12deg" }] },
+  brainCenter: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  brainPulse: { width: 6, height: 6, borderRadius: 3, opacity: 0.8 },
+  crack: { position: "absolute", top: 8, left: 8, width: 20, height: 1.5, transform: [{ rotate: "-28deg" }] },
+  crack2: { position: "absolute", bottom: 12, right: 8, width: 16, height: 1.5, transform: [{ rotate: "15deg" }] },
+
+  // Neck
+  neckConnector: {
+    width: 16,
+    height: 8,
+    borderRadius: 3,
+    borderWidth: 1,
+    marginBottom: -1,
+  },
+
+  // Body
+  bodyFrame: {
+    width: 130,
+    height: 110,
+    borderRadius: 5,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "visible",
+  },
+  shoulderLeft: {
+    position: "absolute",
+    top: 8,
+    left: -22,
+    width: 24,
+    height: 52,
+    borderRadius: 5,
+  },
+  shoulderRight: {
+    position: "absolute",
+    top: 8,
+    right: -22,
+    width: 24,
+    height: 52,
+    borderRadius: 5,
+  },
+  torsoCore: {
+    width: 78,
+    height: 72,
+    borderRadius: 5,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  chestLine: { position: "absolute", width: 2, borderRadius: 1 },
+  chestLineCenter: { top: 8, height: 48, left: 37 },
+  chestLineLeft: { top: 16, left: 18, height: 28 },
+  chestLineRight: { top: 16, right: 18, height: 28 },
+  reactor: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 20,
+  },
+  reactorGlow: { width: 6, height: 6, borderRadius: 3, opacity: 0.7 },
+
+  // Legs
+  legLeft: {
+    position: "absolute",
+    bottom: -24,
+    left: 32,
+    width: 20,
+    height: 36,
+    borderRadius: 5,
+  },
+  legRight: {
+    position: "absolute",
+    bottom: -24,
+    right: 32,
+    width: 20,
+    height: 36,
+    borderRadius: 5,
+  },
+
+  // Wires
+  exposedWire: { position: "absolute", bottom: 22, left: 12, width: 12, height: 1.5, transform: [{ rotate: "35deg" }] },
+  exposedWire2: { position: "absolute", top: 32, right: 8, width: 10, height: 1.5, transform: [{ rotate: "-20deg" }] },
   tierChipFloat: {
     position: "absolute",
     top: 10,

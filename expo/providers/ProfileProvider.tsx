@@ -4,6 +4,8 @@ import { useCallback } from "react";
 import { useAuth } from "@/providers/AuthProvider";
 import {
   ensureProfile,
+  getEffectiveSubscriptionTier,
+  hasActiveAdminOverride,
   setPreferences as setPreferencesService,
   setSelectedEagohs as setSelectedEagohsService,
   setSelectedLabs as setSelectedLabsService,
@@ -129,16 +131,21 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     mutationFn: (capPct?: number): Promise<UserProfile> => {
       if (!userId || !profile) throw new Error("Profile not loaded");
       void capPct;
-      return applyMonthlyRolloverService(userId, profile, profile.subscription_tier);
+      return applyMonthlyRolloverService(userId, profile, getEffectiveSubscriptionTier(profile));
     },
     onSuccess: (next) => queryClient.setQueryData(profileKey(userId), next),
   });
 
   const balances = profile ? getBalances(profile) : { subscription: 0, purchased: 0, total: 0 };
 
+  const effectiveSubscriptionTier: SubscriptionTier = getEffectiveSubscriptionTier(profile);
+  const isAdminOverrideActive: boolean = hasActiveAdminOverride(profile);
+
   return {
     profile,
     balances,
+    effectiveSubscriptionTier,
+    isAdminOverrideActive,
     isLoading: profileQuery.isLoading,
     error: profileQuery.error as Error | null,
     refetch: profileQuery.refetch,

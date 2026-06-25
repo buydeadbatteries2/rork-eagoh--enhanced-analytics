@@ -784,7 +784,7 @@ export default function FactionsScreen(): JSX.Element {
   const { user } = useAuth();
   const { profile } = useProfile();
   const userId = user?.id;
-  const tier = profile?.subscription_tier ?? "free";
+  const { effectiveSubscriptionTier: tier } = useProfile();
   const limits = getFactionLimit(tier);
   const canParticipate = canParticipateInFactions(tier);
   const queryClient = useQueryClient();

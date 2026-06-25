@@ -450,7 +450,8 @@ export default function ForgeScreen(): JSX.Element {
     };
   }, []);
 
-  const currentTier = profile?.subscription_tier ?? tier ?? "free";
+  const { effectiveSubscriptionTier } = useProfile();
+  const currentTier = effectiveSubscriptionTier;
   const multiplier = TIER_MULTIPLIER[currentTier] ?? 0;
   const maxEagohs = TIER_MAX_EAGOHS[currentTier] ?? 0;
   const forgeCost = getForgeCost(isEditing ? "full_reforge" : "initial");

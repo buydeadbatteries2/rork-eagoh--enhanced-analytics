@@ -2,6 +2,7 @@ import createContextHook from "@nkzw/create-context-hook";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, useState } from "react";
 import { useAuth } from "@/providers/AuthProvider";
+import { getEffectiveSubscriptionTier } from "@/services/profile";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { runForge, type RunForgeMode, type RunForgeResult } from "@/services/forge";
@@ -68,7 +69,7 @@ export const [ForgeProvider, useForge] = createContextHook(() => {
           pose: draft.pose,
           lab: draft.lab,
           domain: draft.domain,
-          tier: profile?.subscription_tier ?? "free",
+          tier: getEffectiveSubscriptionTier(profile),
         },
         { scope: mode === "partial_reforge" ? scope : "full" },
       );
@@ -117,7 +118,7 @@ export const [ForgeProvider, useForge] = createContextHook(() => {
       // 2) Run the image gen + persistence pipeline.
       const result = await runForge({
         userId: user.id,
-        tier: profile.subscription_tier,
+        tier: getEffectiveSubscriptionTier(profile),
         mode: pending.mode,
         draft: pending.draft,
         eagohId: pending.eagohId,

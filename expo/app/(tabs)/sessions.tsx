@@ -374,7 +374,7 @@ function SessionSetup({
   const [prompt, setPrompt] = useState<string>("");
 
   const selectedEagoh = useMemo(() => eagohs.find((e) => e.id === selectedEagohId), [eagohs, selectedEagohId]);
-  const userTier = profile?.subscription_tier ?? "free";
+  const { effectiveSubscriptionTier: userTier } = useProfile();
   const domain = useMemo(() => INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh?.domain), [selectedEagoh]);
 
   const cost = session.id === "quick-check" && prompt ? getQuickCheckCost(prompt) : session.minCost;
@@ -665,7 +665,7 @@ function OpenIntelSession({
   }, []);
 
   const selectedEagoh = useMemo(() => eagohs.find((e) => e.id === selectedEagohId), [eagohs, selectedEagohId]);
-  const userTier = profile?.subscription_tier ?? "free";
+  const { effectiveSubscriptionTier: userTier } = useProfile();
   const domain = useMemo(() => INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh?.domain), [selectedEagoh]);
   const domainTone = domain ? toneColor(domain.tone) : palette.cyan;
 
@@ -1096,11 +1096,11 @@ function FactionNetworkSession({
 }): JSX.Element {
   const { eagohs } = useEagohs();
   const { profile } = useProfile();
-  const tier = profile?.subscription_tier ?? "free";
+  const { effectiveSubscriptionTier: tier } = useProfile();
   const canParticipate = canParticipateInFactions(tier);
 
   const selectedEagoh = useMemo(() => eagohs.find((e) => e.id === selectedEagohId), [eagohs, selectedEagohId]);
-  const userTier = profile?.subscription_tier ?? "free";
+  const { effectiveSubscriptionTier: userTier } = useProfile();
   const domain = useMemo(() => INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh?.domain), [selectedEagoh]);
   const domainTone = domain ? toneColor(domain.tone) : palette.cyan;
 
@@ -1316,7 +1316,7 @@ function MyRankingsSession({
   const [rankings, setRankings] = useState<{ eagohEntries: LeaderboardEntry[]; bestCategory: string; rankChanges: any[] } | null>(null);
 
   const selectedEagoh = useMemo(() => eagohs.find((e) => e.id === selectedEagohId), [eagohs, selectedEagohId]);
-  const userTier = profile?.subscription_tier ?? "free";
+  const { effectiveSubscriptionTier: userTier } = useProfile();
   const domain = useMemo(() => INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh?.domain), [selectedEagoh]);
   const domainTone = domain ? toneColor(domain.tone) : palette.cyan;
 
@@ -1507,7 +1507,7 @@ function MyRankingsSession({
 export default function SessionsScreen(): JSX.Element {
   const { eagohs } = useEagohs();
   const { profile } = useProfile();
-  const userTier = profile?.subscription_tier ?? "free";
+  const { effectiveSubscriptionTier: userTier } = useProfile();
   const [selectedEagohId, setSelectedEagohId] = useState<string>(eagohs[0]?.id ?? "");
   const [showPicker, setShowPicker] = useState<boolean>(false);
   const [activeSession, setActiveSession] = useState<SessionType | null>(null);

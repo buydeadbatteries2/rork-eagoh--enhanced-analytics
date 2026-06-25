@@ -169,19 +169,19 @@ function Hero(): JSX.Element {
 
 const VendorStatsCard = memo(function VendorStatsCard(): JSX.Element | null {
   const { user } = useAuth();
-  const { profile } = useProfile();
+  const { profile, effectiveSubscriptionTier: tier } = useProfile();
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!user?.id || !profile || !canTransact(profile.subscription_tier)) return;
+    if (!user?.id || !profile || !canTransact(tier)) return;
     setLoading(true);
     getVendorStats(user.id)
       .then((s) => { setStats(s); setLoading(false); })
       .catch(() => setLoading(false));
   }, [user?.id, profile]);
 
-  if (!profile || !canTransact(profile.subscription_tier) || loading) return null;
+  if (!profile || !canTransact(tier) || loading) return null;
   if (!stats || stats.total_listings === 0) return null;
 
   return (
@@ -1170,7 +1170,8 @@ export default function MarketplaceScreen(): JSX.Element {
   const [editModal, setEditModal] = useState<EnrichedListing | null>(null);
   const [updating, setUpdating] = useState(false);
 
-  const isPaid = profile ? canTransact(profile.subscription_tier) : false;
+  const { effectiveSubscriptionTier } = useProfile();
+  const isPaid = canTransact(effectiveSubscriptionTier);
 
   const loadData = useCallback(async () => {
     if (!user?.id) { setLoading(false); return; }

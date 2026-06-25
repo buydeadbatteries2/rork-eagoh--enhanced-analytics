@@ -273,7 +273,7 @@ const LabCard = memo(function LabCard({ item, selected, onPress }: { item: LabEn
 export default function ProfileScreen(): JSX.Element {
   const { user, signOut, signOutState } = useAuth();
   const { eagohs } = useEagohs();
-  const { profile, setTestTier, setSubscriptionTier } = useProfile();
+  const { profile, setTestTier, setSubscriptionTier, effectiveSubscriptionTier, isAdminOverrideActive } = useProfile();
   const router = useRouter();
   const handleSignOut = useCallback((): void => {
     Haptics.selectionAsync().catch(() => undefined);
@@ -318,7 +318,7 @@ export default function ProfileScreen(): JSX.Element {
     ];
   }, [reputation]);
 
-  const currentTier = profile?.subscription_tier ?? "free";
+  const currentTier = effectiveSubscriptionTier;
   const handleSetTestTier = useCallback((tier: SubscriptionTier): void => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
     setTestTier(tier).catch((err: unknown) => console.warn("[testMode] setTestTier failed", err));
@@ -333,6 +333,12 @@ export default function ProfileScreen(): JSX.Element {
       return (
         <View>
           <View style={styles.topline}><View><Text style={styles.kicker}>PROFILE CHAMBER</Text><Text style={styles.title} numberOfLines={1}>{displayAlias}</Text></View><View style={[styles.rankPill, reputation ? { borderColor: `${repRankColor(reputation.rank)}66`, backgroundColor: `${repRankColor(reputation.rank)}22` } : undefined]}><Crown color={reputation ? repRankColor(reputation.rank) : palette.gold} size={16} /><Text style={[styles.rankText, reputation ? { color: repRankColor(reputation.rank) } : undefined]}>{reputation?.rank ?? "No Rank"}</Text></View></View>
+          {isAdminOverrideActive ? (
+            <View style={styles.adminOverrideBanner}>
+              <Zap color={palette.gold} size={14} />
+              <Text style={styles.adminOverrideText}>Promotional Access Active</Text>
+            </View>
+          ) : null}
           <ProfileChamber lab={selectedLab} eagoh={primaryEagoh} />
           <View style={styles.labCarouselWrap}>
             <View style={styles.labCarouselHeader}>
@@ -668,7 +674,7 @@ export default function ProfileScreen(): JSX.Element {
       );
     }
     return <></>;
-  }, [handleLabPress, selectedLab, selectedLabId, reputationStats, reputation, currentTier, handleSetTestTier]);
+  }, [handleLabPress, selectedLab, selectedLabId, reputationStats, reputation, currentTier, handleSetTestTier, isAdminOverrideActive]);
 
   return (
     <LinearGradient colors={["#020409", "#07111D", "#03060B"]} style={styles.root}>
@@ -688,6 +694,8 @@ const styles = StyleSheet.create({
   title: { color: palette.text, fontSize: 34, fontWeight: "900", letterSpacing: -1, marginTop: 4 },
   rankPill: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 5, borderWidth: 1, borderColor: "rgba(255,184,77,0.38)", backgroundColor: palette.goldSoft },
   rankText: { color: palette.gold, fontWeight: "900", fontSize: 12 },
+  adminOverrideBanner: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 14, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 5, backgroundColor: "rgba(255,184,77,0.12)", borderWidth: 1, borderColor: "rgba(255,184,77,0.35)", alignSelf: "flex-start" },
+  adminOverrideText: { color: palette.gold, fontSize: 12, fontWeight: "800", letterSpacing: 0.5 },
   chamber: { height: 500, overflow: "hidden", borderRadius: 5, borderWidth: 1, borderColor: "rgba(54,245,255,0.24)", marginTop: 18, backgroundColor: palette.obsidian },
   backHalo: { position: "absolute", top: 54, alignSelf: "center", width: 260, height: 260, borderRadius: 130, borderWidth: 1, opacity: 0.8 },
   floorEllipse: { position: "absolute", bottom: 78, alignSelf: "center", width: 270, height: 68, borderRadius: 5, borderWidth: 1 },

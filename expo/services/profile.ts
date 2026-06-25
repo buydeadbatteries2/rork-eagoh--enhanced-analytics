@@ -27,6 +27,9 @@ import { TIER_MONTHLY_ALLOCATION } from "@/services/edge";
 
 export type SubscriptionTier = "free" | "pro" | "oracle_elite" | "syndicate";
 
+/** Admin override tier — mirrors SubscriptionTier but also allows null (no override). */
+export type AdminTierOverride = null | "free" | "pro" | "oracle_elite" | "syndicate";
+
 export type ProfilePreferences = {
   notifications?: boolean;
   hapticsEnabled?: boolean;
@@ -38,6 +41,9 @@ export type UserProfile = {
   id: string;
   username: string | null;
   subscription_tier: SubscriptionTier;
+  admin_tier_override: AdminTierOverride;
+  admin_tier_expires_at: string | null;
+  admin_tier_note: string | null;
   edge_subscription: number;
   edge_purchased: number;
   selected_labs: string[];
@@ -47,12 +53,16 @@ export type UserProfile = {
   updated_at?: string;
 };
 
-export type ProfileUpdate = Partial<Omit<UserProfile, "id" | "created_at" | "updated_at">>;
+/** Users can never update admin override fields from the app. Only service_role / Supabase dashboard can. */
+export type ProfileUpdate = Partial<Omit<UserProfile, "id" | "created_at" | "updated_at" | "admin_tier_override" | "admin_tier_expires_at" | "admin_tier_note">>;
 
 const DEFAULT_PROFILE = (id: string, username?: string | null): UserProfile => ({
   id,
   username: username ?? null,
   subscription_tier: "free",
+  admin_tier_override: null,
+  admin_tier_expires_at: null,
+  admin_tier_note: null,
   edge_subscription: 0,
   edge_purchased: 0,
   selected_labs: [],
@@ -113,4 +123,46 @@ export async function setTestTier(userId: string, tier: SubscriptionTier): Promi
     subscription_tier: tier,
     edge_subscription: allocation,
   });
+}
+
+// ── Admin Tier Override ────────────────────────────────────────────────────
+
+/**
+ * Compute the user's effective subscription tier, respecting any active admin
+ * tier override. Rules:
+ *
+ * 1. If admin_tier_override is null → normal subscription_tier
+ * 2. If admin_tier_expires_at is null → override is permanent (no expiry)
+ * 3. If admin_tier_expires_at is in the future → override is active
+ * 4. If admin_tier_expires_at is in the past → ignore the override
+ * 5. The result is always a valid SubscriptionTier (falls back to "free" when
+ *    the profile itself is null/undefined, e.g. before first fetch).
+ *
+ * This function accepts a minimal shape so callers can pass either a full
+ * UserProfile or a partial object without needing to import the full type.
+ */
+export function getEffectiveSubscriptionTier(
+  profile: Pick<UserProfile, "subscription_tier" | "admin_tier_override" | "admin_tier_expires_at"> | null | undefined,
+): SubscriptionTier {
+  if (!profile) return "free";
+
+  const override = profile.admin_tier_override;
+  if (!override) return profile.subscription_tier ?? "free";
+
+  const expiresAt = profile.admin_tier_expires_at;
+  if (expiresAt) {
+    const now = new Date();
+    const expiry = new Date(expiresAt);
+    if (expiry <= now) return profile.subscription_tier ?? "free";
+  }
+
+  return override;
+}
+
+/** Returns true when the profile has an active admin tier override. */
+export function hasActiveAdminOverride(
+  profile: Pick<UserProfile, "subscription_tier" | "admin_tier_override" | "admin_tier_expires_at"> | null | undefined,
+): boolean {
+  if (!profile) return false;
+  return getEffectiveSubscriptionTier(profile) !== (profile.subscription_tier ?? "free");
 }

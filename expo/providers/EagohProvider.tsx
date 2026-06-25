@@ -27,7 +27,7 @@ export const [EagohProvider, useEagohs] = createContextHook(() => {
   const { user } = useAuth();
   const { profile } = useProfile();
   const userId = user?.id ?? null;
-  const tier = profile?.subscription_tier ?? "free";
+  const { effectiveSubscriptionTier: tier } = useProfile();
   const queryClient = useQueryClient();
 
   const listQuery = useQuery<EagohRecord[]>({

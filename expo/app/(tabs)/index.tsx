@@ -715,7 +715,7 @@ function BannerPurchaseModal({
   userId: string | null;
 }): JSX.Element {
   const { eagohs } = useEagohs();
-  const { profile } = useProfile();
+  const { profile, effectiveSubscriptionTier: tier } = useProfile();
   const [selectedEagohId, setSelectedEagohId] = useState<string>("");
   const [location, setLocation] = useState<"home" | "marketplace">("home");
   const [startDate, setStartDate] = useState<string>(() => {
@@ -892,7 +892,7 @@ function BannerPurchaseModal({
 
 export default function HomeScreen(): JSX.Element {
   const { isReady, isAuthenticated, user } = useAuth();
-  const { profile } = useProfile();
+  const { profile, effectiveSubscriptionTier } = useProfile();
   const [phase, setPhase] = useState<Phase>("loading");
   const [bootDone, setBootDone] = useState<boolean>(false);
   const [onboardingDone, setOnboardingDone] = useState<boolean>(false);
@@ -900,7 +900,7 @@ export default function HomeScreen(): JSX.Element {
   const width = Dimensions.get("window").width;
   const compact = useMemo<boolean>(() => width < 380, [width]);
 
-  const isPaid = profile ? canTransact(profile.subscription_tier) : false;
+  const isPaid = canTransact(effectiveSubscriptionTier);
 
   useEffect(() => {
     if (!bootDone || !isReady) {

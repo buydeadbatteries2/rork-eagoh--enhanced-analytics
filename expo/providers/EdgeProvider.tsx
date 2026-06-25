@@ -4,6 +4,9 @@ import { useCallback, useMemo } from "react";
 import { useAuth } from "@/providers/AuthProvider";
 import { useProfile } from "@/providers/ProfileProvider";
 import {
+  getEffectiveSubscriptionTier,
+} from "@/services/profile";
+import {
   EDGE_COSTS,
   TIER_MONTHLY_ALLOCATION,
   addPurchasedEdge as addPurchasedEdgeService,
@@ -124,14 +127,14 @@ export const [EdgeProvider, useEdge] = createContextHook(() => {
   const rolloverMutation = useMutation({
     mutationFn: () => {
       const { uid, p } = requireCtx();
-      return applyMonthlyRolloverService(uid, p, p.subscription_tier);
+      return applyMonthlyRolloverService(uid, p, getEffectiveSubscriptionTier(p));
     },
     onSuccess: writeBack,
   });
 
   const canAfford = useCallback((cost: number): boolean => balances.total >= Math.max(0, cost), [balances.total]);
 
-  const tier = profile?.subscription_tier ?? "free";
+  const tier = getEffectiveSubscriptionTier(profile);
   const monthlyAllocation = TIER_MONTHLY_ALLOCATION[tier] ?? 0;
 
   return {

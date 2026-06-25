@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import { spendEdge } from "@/services/edge";
 import type { SubscriptionTier, UserProfile } from "@/services/profile";
+import { getEffectiveSubscriptionTier } from "@/services/profile";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -239,7 +240,7 @@ export type CreateFactionResult =
   | { ok: false; error: string };
 
 export async function createFaction(input: CreateFactionInput): Promise<CreateFactionResult> {
-  const tier = input.profile.subscription_tier;
+  const tier = getEffectiveSubscriptionTier(input.profile);
   const limits = getFactionLimit(tier);
 
   if (!limits.canCreate) {
@@ -378,7 +379,8 @@ export async function joinFaction(
   profile: UserProfile,
   factionId: string,
 ): Promise<JoinFactionResult> {
-  const limits = getFactionLimit(profile.subscription_tier);
+  const tier = getEffectiveSubscriptionTier(profile);
+  const limits = getFactionLimit(tier);
   if (!limits.canJoin) {
     return { ok: false, error: "Free users cannot join Factions. Upgrade to a paid tier to become an Analyst." };
   }
@@ -386,7 +388,7 @@ export async function joinFaction(
   // Enforce member count per tier
   const currentCount = await countUserFactionMemberships(userId);
   if (currentCount >= limits.maxFactions) {
-    return { ok: false, error: `Your ${profile.subscription_tier} tier allows only ${limits.maxFactions} Faction${limits.maxFactions === 1 ? "" : "s"}. Leave one first.` };
+    return { ok: false, error: `Your ${tier} tier allows only ${limits.maxFactions} Faction${limits.maxFactions === 1 ? "" : "s"}. Leave one first.` };
   }
 
   // Check if already a member
@@ -572,7 +574,7 @@ export async function shareIntelToFaction(
   profile: UserProfile,
   oiEntryId: string,
 ): Promise<ShareIntelResult> {
-  const limits = getFactionLimit(profile.subscription_tier);
+  const limits = getFactionLimit(getEffectiveSubscriptionTier(profile));
   if (!limits.canJoin) {
     return { ok: false, error: "Only paid subscribers can share intelligence inside Factions." };
   }
@@ -763,7 +765,8 @@ export async function acceptInvite(
   userId: string,
   profile: UserProfile,
 ): Promise<JoinFactionResult> {
-  const limits = getFactionLimit(profile.subscription_tier);
+  const tier = getEffectiveSubscriptionTier(profile);
+  const limits = getFactionLimit(tier);
   if (!limits.canJoin) {
     return { ok: false, error: "Free users cannot join Factions." };
   }
@@ -771,7 +774,7 @@ export async function acceptInvite(
   // Enforce member count per tier
   const currentCount = await countUserFactionMemberships(userId);
   if (currentCount >= limits.maxFactions) {
-    return { ok: false, error: `Your ${profile.subscription_tier} tier allows only ${limits.maxFactions} Faction${limits.maxFactions === 1 ? "" : "s"}. Leave one first.` };
+    return { ok: false, error: `Your ${tier} tier allows only ${limits.maxFactions} Faction${limits.maxFactions === 1 ? "" : "s"}. Leave one first.` };
   }
 
   const { data: invite } = await supabase

@@ -38,6 +38,7 @@ import { EDUCATION_SUBJECTS, EDUCATION_ROLES, getEducationSubject, getEducationR
 import { GAMING_GENRES, GAMING_ROLES, getGamingGenre, getGamingRole } from "@/data/gaming";
 import { BUSINESS_INDUSTRIES, BUSINESS_ROLES, getBusinessIndustry, getBusinessRole } from "@/data/business";
 import { FINANCE_FOCUSES, FINANCE_ROLES, getFinanceFocus, getFinanceRole } from "@/data/finance";
+import { TECHNOLOGY_AREAS, TECHNOLOGY_ROLES, getTechnologyArea, getTechnologyRole } from "@/data/technology";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   AlertTriangle,
@@ -109,6 +110,8 @@ type WizardStepId =
   | "business_role"
   | "finance_focus"
   | "finance_role"
+  | "technology_area"
+  | "technology_role"
   | "lab";
 
 type WizardStep = {
@@ -349,6 +352,8 @@ export default function ForgeScreen(): JSX.Element {
   const [businessRole, setBusinessRole] = useState<string>("");
   const [financeFocus, setFinanceFocus] = useState<string>("");
   const [financeRole, setFinanceRole] = useState<string>("");
+  const [technologyArea, setTechnologyArea] = useState<string>("");
+  const [technologyRole, setTechnologyRole] = useState<string>("");
   const [appearance, setAppearance] = useState<Record<string, string>>({});
   const [cyberneticIntensity, setCyberneticIntensity] = useState<string>("moderate");
   const [pose, setPose] = useState<string>("calm-sentinel");
@@ -406,6 +411,8 @@ export default function ForgeScreen(): JSX.Element {
     setBusinessRole(editingEagoh.business_role ?? "");
     setFinanceFocus(editingEagoh.finance_focus ?? "");
     setFinanceRole(editingEagoh.finance_role ?? "");
+    setTechnologyArea(editingEagoh.technology_area ?? "");
+    setTechnologyRole(editingEagoh.technology_role ?? "");
     setAppearance(editingEagoh.appearance ?? {});
     setCyberneticIntensity(editingEagoh.cybernetic_intensity ?? "moderate");
     setPose(editingEagoh.pose ?? "calm-sentinel");
@@ -449,6 +456,7 @@ export default function ForgeScreen(): JSX.Element {
   const isGamingDomain = domain === "gaming";
   const isBusinessDomain = domain === "business";
   const isFinanceDomain = domain === "finance";
+  const isTechnologyDomain = domain === "technology";
 
   const wizardSteps: WizardStep[] = useMemo(() => {
     const base: WizardStep[] = [
@@ -507,11 +515,16 @@ export default function ForgeScreen(): JSX.Element {
       base.push({ id: "finance_role", title: "Finance Role", eyebrow: "Step 14", hint: "Choose the role or perspective this EAGOH embodies in the financial world.", icon: <Sparkles color={palette.success} size={15} /> });
     }
 
-    const hasSpecialization = isSportsDomain || isMusicDomain || isFilmTvDomain || isFashionDomain || isEducationDomain || isGamingDomain || isBusinessDomain || isFinanceDomain;
-    const labEyebrowNum = hasSpecialization ? (isFilmTvDomain ? "Step 16" : (isFashionDomain || isEducationDomain || isGamingDomain || isBusinessDomain || isFinanceDomain) ? "Step 15" : "Step 15") : "Step 13";
+    if (isTechnologyDomain) {
+      base.push({ id: "technology_area", title: "Technology Area", eyebrow: "Step 13", hint: "Select the primary technology area this EAGOH specializes in — AI, Cybersecurity, Robotics, or more.", icon: <Zap color={palette.cyan} size={15} /> });
+      base.push({ id: "technology_role", title: "Technology Role", eyebrow: "Step 14", hint: "Choose the role or perspective this EAGOH embodies in technology.", icon: <Sparkles color={palette.cyan} size={15} /> });
+    }
+
+    const hasSpecialization = isSportsDomain || isMusicDomain || isFilmTvDomain || isFashionDomain || isEducationDomain || isGamingDomain || isBusinessDomain || isFinanceDomain || isTechnologyDomain;
+    const labEyebrowNum = hasSpecialization ? (isFilmTvDomain ? "Step 16" : (isFashionDomain || isEducationDomain || isGamingDomain || isBusinessDomain || isFinanceDomain || isTechnologyDomain) ? "Step 15" : "Step 15") : "Step 13";
     base.push({ id: "lab", title: "Forge Lab", eyebrow: labEyebrowNum, hint: "Select the lab environment for this EAGOH.", icon: <Cpu color={palette.cyan} size={15} /> });
     return base;
-  }, [isSportsDomain, isMusicDomain, isFilmTvDomain, isFashionDomain, isEducationDomain, isGamingDomain, isBusinessDomain, isFinanceDomain]);
+  }, [isSportsDomain, isMusicDomain, isFilmTvDomain, isFashionDomain, isEducationDomain, isGamingDomain, isBusinessDomain, isFinanceDomain, isTechnologyDomain]);
 
   const currentStep = wizardSteps[currentStepIndex];
   const isLastStep = currentStepIndex === wizardSteps.length - 1;
@@ -546,11 +559,13 @@ export default function ForgeScreen(): JSX.Element {
     businessRole,
     financeFocus,
     financeRole,
+    technologyArea,
+    technologyRole,
     appearance,
     cyberneticIntensity,
     pose,
     lab,
-  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, teamFocusMode, proTeamFocusId, proTeamFocusName, collegeTeamFocusId, collegeTeamFocusName, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole, educationSubject, educationRole, gamingGenre, gamingRole, businessIndustry, businessRole, financeFocus, financeRole, appearance, cyberneticIntensity, pose, lab]);
+  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, teamFocusMode, proTeamFocusId, proTeamFocusName, collegeTeamFocusId, collegeTeamFocusName, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole, educationSubject, educationRole, gamingGenre, gamingRole, businessIndustry, businessRole, financeFocus, financeRole, technologyArea, technologyRole, appearance, cyberneticIntensity, pose, lab]);
 
   /** Dynamic reforge cost when editing — compares current form vs EAGOH's saved state. */
   const reforgeCost = useMemo(() => {
@@ -1211,6 +1226,38 @@ export default function ForgeScreen(): JSX.Element {
       );
     }
 
+    if (currentStep.id === "technology_area") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Select the primary technology area this EAGOH specializes in. This is used for filtering, Marketplace searches, and technology-specific intelligence.</Text>
+          {TECHNOLOGY_AREAS.map((area) => (
+            <OptionChip
+              key={area.id}
+              option={{ id: area.id, label: area.label, tone: "cyan" }}
+              selected={technologyArea === area.id}
+              onPress={setTechnologyArea}
+            />
+          ))}
+        </>
+      );
+    }
+
+    if (currentStep.id === "technology_role") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Choose the role or perspective this EAGOH embodies in technology. This shapes its analysis style and marketplace discoverability.</Text>
+          {TECHNOLOGY_ROLES.map((r) => (
+            <OptionChip
+              key={r.id}
+              option={{ id: r.id, label: r.label, tone: "cyan" }}
+              selected={technologyRole === r.id}
+              onPress={setTechnologyRole}
+            />
+          ))}
+        </>
+      );
+    }
+
     if (currentStep.id === "teams") {
       const sportCanonical = getSportCanonical(sport);
       const hasTeams = sportCanonical !== undefined;
@@ -1380,6 +1427,10 @@ export default function ForgeScreen(): JSX.Element {
     financeRole,
     setFinanceFocus,
     setFinanceRole,
+    technologyArea,
+    technologyRole,
+    setTechnologyArea,
+    setTechnologyRole,
   ]);
 
   const previewHeight = Math.min(windowHeight * 0.27, 248);
@@ -1619,6 +1670,8 @@ export default function ForgeScreen(): JSX.Element {
                     setBusinessRole("");
                     setFinanceFocus("");
                     setFinanceRole("");
+                    setTechnologyArea("");
+                    setTechnologyRole("");
                     setAppearance({});
                     setCyberneticIntensity("moderate");
                     setPose("calm-sentinel");

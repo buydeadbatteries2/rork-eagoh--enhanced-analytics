@@ -114,6 +114,9 @@ export type ListingFilters = {
   /** Finance domain filters (canonical IDs). */
   financeFocus?: string;
   financeRole?: string;
+  /** Technology domain filters (canonical IDs). */
+  technologyArea?: string;
+  technologyRole?: string;
   syncLevel?: SyncLevel;
   maxPrice?: number;
   minPrice?: number;
@@ -416,6 +419,12 @@ export async function listActiveListings(
   if (filters.financeRole) {
     result = result.filter((l) => l.eagoh?.finance_role === filters.financeRole);
   }
+  if (filters.technologyArea) {
+    result = result.filter((l) => l.eagoh?.technology_area === filters.technologyArea);
+  }
+  if (filters.technologyRole) {
+    result = result.filter((l) => l.eagoh?.technology_role === filters.technologyRole);
+  }
   if (filters.team) {
     const teamQuery = filters.team!.toLowerCase();
     result = result.filter((l) => {
@@ -465,6 +474,8 @@ export async function listActiveListings(
         l.eagoh?.business_role,
         l.eagoh?.finance_focus,
         l.eagoh?.finance_role,
+        l.eagoh?.technology_area,
+        l.eagoh?.technology_role,
         ...l.fanatic_teams,
       ].filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(q);

@@ -4,6 +4,34 @@ import type { UserProfile, SubscriptionTier } from "@/services/profile";
 import type { EagohRecord } from "@/services/eagohs";
 import { getTeamById } from "@/data/teams";
 
+/** Looks up a domain specialization value from an EAGOH's dna array. */
+function getDomainDnaValue(dna: string[] | undefined | null, columnName: string): string | null {
+  if (!dna || dna.length === 0) return null;
+  const prefix = `dom:${columnName}:`;
+  for (const entry of dna) {
+    if (typeof entry === "string" && entry.startsWith(prefix)) {
+      return entry.slice(prefix.length);
+    }
+  }
+  return null;
+}
+
+/** Collects all domain DNA values as a space-separated string for search. */
+function collectDomainDnaValues(dna: string[] | undefined | null): string {
+  if (!dna || dna.length === 0) return "";
+  const values: string[] = [];
+  for (const entry of dna) {
+    if (typeof entry === "string" && entry.startsWith("dom:")) {
+      const rest = entry.slice(4); // after "dom:"
+      const colonIdx = rest.indexOf(":");
+      if (colonIdx > 0) {
+        values.push(rest.slice(colonIdx + 1));
+      }
+    }
+  }
+  return values.join(" ");
+}
+
 /**
  * Marketplace v2 service.
  *
@@ -378,61 +406,61 @@ export async function listActiveListings(
     result = result.filter((l) => (l.eagoh?.team_focus_mode ?? "none") === "none");
   }
   if (filters.musicGenre) {
-    result = result.filter((l) => l.eagoh?.music_genre === filters.musicGenre);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "music_genre") === filters.musicGenre);
   }
   if (filters.musicRole) {
-    result = result.filter((l) => l.eagoh?.music_role === filters.musicRole);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "music_role") === filters.musicRole);
   }
   if (filters.filmTvCategory) {
-    result = result.filter((l) => l.eagoh?.film_tv_category === filters.filmTvCategory);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "film_tv_category") === filters.filmTvCategory);
   }
   if (filters.filmTvGenre) {
-    result = result.filter((l) => l.eagoh?.film_tv_genre === filters.filmTvGenre);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "film_tv_genre") === filters.filmTvGenre);
   }
   if (filters.filmTvRole) {
-    result = result.filter((l) => l.eagoh?.film_tv_role === filters.filmTvRole);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "film_tv_role") === filters.filmTvRole);
   }
   if (filters.fashionStyleCategory) {
-    result = result.filter((l) => l.eagoh?.fashion_style_category === filters.fashionStyleCategory);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "fashion_style_category") === filters.fashionStyleCategory);
   }
   if (filters.fashionRole) {
-    result = result.filter((l) => l.eagoh?.fashion_role === filters.fashionRole);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "fashion_role") === filters.fashionRole);
   }
   if (filters.educationSubject) {
-    result = result.filter((l) => l.eagoh?.education_subject === filters.educationSubject);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "education_subject") === filters.educationSubject);
   }
   if (filters.educationRole) {
-    result = result.filter((l) => l.eagoh?.education_role === filters.educationRole);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "education_role") === filters.educationRole);
   }
   if (filters.gamingGenre) {
-    result = result.filter((l) => l.eagoh?.gaming_genre === filters.gamingGenre);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "gaming_genre") === filters.gamingGenre);
   }
   if (filters.gamingRole) {
-    result = result.filter((l) => l.eagoh?.gaming_role === filters.gamingRole);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "gaming_role") === filters.gamingRole);
   }
   if (filters.businessIndustry) {
-    result = result.filter((l) => l.eagoh?.business_industry === filters.businessIndustry);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "business_industry") === filters.businessIndustry);
   }
   if (filters.businessRole) {
-    result = result.filter((l) => l.eagoh?.business_role === filters.businessRole);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "business_role") === filters.businessRole);
   }
   if (filters.financeFocus) {
-    result = result.filter((l) => l.eagoh?.finance_focus === filters.financeFocus);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "finance_focus") === filters.financeFocus);
   }
   if (filters.financeRole) {
-    result = result.filter((l) => l.eagoh?.finance_role === filters.financeRole);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "finance_role") === filters.financeRole);
   }
   if (filters.technologyArea) {
-    result = result.filter((l) => l.eagoh?.technology_area === filters.technologyArea);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "technology_area") === filters.technologyArea);
   }
   if (filters.technologyRole) {
-    result = result.filter((l) => l.eagoh?.technology_role === filters.technologyRole);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "technology_role") === filters.technologyRole);
   }
   if (filters.healthFitnessArea) {
-    result = result.filter((l) => l.eagoh?.health_fitness_area === filters.healthFitnessArea);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "health_fitness_area") === filters.healthFitnessArea);
   }
   if (filters.healthFitnessRole) {
-    result = result.filter((l) => l.eagoh?.health_fitness_role === filters.healthFitnessRole);
+    result = result.filter((l) => getDomainDnaValue(l.eagoh?.dna, "health_fitness_role") === filters.healthFitnessRole);
   }
   if (filters.team) {
     const teamQuery = filters.team!.toLowerCase();
@@ -468,25 +496,7 @@ export async function listActiveListings(
         l.description,
         l.eagoh?.pro_team_focus_name,
         l.eagoh?.college_team_focus_name,
-        l.eagoh?.music_genre,
-        l.eagoh?.music_role,
-        l.eagoh?.film_tv_category,
-        l.eagoh?.film_tv_genre,
-        l.eagoh?.film_tv_role,
-        l.eagoh?.fashion_style_category,
-        l.eagoh?.fashion_role,
-        l.eagoh?.education_subject,
-        l.eagoh?.education_role,
-        l.eagoh?.gaming_genre,
-        l.eagoh?.gaming_role,
-        l.eagoh?.business_industry,
-        l.eagoh?.business_role,
-        l.eagoh?.finance_focus,
-        l.eagoh?.finance_role,
-        l.eagoh?.technology_area,
-        l.eagoh?.technology_role,
-        l.eagoh?.health_fitness_area,
-        l.eagoh?.health_fitness_role,
+        collectDomainDnaValues(l.eagoh?.dna),
         ...l.fanatic_teams,
       ].filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(q);

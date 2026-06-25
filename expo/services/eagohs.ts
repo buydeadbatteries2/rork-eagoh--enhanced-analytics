@@ -15,6 +15,75 @@ import type { SubscriptionTier } from "@/services/profile";
 
 export type TeamFocusMode = "none" | "pro_only" | "college_only" | "pro_college";
 
+// ── Domain DNA helpers — store domain specialization data in the dna JSONB array ──
+const DOMAIN_DNA_PREFIX = "dom:";
+
+/** Maps EagohDraft camelCase keys to their snake_case DB column equivalents used in DNA entries. */
+const DOMAIN_DRAFT_TO_COLUMN: Record<string, string> = {
+  musicGenre: "music_genre",
+  musicRole: "music_role",
+  filmTvCategory: "film_tv_category",
+  filmTvGenre: "film_tv_genre",
+  filmTvRole: "film_tv_role",
+  fashionStyleCategory: "fashion_style_category",
+  fashionRole: "fashion_role",
+  educationSubject: "education_subject",
+  educationRole: "education_role",
+  gamingGenre: "gaming_genre",
+  gamingRole: "gaming_role",
+  businessIndustry: "business_industry",
+  businessRole: "business_role",
+  financeFocus: "finance_focus",
+  financeRole: "finance_role",
+  technologyArea: "technology_area",
+  technologyRole: "technology_role",
+  healthFitnessArea: "health_fitness_area",
+  healthFitnessRole: "health_fitness_role",
+};
+
+/** Set of all valid snake_case column names for domain data (for parsing validation). */
+const VALID_DOMAIN_COLUMNS: Set<string> = new Set(Object.values(DOMAIN_DRAFT_TO_COLUMN));
+
+/** Encodes domain-specific draft fields into prefixed DNA array entries (e.g. "dom:business_industry:marketing"). */
+function encodeDomainDna(draft: EagohDraft): string[] {
+  const entries: string[] = [];
+  for (const [draftKey, dbCol] of Object.entries(DOMAIN_DRAFT_TO_COLUMN)) {
+    const value = (draft as unknown as Record<string, string | undefined>)[draftKey];
+    if (value) entries.push(`${DOMAIN_DNA_PREFIX}${dbCol}:${value}`);
+  }
+  return entries;
+}
+
+/** Parses domain DNA entries and returns a partial record keyed by snake_case column names. */
+function parseDomainFromDna(dna: string[]): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const entry of dna) {
+    if (typeof entry === "string" && entry.startsWith(DOMAIN_DNA_PREFIX)) {
+      const rest = entry.slice(DOMAIN_DNA_PREFIX.length);
+      const colonIdx = rest.indexOf(":");
+      if (colonIdx > 0) {
+        const field = rest.slice(0, colonIdx);
+        const value = rest.slice(colonIdx + 1);
+        if (value && VALID_DOMAIN_COLUMNS.has(field)) {
+          result[field] = value;
+        }
+      }
+    }
+  }
+  return result;
+}
+
+/** Applies parsed domain DNA values onto an EagohRecord and returns it. */
+function applyDomainDnaToRecord(record: EagohRecord): EagohRecord {
+  const decoded = parseDomainFromDna(record.dna ?? []);
+  if (Object.keys(decoded).length === 0) return record;
+  const result = { ...record };
+  for (const [col, val] of Object.entries(decoded)) {
+    (result as Record<string, unknown>)[col] = val;
+  }
+  return result;
+}
+
 export type EagohRecord = {
   id: string;
   user_id: string;
@@ -142,11 +211,12 @@ export function getEagohLimit(tier: SubscriptionTier): number {
 export async function listEagohs(userId: string): Promise<EagohRecord[]> {
   const { data, error } = await supabase
     .from("eagohs")
-    .select("id,user_id,name,sport,gender,domain,body_type,style_notes,cybernetic_intensity,pose,lab,dna,image_url,image_thumb_url,image_prompt,image_generated_at,last_name_change,team_focus_mode,pro_team_focus_id,pro_team_focus_name,college_team_focus_id,college_team_focus_name,music_genre,music_role,film_tv_category,film_tv_genre,film_tv_role,fashion_style_category,fashion_role,education_subject,education_role,gaming_genre,gaming_role,business_industry,business_role,finance_focus,finance_role,technology_area,technology_role,health_fitness_area,health_fitness_role,created_at,updated_at")
+    .select("*")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
   if (error) throw error;
-  return (data ?? []) as EagohRecord[];
+  const raw = (data ?? []) as EagohRecord[];
+  return raw.map(applyDomainDnaToRecord);
 }
 
 export async function countEagohs(userId: string): Promise<number> {
@@ -174,7 +244,7 @@ export async function getEagohFull(eagohId: string): Promise<EagohFull | null> {
   ]);
 
   return {
-    ...(base as EagohRecord),
+    ...applyDomainDnaToRecord(base as EagohRecord),
     appearance: ((custom.data as { appearance?: Record<string, string> } | null)?.appearance) ?? {},
     teams: ((teams.data as EagohFanaticTeamRow[] | null) ?? []).map((row) => row.team_id),
     labs: ((labs.data as EagohLabRow[] | null) ?? []).map((row) => row.lab_id),
@@ -194,6 +264,11 @@ export async function createEagoh(
     return { ok: false, reason: "limit", message: `Your ${tier} tier allows ${limit} EAGOH${limit === 1 ? "" : "s"}. Upgrade to forge more.` };
   }
 
+  // Merge domain DNA entries into the base dna array so domain data is persisted
+  // in the existing dna JSONB column rather than separate columns (avoids schema drift).
+  const domainDnaEntries = encodeDomainDna(draft);
+  const mergedDna = [...draft.dna, ...domainDnaEntries];
+
   const insertPayload = {
     user_id: userId,
     name: draft.name?.trim() || "Unnamed EAGOH",
@@ -205,32 +280,13 @@ export async function createEagoh(
     cybernetic_intensity: draft.cyberneticIntensity,
     pose: draft.pose,
     lab: draft.lab,
-    dna: draft.dna,
+    dna: mergedDna,
     image_url: draft.imageUrl ?? null,
     team_focus_mode: draft.teamFocusMode || null,
     pro_team_focus_id: draft.proTeamFocusId || null,
     pro_team_focus_name: draft.proTeamFocusName || null,
     college_team_focus_id: draft.collegeTeamFocusId || null,
     college_team_focus_name: draft.collegeTeamFocusName || null,
-    music_genre: draft.musicGenre || null,
-    music_role: draft.musicRole || null,
-    film_tv_category: draft.filmTvCategory || null,
-    film_tv_genre: draft.filmTvGenre || null,
-    film_tv_role: draft.filmTvRole || null,
-    fashion_style_category: draft.fashionStyleCategory || null,
-    fashion_role: draft.fashionRole || null,
-    education_subject: draft.educationSubject || null,
-    education_role: draft.educationRole || null,
-    gaming_genre: draft.gamingGenre || null,
-    gaming_role: draft.gamingRole || null,
-    business_industry: draft.businessIndustry || null,
-    business_role: draft.businessRole || null,
-    finance_focus: draft.financeFocus || null,
-    finance_role: draft.financeRole || null,
-    technology_area: draft.technologyArea || null,
-    technology_role: draft.technologyRole || null,
-    health_fitness_area: draft.healthFitnessArea || null,
-    health_fitness_role: draft.healthFitnessRole || null,
   };
 
   const { data: created, error } = await supabase
@@ -239,7 +295,7 @@ export async function createEagoh(
     .select("*");
   if (error || !created || created.length === 0) return { ok: false, reason: "error", message: error?.message ?? "Failed to create EAGOH" };
 
-  const eagoh = created[0] as EagohRecord;
+  const eagoh = applyDomainDnaToRecord(created[0] as EagohRecord);
 
   try {
     await supabase.from("eagoh_customization").insert({ eagoh_id: eagoh.id, appearance: draft.appearance });
@@ -286,7 +342,7 @@ export async function updateEagohImage(
     .select("*")
     .single();
   if (error || !data) throw error ?? new Error("Failed to update EAGOH image");
-  return data as EagohRecord;
+  return applyDomainDnaToRecord(data as EagohRecord);
 }
 
 /** Partial-reforge persistence — swap one appearance category in customization. */
@@ -348,5 +404,5 @@ export async function renameEagohName(
     return { ok: false, reason: "error", message: error?.message ?? "Failed to rename EAGOH." };
   }
 
-  return { ok: true, eagoh: data[0] as EagohRecord };
+  return { ok: true, eagoh: applyDomainDnaToRecord(data[0] as EagohRecord) };
 }

@@ -4,7 +4,7 @@ import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
-import { Activity, Award, BadgeCheck, BarChart3, BrainCircuit, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Shield, Sparkles, Swords, TrendingUp, Trophy, Wrench, WalletCards, Zap, Users, Globe } from "lucide-react-native";
+import { Activity, Award, BadgeCheck, BarChart3, BrainCircuit, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Settings, Shield, Sparkles, Swords, TrendingUp, Trophy, Wrench, WalletCards, Zap, Users, Globe } from "lucide-react-native";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -35,7 +35,7 @@ type LabEnvironment = {
   tone: LabTone;
   grid: string;
 };
-type ProfileSection = { id: string; kind: "hero" | "stats" | "identity" | "features" | "wallet" | "subscriptions" | "edge" | "labs" | "testMode" };
+type ProfileSection = { id: string; kind: "hero" | "stats" | "identity" | "features" | "wallet" | "subscriptions" | "edge" | "labs" | "testMode" | "settings" };
 type MultiplierTier = { name: string; value: string; detail: string; active: boolean; tone: LabTone };
 type UsageMetric = { label: string; value: string; detail: string; progress: number; tone: LabTone };
 type SubscriptionPlan = {
@@ -62,6 +62,7 @@ const sections: ProfileSection[] = [
   { id: "wallet", kind: "wallet" },
   { id: "subscriptions", kind: "subscriptions" },
   { id: "edge", kind: "edge" },
+  { id: "settings", kind: "settings" },
 ];
 
 const labs: LabEnvironment[] = [
@@ -327,6 +328,11 @@ export default function ProfileScreen(): JSX.Element {
     setSelectedLabId(id);
     Haptics.selectionAsync().catch(() => undefined);
   }, []);
+
+  const handleSettingsPress = useCallback((): void => {
+    Haptics.selectionAsync().catch(() => undefined);
+    router.push("/settings" as never);
+  }, [router]);
 
   const renderSection = useCallback(({ item }: { item: ProfileSection }): JSX.Element => {
     if (item.kind === "hero") {
@@ -629,6 +635,20 @@ export default function ProfileScreen(): JSX.Element {
         </View>
       );
     }
+    if (item.kind === "settings") {
+      return (
+        <Pressable onPress={handleSettingsPress} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
+          <View style={[styles.featureIconWrap, { borderColor: "rgba(120,180,255,0.35)" }]}>
+            <Settings color={palette.text} size={20} />
+          </View>
+          <View style={styles.featureInfo}>
+            <Text style={styles.featureTitle}>Settings</Text>
+            <Text style={styles.featureDesc}>Account, appearance, legal, and subscription management</Text>
+          </View>
+          <Cpu color={palette.muted} size={16} />
+        </Pressable>
+      );
+    }
     if (item.kind === "testMode") {
       const tiers: { tier: SubscriptionTier; label: string; edge: number; tone: LabTone }[] = [
         { tier: "free", label: "Free", edge: 0, tone: "cyan" },
@@ -674,7 +694,7 @@ export default function ProfileScreen(): JSX.Element {
       );
     }
     return <></>;
-  }, [handleLabPress, selectedLab, selectedLabId, reputationStats, reputation, currentTier, handleSetTestTier, isAdminOverrideActive]);
+  }, [handleLabPress, selectedLab, selectedLabId, reputationStats, reputation, currentTier, handleSetTestTier, handleSettingsPress, isAdminOverrideActive]);
 
   return (
     <LinearGradient colors={["#020409", "#07111D", "#03060B"]} style={styles.root}>
@@ -868,6 +888,8 @@ const styles = StyleSheet.create({
   featureInfo: { flex: 1 },
   featureTitle: { color: palette.text, fontSize: 13, fontWeight: "900" },
   featureDesc: { color: palette.muted, fontSize: 11, lineHeight: 16, marginTop: 3 },
+  // Settings
+  settingsCard: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 5, padding: 16, backgroundColor: "rgba(14,24,37,0.64)", borderWidth: 1, borderColor: "rgba(120,180,255,0.24)", marginBottom: 8 },
   // Subscription Test Mode
   testPanel: { borderRadius: 5, padding: 14, backgroundColor: "rgba(10,18,30,0.88)", borderWidth: 1, borderColor: "rgba(255,77,109,0.28)", gap: 12, overflow: "hidden" as const },
   testBanner: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },

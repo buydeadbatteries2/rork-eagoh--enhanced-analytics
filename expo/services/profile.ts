@@ -30,7 +30,10 @@ export type SubscriptionTier = "free" | "pro" | "oracle_elite" | "syndicate";
 /** Admin override tier — mirrors SubscriptionTier but also allows null (no override). */
 export type AdminTierOverride = null | "free" | "pro" | "oracle_elite" | "syndicate";
 
+export type AppTheme = "dark" | "light";
+
 export type ProfilePreferences = {
+  theme?: AppTheme;
   notifications?: boolean;
   hapticsEnabled?: boolean;
   reducedMotion?: boolean;

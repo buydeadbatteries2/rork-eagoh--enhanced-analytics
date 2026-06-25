@@ -10,6 +10,7 @@ import { ProfileProvider } from "@/providers/ProfileProvider";
 import { EagohProvider } from "@/providers/EagohProvider";
 import { EdgeProvider } from "@/providers/EdgeProvider";
 import { ForgeProvider } from "@/providers/ForgeProvider";
+import { ThemeProvider } from "@/providers/ThemeProvider";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -35,6 +36,22 @@ function RootLayoutNav(): JSX.Element {
         name="leaderboards"
         options={{ presentation: "modal", headerShown: false }}
       />
+      <Stack.Screen
+        name="settings"
+        options={{ presentation: "modal", headerShown: false }}
+      />
+      <Stack.Screen
+        name="legal/terms"
+        options={{ presentation: "modal", headerShown: false }}
+      />
+      <Stack.Screen
+        name="legal/privacy"
+        options={{ presentation: "modal", headerShown: false }}
+      />
+      <Stack.Screen
+        name="legal/disclaimer"
+        options={{ presentation: "modal", headerShown: false }}
+      />
     </Stack>
   );
 }
@@ -48,6 +65,7 @@ export default function RootLayout(): JSX.Element {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <ProfileProvider>
+          <ThemeProvider>
           <EdgeProvider>
           <EagohProvider>
           <ForgeProvider>
@@ -60,6 +78,7 @@ export default function RootLayout(): JSX.Element {
           </ForgeProvider>
           </EagohProvider>
           </EdgeProvider>
+          </ThemeProvider>
         </ProfileProvider>
       </AuthProvider>
     </QueryClientProvider>

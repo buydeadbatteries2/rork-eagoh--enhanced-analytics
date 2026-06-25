@@ -70,6 +70,38 @@ export const typography = {
 
 export const theme = { palette, radii, spacing, glow, typography } as const;
 
+export const lightPalette = {
+  void: "#F0F3F8",
+  obsidian: "#E4E8F0",
+  graphite: "#D8DDE6",
+  panel: "rgba(255, 255, 255, 0.72)",
+  panelStrong: "#FFFFFF",
+
+  blue: "#1A7FD4",
+  cyan: "#0E9EBB",
+  violet: "#6B3FF5",
+  gold: "#D4891A",
+  ember: "#D9314A",
+  success: "#008F5E",
+
+  blueSoft: "rgba(26, 127, 212, 0.12)",
+  cyanSoft: "rgba(14, 158, 187, 0.12)",
+  violetSoft: "rgba(107, 63, 245, 0.12)",
+  goldSoft: "rgba(212, 137, 26, 0.10)",
+  emberSoft: "rgba(217, 49, 74, 0.10)",
+  successSoft: "rgba(0, 143, 94, 0.10)",
+
+  text: "#0B1420",
+  muted: "#54657E",
+  line: "rgba(10, 20, 40, 0.14)",
+  lineStrong: "rgba(10, 20, 40, 0.26)",
+} as const;
+
+export function getPaletteForTheme(theme: "dark" | "light"): typeof palette {
+  if (theme === "light") return lightPalette as unknown as typeof palette;
+  return palette;
+}
+
 export default {
   dark: {
     text: palette.text,
@@ -79,10 +111,10 @@ export default {
     tabIconSelected: palette.cyan,
   },
   light: {
-    text: palette.text,
-    background: palette.void,
-    tint: palette.cyan,
-    tabIconDefault: palette.muted,
-    tabIconSelected: palette.cyan,
+    text: lightPalette.text,
+    background: lightPalette.void,
+    tint: lightPalette.cyan,
+    tabIconDefault: lightPalette.muted,
+    tabIconSelected: lightPalette.cyan,
   },
 };

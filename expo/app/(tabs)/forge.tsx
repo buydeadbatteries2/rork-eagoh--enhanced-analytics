@@ -39,7 +39,7 @@ import {
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-
+  Image,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -52,6 +52,8 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+const GENERIC_EAGOH_URI = "https://r2-pub.rork.com/projects/30jz62ydo3j4acgin2ijq/assets/3b1d40ba-55c7-455d-8f5b-62cb1162197a.png";
 
 type OptionTone = "cyan" | "gold" | "violet" | "ember" | "success";
 type ForgeOption = { id: string; label: string; detail?: string; tone: OptionTone };
@@ -164,13 +166,7 @@ const ForgePreview = memo(function ForgePreview({
   const isFree = tier === "free";
   const intensity = intensities.find((i) => i.id === cyberneticIntensity);
   const accent = isFree ? "#6B7280" : toneColor(intensity?.tone ?? "cyan");
-  const chassisBorder = isFree ? "rgba(107,114,128,0.4)" : `${accent}66`;
-  const chassisBg = isFree ? "rgba(45,45,50,0.6)" : `${accent}15`;
   const brainGlow = isFree ? "rgba(75,85,99,0.4)" : `${accent}88`;
-  const domeBorder = isFree ? "rgba(107,114,128,0.30)" : `${accent}55`;
-  const domeBg = isFree ? "rgba(45,45,50,0.35)" : `${accent}12`;
-  const brainFill = isFree ? "#4B5563" : accent;
-  const bodyAccent = isFree ? "rgba(107,114,128,0.18)" : `${accent}22`;
 
   return (
     <View style={styles.previewStage}>
@@ -182,74 +178,11 @@ const ForgePreview = memo(function ForgePreview({
       />
       <View style={[styles.stageRing, { borderColor: isFree ? "rgba(107,114,128,0.15)" : `${accent}22` }]} />
       <View style={[styles.eagohGlow, { backgroundColor: brainGlow }]} />
-
-      {/* ── Custom Rendered EAGOH Figure ───────────────────── */}
-      <View style={styles.eagohFigure}>
-        {/* Glass Dome (Head) */}
-        <View style={[styles.glassDome, { borderColor: domeBorder, backgroundColor: domeBg }]}>
-          <LinearGradient
-            colors={isFree ? ["rgba(255,255,255,0.04)", "transparent"] : [`${accent}18`, "transparent"]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 0, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
-          <View style={[styles.glassDomeInner, { borderColor: `${domeBorder}88` }]}>
-            {/* Brain core with sulci pattern */}
-            <View style={[styles.brainCore, { backgroundColor: `${brainFill}20` }]}>
-              <LinearGradient
-                colors={isFree ? ["rgba(107,114,128,0.30)", "rgba(107,114,128,0.08)"] : [`${accent}50`, `${accent}10`]}
-                style={StyleSheet.absoluteFill}
-              />
-              {/* Brain sulci lines */}
-              <View style={[styles.sulcus, styles.sulcus1, { backgroundColor: brainFill }]} />
-              <View style={[styles.sulcus, styles.sulcus2, { backgroundColor: brainFill }]} />
-              <View style={[styles.sulcus, styles.sulcus3, { backgroundColor: brainFill }]} />
-              <View style={[styles.brainCenter, { borderColor: `${brainFill}aa`, backgroundColor: `${brainFill}30` }]}>
-                <View style={[styles.brainPulse, { backgroundColor: brainFill }]} />
-              </View>
-            </View>
-          </View>
-          {/* Dome cracks */}
-          <View style={[styles.crack, { backgroundColor: isFree ? "#4B5563" : `${accent}55` }]} />
-          <View style={[styles.crack2, { backgroundColor: isFree ? "#4B5563" : `${accent}55` }]} />
-          {/* Dome highlight */}
-          <View style={[styles.domeHighlight, { backgroundColor: isFree ? "rgba(255,255,255,0.04)" : `${accent}0a` }]} />
-        </View>
-
-        {/* Neck Connector */}
-        <View style={[styles.neckConnector, { backgroundColor: bodyAccent, borderColor: `${bodyAccent}88` }]} />
-
-        {/* Body Frame */}
-        <View style={[styles.bodyFrame, { borderColor: chassisBorder, backgroundColor: chassisBg }]}>
-          {/* Shoulders */}
-          <View style={[styles.shoulderLeft, { backgroundColor: `${bodyAccent}cc` }]} />
-          <View style={[styles.shoulderRight, { backgroundColor: `${bodyAccent}cc` }]} />
-
-          {/* Torso with cybernetic core */}
-          <View style={[styles.torsoCore, { borderColor: `${bodyAccent}88` }]}>
-            <LinearGradient
-              colors={isFree ? ["rgba(107,114,128,0.10)", "rgba(107,114,128,0.02)"] : [`${accent}12`, "transparent"]}
-              style={StyleSheet.absoluteFill}
-            />
-            {/* Chest plate lines */}
-            <View style={[styles.chestLine, styles.chestLineCenter, { backgroundColor: `${bodyAccent}cc` }]} />
-            <View style={[styles.chestLine, styles.chestLineLeft, { backgroundColor: `${bodyAccent}cc` }]} />
-            <View style={[styles.chestLine, styles.chestLineRight, { backgroundColor: `${bodyAccent}cc` }]} />
-            {/* Core reactor */}
-            <View style={[styles.reactor, { borderColor: `${brainFill}44`, backgroundColor: `${brainFill}15` }]}>
-              <View style={[styles.reactorGlow, { backgroundColor: brainFill }]} />
-            </View>
-          </View>
-
-          {/* Legs */}
-          <View style={[styles.legLeft, { backgroundColor: `${bodyAccent}cc` }]} />
-          <View style={[styles.legRight, { backgroundColor: `${bodyAccent}cc` }]} />
-
-          {/* Exposed wires */}
-          <View style={[styles.exposedWire, { backgroundColor: `${brainFill}55` }]} />
-          <View style={[styles.exposedWire2, { backgroundColor: `${brainFill}55` }]} />
-        </View>
-      </View>
+      <Image
+        source={{ uri: GENERIC_EAGOH_URI }}
+        style={styles.eagohImage}
+        resizeMode="contain"
+      />
     </View>
   );
 });
@@ -883,6 +816,7 @@ const styles = StyleSheet.create({
   },
   stageRing: { position: "absolute", width: "92%", height: "88%", borderRadius: 5, borderWidth: 1 },
   eagohGlow: { position: "absolute", width: 140, height: 140, borderRadius: 70, opacity: 0.35 },
+  eagohImage: { width: "76%", height: "76%", zIndex: 2 },
 
   // ── Custom rendered EAGOH figure ─────────────────────────────────
   eagohFigure: { alignItems: "center", justifyContent: "flex-end" },

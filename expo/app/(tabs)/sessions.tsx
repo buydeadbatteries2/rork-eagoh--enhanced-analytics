@@ -306,9 +306,11 @@ function SessionSetup({
   onChangeEagoh: () => void;
 }): JSX.Element {
   const { eagohs } = useEagohs();
+  const { profile } = useProfile();
   const [prompt, setPrompt] = useState<string>("");
 
   const selectedEagoh = useMemo(() => eagohs.find((e) => e.id === selectedEagohId), [eagohs, selectedEagohId]);
+  const userTier = profile?.subscription_tier ?? "free";
   const domain = useMemo(() => INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh?.domain), [selectedEagoh]);
 
   const cost = session.id === "quick-check" && prompt ? getQuickCheckCost(prompt) : session.minCost;
@@ -343,6 +345,14 @@ function SessionSetup({
         keyboardDismissMode="interactive"
         showsVerticalScrollIndicator={false}
       >
+        {/* EAGOH Hero Card */}
+        <SelectedEagohCard
+          eagoh={selectedEagoh ?? null}
+          onPress={onChangeEagoh}
+          hasMultiple={eagohs.length > 1}
+          userTier={userTier}
+        />
+
         {/* Session header */}
         <View style={styles.setupHeader}>
           <View style={[styles.setupIconRing, { borderColor: toneColor(session.tone) }]}>
@@ -350,23 +360,6 @@ function SessionSetup({
           </View>
           <Text style={styles.setupTitle}>{session.name}</Text>
           <Text style={styles.setupSub}>{session.model} · {session.duration}</Text>
-        </View>
-
-        {/* Selected EAGOH */}
-        <View style={styles.setupBlock}>
-          <Text style={styles.setupLabel}>EAGOH</Text>
-          <Pressable onPress={onChangeEagoh} style={({ pressed }) => [styles.setupEagohRow, pressed && styles.pressed]}>
-            {selectedEagoh ? (
-              <>
-                <View style={[styles.setupEagohDot, { backgroundColor: domain ? toneColor(domain.tone) : palette.muted }]} />
-                <Text style={styles.setupEagohName}>{selectedEagoh.name}</Text>
-                <Text style={styles.setupEagohDomain}>{domain?.label ?? selectedEagoh.domain}</Text>
-              </>
-            ) : (
-              <Text style={styles.setupEagohPlaceholder}>Select an EAGOH…</Text>
-            )}
-            <ChevronDown color={palette.muted} size={16} />
-          </Pressable>
         </View>
 
         {/* Topic */}

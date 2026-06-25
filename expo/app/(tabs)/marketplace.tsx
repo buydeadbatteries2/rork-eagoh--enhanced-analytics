@@ -315,13 +315,14 @@ const ListingCard = memo(function ListingCard({
     <View style={styles.listingCard}>
       <View style={[styles.cardGlow, { backgroundColor: rkColor }]} />
 
-      {/* Prominent centered EAGOH image */}
+      {/* Prominent centered EAGOH image with generous breathing room */}
       <View style={styles.listingImageArea}>
         <OptimizedEagohImage
           tone={eagohRank === "Syndicate Prime" || eagohRank === "Oracle" ? "gold" : eagohRank === "Diamond" ? "cyan" : "violet"}
           label={eagoh?.name ?? "EAGOH"}
-          size="banner"
+          size="card"
           imageUrl={imageUrl}
+          contentFit="contain"
         />
         <View style={[styles.rankPillSmall, { backgroundColor: `${rkColor}1F`, borderColor: `${rkColor}44` }]}>
           <Text style={[styles.rankPillSmallText, { color: rkColor }]}>{rankEmoji(eagohRank)} {eagohRank}</Text>
@@ -1698,16 +1699,17 @@ const styles = StyleSheet.create({
   },
   cardGlow: { position: "absolute", width: 100, height: 100, borderRadius: 50, opacity: 0.10, right: -28, top: -30 },
 
-  // Centered prominent image area (replaces listingTop row layout)
+  // Centered prominent image area with padding so the EAGOH breathes inside the frame
   listingImageArea: {
     width: "100%",
-    minHeight: 176,
+    aspectRatio: 1,
     borderRadius: 5,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: palette.line,
     backgroundColor: palette.void,
     marginBottom: 10,
+    padding: 24,
   },
   listingImageDomainBadge: {
     position: "absolute",

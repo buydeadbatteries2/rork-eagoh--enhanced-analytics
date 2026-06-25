@@ -1,6 +1,6 @@
 import { palette } from "@/constants/colors";
 import { getTeamById } from "@/data/teams";
-import { HORIZONTAL_LIST_PERFORMANCE_PROPS, LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/_components/PerformancePrimitives";
+import { HORIZONTAL_LIST_PERFORMANCE_PROPS, LIST_PERFORMANCE_PROPS, OptimizedEagohImage, type RenderTone } from "@/app/_components/PerformancePrimitives";
 import { LinearGradient } from "expo-linear-gradient";
 import { useHaptics } from "@/hooks/useHaptics";
 import {
@@ -311,22 +311,61 @@ const ListingCard = memo(function ListingCard({
   const rkColor = rankColor(eagohRank);
   const imageUrl = eagoh?.image_thumb_url ?? eagoh?.image_url ?? null;
 
+  // Dynamic sizing based on card width — image area occupies ~62% of card width
+  const { width: screenWidth } = Dimensions.get("window");
+  const cardWidth = screenWidth - 32; // 16px horizontal padding on each side of the list
+  const imageAreaHeight = Math.min(cardWidth * 0.62, 260);
+  const imageWrapperPadding = 24;
+  const imageInnerSize = imageAreaHeight - imageWrapperPadding * 2;
+
+  const tone: RenderTone = eagohRank === "Syndicate Prime" || eagohRank === "Oracle" ? "gold" : eagohRank === "Diamond" ? "cyan" : "violet";
+
   return (
     <View style={styles.listingCard}>
       <View style={[styles.cardGlow, { backgroundColor: rkColor }]} />
 
-      {/* Prominent centered EAGOH image with generous breathing room */}
-      <View style={styles.listingImageArea}>
-        <OptimizedEagohImage
-          tone={eagohRank === "Syndicate Prime" || eagohRank === "Oracle" ? "gold" : eagohRank === "Diamond" ? "cyan" : "violet"}
-          label={eagoh?.name ?? "EAGOH"}
-          size="card"
-          imageUrl={imageUrl}
-          contentFit="contain"
+      {/* Image Section — premium collectible card layout */}
+      <View style={[styles.imageSection, { height: imageAreaHeight }]}>
+        {/* Background gradient with faint cyber glow behind the character */}
+        <LinearGradient
+          colors={["#03060B", `${rkColor}14`, "#050D18"]}
+          style={StyleSheet.absoluteFill}
         />
+        {/* Radial spotlight behind character for depth */}
+        <View
+          style={[
+            styles.radialSpotlight,
+            {
+              width: imageInnerSize * 0.78,
+              height: imageInnerSize * 0.78,
+              backgroundColor: `${rkColor}10`,
+            },
+          ]}
+        />
+
+        {/* ImageWrapper — centers the EAGOH with internal padding */}
+        <View style={styles.imageWrapper}>
+          <View
+            style={{
+              width: imageInnerSize,
+              height: imageInnerSize,
+              paddingBottom: 4,
+            }}
+          >
+            <OptimizedEagohImage
+              tone={tone}
+              label={eagoh?.name ?? "EAGOH"}
+              imageUrl={imageUrl}
+              contentFit="contain"
+            />
+          </View>
+        </View>
+
+        {/* Rank pill — bottom left overlay */}
         <View style={[styles.rankPillSmall, { backgroundColor: `${rkColor}1F`, borderColor: `${rkColor}44` }]}>
           <Text style={[styles.rankPillSmallText, { color: rkColor }]}>{rankEmoji(eagohRank)} {eagohRank}</Text>
         </View>
+        {/* Domain badge — top right overlay */}
         <View style={styles.listingImageDomainBadge}>
           <Text style={styles.listingImageDomainBadgeText}>{domainLabel(domain)}</Text>
         </View>
@@ -1699,17 +1738,32 @@ const styles = StyleSheet.create({
   },
   cardGlow: { position: "absolute", width: 100, height: 100, borderRadius: 50, opacity: 0.10, right: -28, top: -30 },
 
-  // Centered prominent image area with padding so the EAGOH breathes inside the frame
-  listingImageArea: {
+  // Image Section — premium collectible card image area
+  imageSection: {
     width: "100%",
-    aspectRatio: 1,
     borderRadius: 5,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: palette.line,
-    backgroundColor: palette.void,
+    backgroundColor: "#03060B",
     marginBottom: 10,
-    padding: 24,
+  },
+  // ImageWrapper — centers the EAGOH with internal breathing room
+  imageWrapper: {
+    flex: 1,
+    justifyContent: "center" as const,
+    alignItems: "center" as const,
+    paddingHorizontal: 24,
+    paddingVertical: 24,
+    overflow: "hidden" as const,
+  },
+  // Radial spotlight glow behind the EAGOH character
+  radialSpotlight: {
+    position: "absolute",
+    borderRadius: 999,
+    alignSelf: "center",
+    top: "50%" as const,
+    transform: [{ translateY: "-50%" as const }],
   },
   listingImageDomainBadge: {
     position: "absolute",

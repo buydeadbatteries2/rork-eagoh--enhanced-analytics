@@ -73,8 +73,8 @@ export const OptimizedEagohImage = memo(function OptimizedEagohImage({ tone, lab
       )}
       {hasRealImage && (
         <>
-          <LinearGradient colors={["rgba(3,6,11,0.0)", "rgba(3,6,11,0.45)"]} style={StyleSheet.absoluteFill} />
-          <Text style={[styles.label, { color: "#FFFFFF" }]}>{label}</Text>
+          <LinearGradient colors={["rgba(3,6,11,0.0)", "rgba(3,6,11,0.15)"]} style={StyleSheet.absoluteFill} />
+          <Text style={[styles.label, { color: "rgba(255,255,255,0.85)" }]}>{label}</Text>
         </>
       )}
       <View style={[styles.ring, { borderColor: color, opacity: hasRealImage ? 0.35 : 0.72 }]} />

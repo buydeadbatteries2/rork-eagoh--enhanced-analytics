@@ -108,6 +108,9 @@ export type ListingFilters = {
   /** Gaming domain filters (canonical IDs). */
   gamingGenre?: string;
   gamingRole?: string;
+  /** Business domain filters (canonical IDs). */
+  businessIndustry?: string;
+  businessRole?: string;
   syncLevel?: SyncLevel;
   maxPrice?: number;
   minPrice?: number;
@@ -398,6 +401,12 @@ export async function listActiveListings(
   if (filters.gamingRole) {
     result = result.filter((l) => l.eagoh?.gaming_role === filters.gamingRole);
   }
+  if (filters.businessIndustry) {
+    result = result.filter((l) => l.eagoh?.business_industry === filters.businessIndustry);
+  }
+  if (filters.businessRole) {
+    result = result.filter((l) => l.eagoh?.business_role === filters.businessRole);
+  }
   if (filters.team) {
     const teamQuery = filters.team!.toLowerCase();
     result = result.filter((l) => {
@@ -443,6 +452,8 @@ export async function listActiveListings(
         l.eagoh?.education_role,
         l.eagoh?.gaming_genre,
         l.eagoh?.gaming_role,
+        l.eagoh?.business_industry,
+        l.eagoh?.business_role,
         ...l.fanatic_teams,
       ].filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(q);

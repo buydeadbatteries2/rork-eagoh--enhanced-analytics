@@ -36,6 +36,7 @@ import { FILM_TV_CATEGORIES, FILM_TV_GENRES, FILM_TV_ROLES, getFilmTvCategory, g
 import { FASHION_STYLE_CATEGORIES, FASHION_ROLES, getFashionStyleCategory, getFashionRole } from "@/data/fashion";
 import { EDUCATION_SUBJECTS, EDUCATION_ROLES, getEducationSubject, getEducationRole } from "@/data/education";
 import { GAMING_GENRES, GAMING_ROLES, getGamingGenre, getGamingRole } from "@/data/gaming";
+import { BUSINESS_INDUSTRIES, BUSINESS_ROLES, getBusinessIndustry, getBusinessRole } from "@/data/business";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   AlertTriangle,
@@ -103,6 +104,8 @@ type WizardStepId =
   | "education_role"
   | "gaming_genre"
   | "gaming_role"
+  | "business_industry"
+  | "business_role"
   | "lab";
 
 type WizardStep = {
@@ -339,6 +342,8 @@ export default function ForgeScreen(): JSX.Element {
   const [educationRole, setEducationRole] = useState<string>("");
   const [gamingGenre, setGamingGenre] = useState<string>("");
   const [gamingRole, setGamingRole] = useState<string>("");
+  const [businessIndustry, setBusinessIndustry] = useState<string>("");
+  const [businessRole, setBusinessRole] = useState<string>("");
   const [appearance, setAppearance] = useState<Record<string, string>>({});
   const [cyberneticIntensity, setCyberneticIntensity] = useState<string>("moderate");
   const [pose, setPose] = useState<string>("calm-sentinel");
@@ -433,6 +438,7 @@ export default function ForgeScreen(): JSX.Element {
   const isFashionDomain = domain === "fashion";
   const isEducationDomain = domain === "education";
   const isGamingDomain = domain === "gaming";
+  const isBusinessDomain = domain === "business";
 
   const wizardSteps: WizardStep[] = useMemo(() => {
     const base: WizardStep[] = [
@@ -481,8 +487,13 @@ export default function ForgeScreen(): JSX.Element {
       base.push({ id: "gaming_role", title: "Gaming Role", eyebrow: "Step 14", hint: "Choose the role or perspective this EAGOH embodies in gaming.", icon: <Sparkles color={palette.cyan} size={15} /> });
     }
 
-    const hasSpecialization = isSportsDomain || isMusicDomain || isFilmTvDomain || isFashionDomain || isEducationDomain || isGamingDomain;
-    const labEyebrowNum = hasSpecialization ? (isFilmTvDomain ? "Step 16" : (isFashionDomain || isEducationDomain || isGamingDomain) ? "Step 15" : "Step 15") : "Step 13";
+    if (isBusinessDomain) {
+      base.push({ id: "business_industry", title: "Business Industry", eyebrow: "Step 13", hint: "Select the primary industry this EAGOH specializes in — Marketing, SaaS, Startups, or more.", icon: <Zap color={palette.gold} size={15} /> });
+      base.push({ id: "business_role", title: "Business Role", eyebrow: "Step 14", hint: "Choose the role or perspective this EAGOH embodies in business.", icon: <Sparkles color={palette.gold} size={15} /> });
+    }
+
+    const hasSpecialization = isSportsDomain || isMusicDomain || isFilmTvDomain || isFashionDomain || isEducationDomain || isGamingDomain || isBusinessDomain;
+    const labEyebrowNum = hasSpecialization ? (isFilmTvDomain ? "Step 16" : (isFashionDomain || isEducationDomain || isGamingDomain || isBusinessDomain) ? "Step 15" : "Step 15") : "Step 13";
     base.push({ id: "lab", title: "Forge Lab", eyebrow: labEyebrowNum, hint: "Select the lab environment for this EAGOH.", icon: <Cpu color={palette.cyan} size={15} /> });
     return base;
   }, [isSportsDomain, isMusicDomain, isFilmTvDomain, isFashionDomain, isEducationDomain, isGamingDomain]);
@@ -516,11 +527,13 @@ export default function ForgeScreen(): JSX.Element {
     educationRole,
     gamingGenre,
     gamingRole,
+    businessIndustry,
+    businessRole,
     appearance,
     cyberneticIntensity,
     pose,
     lab,
-  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, teamFocusMode, proTeamFocusId, proTeamFocusName, collegeTeamFocusId, collegeTeamFocusName, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole, educationSubject, educationRole, gamingGenre, gamingRole, appearance, cyberneticIntensity, pose, lab]);
+  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, teamFocusMode, proTeamFocusId, proTeamFocusName, collegeTeamFocusId, collegeTeamFocusName, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole, educationSubject, educationRole, gamingGenre, gamingRole, businessIndustry, businessRole, appearance, cyberneticIntensity, pose, lab]);
 
   /** Dynamic reforge cost when editing — compares current form vs EAGOH's saved state. */
   const reforgeCost = useMemo(() => {
@@ -1117,6 +1130,38 @@ export default function ForgeScreen(): JSX.Element {
       );
     }
 
+    if (currentStep.id === "business_industry") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Select the primary industry this EAGOH specializes in. This is used for filtering, Marketplace searches, and industry-specific intelligence.</Text>
+          {BUSINESS_INDUSTRIES.map((ind) => (
+            <OptionChip
+              key={ind.id}
+              option={{ id: ind.id, label: ind.label, tone: "gold" }}
+              selected={businessIndustry === ind.id}
+              onPress={setBusinessIndustry}
+            />
+          ))}
+        </>
+      );
+    }
+
+    if (currentStep.id === "business_role") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Choose the role or perspective this EAGOH embodies in business. This shapes its analysis style and marketplace discoverability.</Text>
+          {BUSINESS_ROLES.map((r) => (
+            <OptionChip
+              key={r.id}
+              option={{ id: r.id, label: r.label, tone: "gold" }}
+              selected={businessRole === r.id}
+              onPress={setBusinessRole}
+            />
+          ))}
+        </>
+      );
+    }
+
     if (currentStep.id === "teams") {
       const sportCanonical = getSportCanonical(sport);
       const hasTeams = sportCanonical !== undefined;
@@ -1278,6 +1323,10 @@ export default function ForgeScreen(): JSX.Element {
     gamingRole,
     setGamingGenre,
     setGamingRole,
+    businessIndustry,
+    businessRole,
+    setBusinessIndustry,
+    setBusinessRole,
   ]);
 
   const previewHeight = Math.min(windowHeight * 0.27, 248);
@@ -1513,6 +1562,8 @@ export default function ForgeScreen(): JSX.Element {
                     setFashionRole("");
                     setEducationSubject("");
                     setEducationRole("");
+                    setBusinessIndustry("");
+                    setBusinessRole("");
                     setAppearance({});
                     setCyberneticIntensity("moderate");
                     setPose("calm-sentinel");

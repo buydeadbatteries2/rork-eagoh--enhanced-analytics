@@ -1,7 +1,7 @@
 import { palette } from "@/constants/colors";
 import { HORIZONTAL_LIST_PERFORMANCE_PROPS, LIST_PERFORMANCE_PROPS } from "@/app/components/PerformancePrimitives";
 import { LinearGradient } from "expo-linear-gradient";
-import * as Haptics from "expo-haptics";
+import { useHaptics } from "@/hooks/useHaptics";
 import {
   Activity,
   BrainCircuit,
@@ -160,8 +160,9 @@ function SectionTitle({ eyebrow, title }: { eyebrow: string; title: string }): J
   return <View style={styles.sectionTitle}><Text style={styles.eyebrow}>{eyebrow}</Text><Text style={styles.sectionHeading}>{title}</Text></View>;
 }
 const OptionChip = memo(function OptionChip({ option, selected, onPress }: { option: ForgeOption; selected: boolean; onPress: (id: string) => void }): JSX.Element {
+  const h = useHaptics();
   const accent = toneColor(option.tone);
-  const handlePress = useCallback((): void => { Haptics.selectionAsync().catch(() => undefined); onPress(option.id); }, [onPress, option.id]);
+  const handlePress = useCallback((): void => { h.selection(); onPress(option.id); }, [onPress, option.id, h]);
   return <Pressable onPress={handlePress} style={({ pressed }) => [styles.optionChip, selected && { borderColor: accent, backgroundColor: `${accent}18` }, pressed && styles.pressed]}><View style={[styles.optionDot, { backgroundColor: selected ? accent : "rgba(255,255,255,0.16)" }]} /><View style={styles.optionCopy}><Text style={[styles.optionLabel, selected && { color: accent }]}>{option.label}</Text>{option.detail ? <Text style={styles.optionDetail}>{option.detail}</Text> : null}</View>{selected ? <Check color={accent} size={16} /> : null}</Pressable>;
 });
 function TransparentMockRender({ state }: { state: ForgeState }): JSX.Element {
@@ -398,6 +399,7 @@ function BottomStat({ label, value, tint }: { label: string; value: string; tint
 }
 
 export default function LabsScreen(): JSX.Element {
+  const h = useHaptics();
   const [mode, setMode] = useState<LabMode>("analyst");
   const [activeStep, setActiveStep] = useState<ForgeStep>("Identity");
   const [depth, setDepth] = useState<EntryDepth>("Quick");
@@ -420,12 +422,12 @@ export default function LabsScreen(): JSX.Element {
   const setAppearance = useCallback((categoryId: string, optionId: string): void => { setForgeState((current) => ({ ...current, appearance: { ...current.appearance, [categoryId]: optionId } })); }, []);
   const goNext = useCallback((): void => { setActiveStep(steps[Math.min(stepIndex + 1, steps.length - 1)]); }, [stepIndex]);
   const goBack = useCallback((): void => { setActiveStep(steps[Math.max(stepIndex - 1, 0)]); }, [stepIndex]);
-  const toggleObservationType = useCallback((id: string): void => { Haptics.selectionAsync().catch(() => undefined); setSelectedTypes((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]); }, []);
-  const handleDepth = useCallback((nextDepth: EntryDepth): void => { Haptics.selectionAsync().catch(() => undefined); const nextMax = entryDepths.find((item) => item.id === nextDepth)?.max ?? 110; setDepth(nextDepth); setObservation((current) => current.slice(0, nextMax)); }, []);
+  const toggleObservationType = useCallback((id: string): void => { h.selection(); setSelectedTypes((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]); }, [h]);
+  const handleDepth = useCallback((nextDepth: EntryDepth): void => { h.selection(); const nextMax = entryDepths.find((item) => item.id === nextDepth)?.max ?? 110; setDepth(nextDepth); setObservation((current) => current.slice(0, nextMax)); }, [h]);
   const handleSendPrompt = useCallback(async (): Promise<void> => {
     const prompt = draftPrompt.trim();
     if (!prompt || isAnalystTyping || isEdgeMutating) return;
-    Haptics.selectionAsync().catch(() => undefined);
+    h.selection();
     setAnalystError(null);
 
     // ---- Quick Check path: live OpenAI via secure server + Edge deduction ----
@@ -517,7 +519,7 @@ export default function LabsScreen(): JSX.Element {
     const accent = toneColor(activeSession.tone);
     return <View style={styles.intelWrap}>
       <View style={styles.chatHero}><View><Text style={styles.kicker}>EAGOH ANALYST</Text><Text style={styles.title}>Oracle Channel</Text></View><View style={[styles.moodOrb, { borderColor: accent }]}><MessageCircle color={accent} size={24} /></View><Text style={styles.heroText}>Secure analyst chat now routes through the private EAGOH server path. If the service is unavailable, the chamber falls back safely to local tactical responses.</Text><View style={styles.personalityStrip}><Text style={[styles.personalityText, { color: accent }]}>{activeSession.mood}</Text><Text style={styles.personalityText}>Confidence 91%</Text><Text style={styles.personalityText}>Model {connectedModel}</Text></View></View>
-      <View style={styles.sessionGrid}>{sessionTypes.map((item) => { const selected = item.id === selectedSession; const itemAccent = toneColor(item.tone); return <Pressable key={item.id} onPress={() => { Haptics.selectionAsync().catch(() => undefined); setSelectedSession(item.id); }} style={[styles.sessionCard, selected && { borderColor: itemAccent, backgroundColor: `${itemAccent}16` }]}><View style={styles.sessionTop}><Text style={[styles.sessionName, selected && { color: itemAccent }]}>{item.name}</Text><Text style={[styles.sessionCost, { color: itemAccent }]}>{item.cost}</Text></View><Text style={styles.sessionMeta}>{item.model} · {item.duration}</Text><Text style={styles.sessionMood}>{item.mood}</Text></Pressable>; })}</View>
+      <View style={styles.sessionGrid}>{sessionTypes.map((item) => { const selected = item.id === selectedSession; const itemAccent = toneColor(item.tone); return <Pressable key={item.id} onPress={() => { h.selection(); setSelectedSession(item.id); }} style={[styles.sessionCard, selected && { borderColor: itemAccent, backgroundColor: `${itemAccent}16` }]}><View style={styles.sessionTop}><Text style={[styles.sessionName, selected && { color: itemAccent }]}>{item.name}</Text><Text style={[styles.sessionCost, { color: itemAccent }]}>{item.cost}</Text></View><Text style={styles.sessionMeta}>{item.model} · {item.duration}</Text><Text style={styles.sessionMood}>{item.mood}</Text></Pressable>; })}</View>
       <View style={styles.chatPanel}><View style={styles.chatPanelHeader}><View><Text style={styles.eyebrow}>SECURE ANALYST SESSION</Text><Text style={styles.sectionHeading}>{activeSession.model}</Text></View><View style={[styles.confidencePill, { borderColor: accent }]}><Sparkles color={accent} size={14} /><Text style={[styles.confidenceText, { color: accent }]}>91%</Text></View></View>{messages.map((message) => { const isAnalyst = message.sender === "analyst"; return <View key={message.id} style={[styles.messageBubble, isAnalyst ? styles.analystBubble : styles.userBubble]}><Text style={isAnalyst ? styles.analystText : styles.userText}>{message.text}</Text>{message.confidence ? <Text style={[styles.messageConfidence, { color: accent }]}>Analyst confidence {message.confidence}%</Text> : null}</View>; })}{isAnalystTyping ? <View style={styles.typingRow}><TypingDots /><Text style={styles.typingText}>Analyst is forming a tactical response...</Text></View> : null}{analystError ? <Text style={styles.errorText}>{analystError}</Text> : null}</View>
       <View style={styles.stepPanel}><SectionTitle eyebrow="MEMORY PREVIEWS" title="Context cards ready for the analyst." />{memoryCards.map((item) => <View key={item.id} style={styles.memoryCard}><View><Text style={styles.memoryTitle}>{item.title}</Text><Text style={styles.memoryDetail}>{item.detail}</Text></View><Text style={styles.memoryScore}>{item.score}</Text></View>)}</View>
       <View style={styles.stepPanel}><SectionTitle eyebrow="SUGGESTED PROMPTS" title="Start with a tactical question." /><View style={styles.typeGrid}>{suggestedPrompts.map((prompt) => <Pressable key={prompt} onPress={() => setDraftPrompt(prompt)} style={styles.promptChip}><Text style={styles.typeLabel}>{prompt}</Text></Pressable>)}</View><View style={styles.composer}><TextInput value={draftPrompt} onChangeText={setDraftPrompt} placeholder="Ask your EAGOH analyst..." placeholderTextColor={palette.muted} style={styles.composerInput} editable={!isAnalystTyping} /><Pressable onPress={handleSendPrompt} disabled={isAnalystTyping || !draftPrompt.trim()} style={[styles.sendButton, { backgroundColor: accent }, (isAnalystTyping || !draftPrompt.trim()) && styles.disabledButton]}><Send color={palette.void} size={18} /></Pressable></View><Text style={styles.notice}>OpenAI is called only through the secure server route. No API key is stored in the mobile app and no real Edge is deducted yet.</Text></View>

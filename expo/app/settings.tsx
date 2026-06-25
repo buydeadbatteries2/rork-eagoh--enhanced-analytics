@@ -1,10 +1,9 @@
-import { palette } from "@/constants/colors";
 import { useAppTheme } from "@/providers/ThemeProvider";
 import { useAuth } from "@/providers/AuthProvider";
 import { useProfile } from "@/providers/ProfileProvider";
+import { useHaptics } from "@/hooks/useHaptics";
 import { useQueryClient } from "@tanstack/react-query";
 import Constants from "expo-constants";
-import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import {
   AlertTriangle,
@@ -46,6 +45,9 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { AppTheme } from "@/services/profile";
+import { palette as darkPalette, lightPalette } from "@/constants/colors";
+
+type P = typeof darkPalette;
 
 // ── Section types ──────────────────────────────────────────────────────────
 
@@ -65,30 +67,248 @@ type SettingsSection = {
   rows: SectionRow[];
 };
 
+// ── Styles factory (parametrised on palette so theme changes re-render) ────
+
+function createStyles(pal: P) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: pal.void },
+    header: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      paddingHorizontal: 18,
+      paddingVertical: 14,
+      borderBottomWidth: 1,
+      borderBottomColor: pal.line,
+      backgroundColor: pal.obsidian,
+    },
+    backBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 5,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: pal.panel,
+      borderWidth: 1,
+      borderColor: pal.line,
+    },
+    headerTitle: {
+      color: pal.text,
+      fontSize: 18,
+      fontWeight: "900" as const,
+      flex: 1,
+    },
+    scroll: { flex: 1 },
+    scrollContent: { padding: 18, paddingBottom: 120, gap: 14 },
+
+    // Section
+    section: {
+      borderRadius: 5,
+      backgroundColor: pal.panel,
+      borderWidth: 1,
+      borderColor: pal.line,
+      overflow: "hidden" as const,
+    },
+    sectionHeader: {
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      gap: 8,
+      paddingHorizontal: 14,
+      paddingVertical: 11,
+      borderBottomWidth: 1,
+      borderBottomColor: pal.line,
+      backgroundColor: pal.cyanSoft,
+    },
+    sectionHeaderText: {
+      color: pal.text,
+      fontSize: 13,
+      fontWeight: "900" as const,
+      letterSpacing: 0.8,
+      textTransform: "uppercase" as const,
+    },
+    sectionBody: { gap: 0 },
+
+    // Row base
+    row: {
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      gap: 12,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: pal.line,
+    },
+    rowDanger: {
+      backgroundColor: pal.emberSoft,
+    },
+    rowIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 5,
+      alignItems: "center" as const,
+      justifyContent: "center" as const,
+      backgroundColor: pal.blueSoft,
+      borderWidth: 1,
+      borderColor: pal.line,
+    },
+    rowContent: { flex: 1 },
+    rowLabel: {
+      color: pal.text,
+      fontSize: 13,
+      fontWeight: "800" as const,
+    },
+    rowValue: {
+      color: pal.muted,
+      fontSize: 12,
+      fontWeight: "600" as const,
+      marginTop: 2,
+    },
+    rowHint: {
+      color: pal.muted,
+      fontSize: 11,
+      fontWeight: "600" as const,
+      marginTop: 2,
+    },
+
+    // Input row
+    inputRow: {
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      gap: 8,
+      marginTop: 6,
+    },
+    textInput: {
+      flex: 1,
+      backgroundColor: pal.blueSoft,
+      borderWidth: 1,
+      borderColor: pal.line,
+      borderRadius: 5,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      color: pal.text,
+      fontSize: 13,
+      fontWeight: "700" as const,
+    },
+    saveBtn: {
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 5,
+      backgroundColor: pal.cyan,
+    },
+    saveBtnText: {
+      color: pal.void,
+      fontSize: 12,
+      fontWeight: "900" as const,
+    },
+
+    // Toggle
+    toggleTrack: {
+      width: 46,
+      height: 26,
+      borderRadius: 13,
+      backgroundColor: pal.line,
+      justifyContent: "center" as const,
+      padding: 3,
+    },
+    toggleTrackActive: {
+      backgroundColor: pal.successSoft,
+    },
+    toggleThumb: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      backgroundColor: pal.muted,
+    },
+    toggleThumbActive: {
+      backgroundColor: pal.success,
+      alignSelf: "flex-end" as const,
+    },
+
+    // Picker
+    pickerOptions: {
+      flexDirection: "row" as const,
+      gap: 8,
+      marginTop: 8,
+    },
+    pickerChip: {
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 5,
+      backgroundColor: pal.blueSoft,
+      borderWidth: 1,
+      borderColor: pal.line,
+    },
+    pickerChipActive: {
+      backgroundColor: pal.cyanSoft,
+      borderColor: pal.cyan,
+    },
+    pickerChipText: {
+      color: pal.muted,
+      fontSize: 12,
+      fontWeight: "700" as const,
+    },
+    pickerChipTextActive: {
+      color: pal.text,
+    },
+
+    // Admin override
+    adminOverrideRow: {
+      backgroundColor: pal.goldSoft,
+      borderBottomColor: pal.gold,
+    },
+    adminOverrideHeader: {
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      gap: 6,
+      marginBottom: 6,
+    },
+    adminOverrideLabel: {
+      color: pal.gold,
+      fontSize: 12,
+      fontWeight: "800" as const,
+      letterSpacing: 0.5,
+    },
+    adminOverrideDetails: {
+      gap: 2,
+    },
+    adminOverrideDetail: {
+      color: pal.muted,
+      fontSize: 11,
+      fontWeight: "600" as const,
+      lineHeight: 16,
+    },
+  });
+}
+
 // ── Sub-components ─────────────────────────────────────────────────────────
 
 const SectionHeader = memo(function SectionHeader({
   title,
   icon,
+  s,
 }: {
   title: string;
   icon: React.ReactNode;
+  s: ReturnType<typeof createStyles>;
 }): JSX.Element {
   return (
-    <View style={styles.sectionHeader}>
+    <View style={s.sectionHeader}>
       {icon}
-      <Text style={styles.sectionHeaderText}>{title}</Text>
+      <Text style={s.sectionHeaderText}>{title}</Text>
     </View>
   );
 });
 
-const InfoRow = memo(function InfoRow({ label, value, icon }: Extract<SectionRow, { kind: "info" }>): JSX.Element {
+const InfoRow = memo(function InfoRow({ label, value, icon, s }: Extract<SectionRow, { kind: "info" }> & { s: ReturnType<typeof createStyles> }): JSX.Element {
   return (
-    <View style={styles.row}>
-      <View style={styles.rowIcon}>{icon}</View>
-      <View style={styles.rowContent}>
-        <Text style={styles.rowLabel}>{label}</Text>
-        <Text style={styles.rowValue}>{value}</Text>
+    <View style={s.row}>
+      <View style={s.rowIcon}>{icon}</View>
+      <View style={s.rowContent}>
+        <Text style={s.rowLabel}>{label}</Text>
+        <Text style={s.rowValue}>{value}</Text>
       </View>
     </View>
   );
@@ -102,18 +322,20 @@ const InputRow = memo(function InputRow({
   onChangeText,
   onSave,
   saving,
-}: Extract<SectionRow, { kind: "input" }>): JSX.Element {
+  s,
+  pal,
+}: Extract<SectionRow, { kind: "input" }> & { s: ReturnType<typeof createStyles>; pal: P }): JSX.Element {
   return (
-    <View style={styles.row}>
-      <View style={styles.rowIcon}>{icon}</View>
-      <View style={styles.rowContent}>
-        <Text style={styles.rowLabel}>{label}</Text>
-        <View style={styles.inputRow}>
+    <View style={s.row}>
+      <View style={s.rowIcon}>{icon}</View>
+      <View style={s.rowContent}>
+        <Text style={s.rowLabel}>{label}</Text>
+        <View style={s.inputRow}>
           <TextInput
-            style={styles.textInput}
+            style={s.textInput}
             value={value}
             placeholder={placeholder}
-            placeholderTextColor={palette.muted}
+            placeholderTextColor={pal.muted}
             onChangeText={onChangeText}
             autoCapitalize="none"
             autoCorrect={false}
@@ -122,14 +344,14 @@ const InputRow = memo(function InputRow({
             onPress={onSave}
             disabled={saving}
             style={({ pressed }) => [
-              styles.saveBtn,
+              s.saveBtn,
               pressed && { opacity: 0.7 },
             ]}
           >
             {saving ? (
-              <ActivityIndicator color={palette.text} size="small" />
+              <ActivityIndicator color={pal.text} size="small" />
             ) : (
-              <Text style={styles.saveBtnText}>Save</Text>
+              <Text style={s.saveBtnText}>Save</Text>
             )}
           </Pressable>
         </View>
@@ -144,29 +366,31 @@ const ButtonRow = memo(function ButtonRow({
   icon,
   onPress,
   loading,
-}: Extract<SectionRow, { kind: "button" }>): JSX.Element {
+  s,
+  pal,
+}: Extract<SectionRow, { kind: "button" }> & { s: ReturnType<typeof createStyles>; pal: P }): JSX.Element {
   const isDanger = variant === "danger";
   return (
     <Pressable
       onPress={onPress}
       disabled={loading}
       style={({ pressed }) => [
-        styles.row,
-        isDanger && styles.rowDanger,
+        s.row,
+        isDanger && s.rowDanger,
         pressed && { opacity: 0.75 },
       ]}
     >
       {loading ? (
-        <ActivityIndicator color={isDanger ? palette.ember : palette.cyan} style={styles.rowIcon} />
+        <ActivityIndicator color={isDanger ? pal.ember : pal.cyan} style={s.rowIcon} />
       ) : (
-        <View style={styles.rowIcon}>{icon}</View>
+        <View style={s.rowIcon}>{icon}</View>
       )}
-      <View style={styles.rowContent}>
-        <Text style={[styles.rowLabel, isDanger && { color: palette.ember }]}>
+      <View style={s.rowContent}>
+        <Text style={[s.rowLabel, isDanger && { color: pal.ember }]}>
           {label}
         </Text>
       </View>
-      {loading && <ActivityIndicator color={isDanger ? palette.ember : palette.cyan} size="small" />}
+      {loading && <ActivityIndicator color={isDanger ? pal.ember : pal.cyan} size="small" />}
     </Pressable>
   );
 });
@@ -176,16 +400,17 @@ const ToggleRow = memo(function ToggleRow({
   value,
   icon,
   onToggle,
-}: Extract<SectionRow, { kind: "toggle" }>): JSX.Element {
+  s,
+}: Extract<SectionRow, { kind: "toggle" }> & { s: ReturnType<typeof createStyles> }): JSX.Element {
   return (
-    <Pressable onPress={onToggle} style={({ pressed }) => [styles.row, pressed && { opacity: 0.75 }]}>
-      <View style={styles.rowIcon}>{icon}</View>
-      <View style={styles.rowContent}>
-        <Text style={styles.rowLabel}>{label}</Text>
-        <Text style={styles.rowHint}>{value ? "On" : "Off"}</Text>
+    <Pressable onPress={onToggle} style={({ pressed }) => [s.row, pressed && { opacity: 0.75 }]}>
+      <View style={s.rowIcon}>{icon}</View>
+      <View style={s.rowContent}>
+        <Text style={s.rowLabel}>{label}</Text>
+        <Text style={s.rowHint}>{value ? "On" : "Off"}</Text>
       </View>
-      <View style={[styles.toggleTrack, value && styles.toggleTrackActive]}>
-        <View style={[styles.toggleThumb, value && styles.toggleThumbActive]} />
+      <View style={[s.toggleTrack, value && s.toggleTrackActive]}>
+        <View style={[s.toggleThumb, value && s.toggleThumbActive]} />
       </View>
     </Pressable>
   );
@@ -197,18 +422,19 @@ const PickerRow = memo(function PickerRow({
   options,
   icon,
   onSelect,
-}: Extract<SectionRow, { kind: "picker" }>): JSX.Element {
+  s,
+}: Extract<SectionRow, { kind: "picker" }> & { s: ReturnType<typeof createStyles> }): JSX.Element {
   const selected = useMemo(
     () => options.find((o) => o.id === value) ?? options[0],
     [options, value],
   );
 
   return (
-    <View style={styles.row}>
-      <View style={styles.rowIcon}>{icon}</View>
-      <View style={styles.rowContent}>
-        <Text style={styles.rowLabel}>{label}</Text>
-        <View style={styles.pickerOptions}>
+    <View style={s.row}>
+      <View style={s.rowIcon}>{icon}</View>
+      <View style={s.rowContent}>
+        <Text style={s.rowLabel}>{label}</Text>
+        <View style={s.pickerOptions}>
           {options.map((opt) => {
             const isActive = opt.id === value;
             return (
@@ -216,16 +442,16 @@ const PickerRow = memo(function PickerRow({
                 key={opt.id}
                 onPress={() => onSelect(opt.id)}
                 style={({ pressed }) => [
-                  styles.pickerChip,
-                  isActive && styles.pickerChipActive,
+                  s.pickerChip,
+                  isActive && s.pickerChipActive,
                   pressed && { opacity: 0.7 },
                 ]}
               >
                 {opt.icon}
                 <Text
                   style={[
-                    styles.pickerChipText,
-                    isActive && styles.pickerChipTextActive,
+                    s.pickerChipText,
+                    isActive && s.pickerChipTextActive,
                   ]}
                 >
                   {opt.label}
@@ -243,17 +469,19 @@ const LinkRow = memo(function LinkRow({
   label,
   icon,
   onPress,
-}: Extract<SectionRow, { kind: "link" }>): JSX.Element {
+  s,
+  pal,
+}: Extract<SectionRow, { kind: "link" }> & { s: ReturnType<typeof createStyles>; pal: P }): JSX.Element {
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => [styles.row, pressed && { opacity: 0.7 }]}
+      style={({ pressed }) => [s.row, pressed && { opacity: 0.7 }]}
     >
-      <View style={styles.rowIcon}>{icon}</View>
-      <View style={styles.rowContent}>
-        <Text style={styles.rowLabel}>{label}</Text>
+      <View style={s.rowIcon}>{icon}</View>
+      <View style={s.rowContent}>
+        <Text style={s.rowLabel}>{label}</Text>
       </View>
-      <ChevronRight color={palette.muted} size={16} />
+      <ChevronRight color={pal.muted} size={16} />
     </Pressable>
   );
 });
@@ -262,29 +490,31 @@ const AdminOverrideRow = memo(function AdminOverrideRow({
   tier,
   expiresAt,
   note,
-}: Extract<SectionRow, { kind: "adminOverride" }>): JSX.Element {
+  s,
+  pal,
+}: Extract<SectionRow, { kind: "adminOverride" }> & { s: ReturnType<typeof createStyles>; pal: P }): JSX.Element {
   const tierLabel = tier.charAt(0).toUpperCase() + tier.slice(1).replace("_", " ");
   const expiresLabel = expiresAt
     ? new Date(expiresAt).toLocaleDateString()
     : "No expiration";
 
   return (
-    <View style={[styles.row, styles.adminOverrideRow]}>
-      <View style={styles.rowIcon}>
-        <Crown color={palette.gold} size={18} />
+    <View style={[s.row, s.adminOverrideRow]}>
+      <View style={s.rowIcon}>
+        <Crown color={pal.gold} size={18} />
       </View>
-      <View style={styles.rowContent}>
-        <View style={styles.adminOverrideHeader}>
-          <Zap color={palette.gold} size={12} />
-          <Text style={styles.adminOverrideLabel}>Promotional Access Active</Text>
+      <View style={s.rowContent}>
+        <View style={s.adminOverrideHeader}>
+          <Zap color={pal.gold} size={12} />
+          <Text style={s.adminOverrideLabel}>Promotional Access Active</Text>
         </View>
-        <View style={styles.adminOverrideDetails}>
-          <Text style={styles.adminOverrideDetail}>
-            Tier: <Text style={{ color: palette.gold, fontWeight: "900" }}>{tierLabel}</Text>
+        <View style={s.adminOverrideDetails}>
+          <Text style={s.adminOverrideDetail}>
+            Tier: <Text style={{ color: pal.gold, fontWeight: "900" }}>{tierLabel}</Text>
           </Text>
-          <Text style={styles.adminOverrideDetail}>Expires: {expiresLabel}</Text>
+          <Text style={s.adminOverrideDetail}>Expires: {expiresLabel}</Text>
           {note ? (
-            <Text style={styles.adminOverrideDetail}>Note: {note}</Text>
+            <Text style={s.adminOverrideDetail}>Note: {note}</Text>
           ) : null}
         </View>
       </View>
@@ -304,8 +534,12 @@ export default function SettingsScreen(): JSX.Element {
     updateProfile,
     setPreferences,
   } = useProfile();
-  const { theme, setTheme } = useAppTheme();
+  const { theme, setTheme, palette: pal } = useAppTheme();
+  const h = useHaptics();
   const queryClient = useQueryClient();
+
+  // ── Themed styles ──────────────────────────────────────────────────────
+  const s = useMemo(() => createStyles(pal), [pal]);
 
   // ── Local state ────────────────────────────────────────────────────────
   const [usernameDraft, setUsernameDraft] = useState<string>(
@@ -313,14 +547,13 @@ export default function SettingsScreen(): JSX.Element {
   );
   const [savingUsername, setSavingUsername] = useState<boolean>(false);
 
-  // Sync username draft when profile loads
   const usernameValue = profile?.username ?? "";
   const displayUsername = usernameDraft || usernameValue;
 
   const email = user?.email ?? "—";
   const currentTier = effectiveSubscriptionTier;
   const baseTier = profile?.subscription_tier ?? "free";
-  const hapticsEnabled = profile?.preferences?.hapticsEnabled !== false; // default on
+  const hapticsEnabled = profile?.preferences?.hapticsEnabled !== false;
 
   // ── Handlers ────────────────────────────────────────────────────────────
 
@@ -329,13 +562,13 @@ export default function SettingsScreen(): JSX.Element {
     setSavingUsername(true);
     try {
       await updateProfile({ username: usernameDraft.trim() });
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+      h.success();
     } catch (err) {
       console.warn("[settings] username save failed", err);
     } finally {
       setSavingUsername(false);
     }
-  }, [usernameDraft, updateProfile]);
+  }, [usernameDraft, updateProfile, h]);
 
   const handleResetPassword = useCallback((): void => {
     if (!user?.email) return;
@@ -359,12 +592,12 @@ export default function SettingsScreen(): JSX.Element {
         text: "Sign Out",
         style: "destructive",
         onPress: () => {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined);
+          h.warning();
           signOut().catch((e) => console.warn("[settings] signOut failed", e));
         },
       },
     ]);
-  }, [signOut]);
+  }, [signOut, h]);
 
   const handleToggleHaptics = useCallback((): void => {
     const next = !hapticsEnabled;
@@ -394,13 +627,13 @@ export default function SettingsScreen(): JSX.Element {
           style: "destructive",
           onPress: () => {
             queryClient.clear();
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+            h.success();
             Alert.alert("Cache Cleared", "Local cache has been cleared successfully.");
           },
         },
       ],
     );
-  }, [queryClient]);
+  }, [queryClient, h]);
 
   const handleExportData = useCallback((): void => {
     Alert.alert("Data Export", "Data export coming soon.");
@@ -432,33 +665,33 @@ export default function SettingsScreen(): JSX.Element {
 
   const navigateTo = useCallback(
     (route: string) => (): void => {
-      Haptics.selectionAsync().catch(() => undefined);
+      h.selection();
       router.push(route as never);
     },
-    [router],
+    [router, h],
   );
 
   // ── Sections ────────────────────────────────────────────────────────────
 
   const sections: SettingsSection[] = useMemo<SettingsSection[]>(() => {
-    const s: SettingsSection[] = [
+    const secs: SettingsSection[] = [
       {
         id: "account",
         title: "Account",
-        titleIcon: <User color={palette.cyan} size={15} />,
+        titleIcon: <User color={pal.cyan} size={15} />,
         rows: [
           {
             kind: "info",
             label: "Email Address",
             value: email,
-            icon: <Mail color={palette.muted} size={18} />,
+            icon: <Mail color={pal.muted} size={18} />,
           },
           {
             kind: "input",
             label: "Username",
             value: displayUsername,
             placeholder: "Enter username",
-            icon: <User color={palette.muted} size={18} />,
+            icon: <User color={pal.muted} size={18} />,
             onChangeText: setUsernameDraft,
             onSave: handleSaveUsername,
             saving: savingUsername,
@@ -467,7 +700,7 @@ export default function SettingsScreen(): JSX.Element {
             kind: "button",
             label: "Send Password Reset Email",
             variant: "primary",
-            icon: <Lock color={palette.cyan} size={18} />,
+            icon: <Lock color={pal.cyan} size={18} />,
             onPress: handleResetPassword,
             loading: resetPasswordState.isPending,
           },
@@ -475,7 +708,7 @@ export default function SettingsScreen(): JSX.Element {
             kind: "button",
             label: "Sign Out",
             variant: "danger",
-            icon: <LogOut color={palette.ember} size={18} />,
+            icon: <LogOut color={pal.ember} size={18} />,
             onPress: handleLogout,
             loading: signOutState.isPending,
           },
@@ -484,16 +717,16 @@ export default function SettingsScreen(): JSX.Element {
       {
         id: "appearance",
         title: "Appearance",
-        titleIcon: <Brush color={palette.violet} size={15} />,
+        titleIcon: <Brush color={pal.violet} size={15} />,
         rows: [
           {
             kind: "picker",
             label: "Theme",
             value: theme,
-            icon: <Moon color={palette.muted} size={18} />,
+            icon: <Moon color={pal.muted} size={18} />,
             options: [
-              { id: "dark", label: "Dark Mode", icon: <Moon color={palette.blue} size={14} /> },
-              { id: "light", label: "Light Mode", icon: <Sun color={palette.gold} size={14} /> },
+              { id: "dark", label: "Dark Mode", icon: <Moon color={pal.blue} size={14} /> },
+              { id: "light", label: "Light Mode", icon: <Sun color={pal.gold} size={14} /> },
             ],
             onSelect: handleThemeSelect,
           },
@@ -502,13 +735,13 @@ export default function SettingsScreen(): JSX.Element {
       {
         id: "feedback",
         title: "Touch Feedback",
-        titleIcon: <Hand color={palette.ember} size={15} />,
+        titleIcon: <Hand color={pal.ember} size={15} />,
         rows: [
           {
             kind: "toggle",
             label: "Haptics",
             value: hapticsEnabled,
-            icon: <Vibrate color={palette.muted} size={18} />,
+            icon: <Vibrate color={pal.muted} size={18} />,
             onToggle: handleToggleHaptics,
           },
         ],
@@ -516,27 +749,26 @@ export default function SettingsScreen(): JSX.Element {
       {
         id: "subscription",
         title: "Subscription",
-        titleIcon: <Crown color={palette.gold} size={15} />,
+        titleIcon: <Crown color={pal.gold} size={15} />,
         rows: [
           {
             kind: "info",
             label: "Effective Tier",
             value: currentTier.replace("_", " ").replace(/\b\w/g, (c: string) => c.toUpperCase()),
-            icon: <Star color={palette.gold} size={18} />,
+            icon: <Star color={pal.gold} size={18} />,
           },
           {
             kind: "info",
             label: "Base Tier",
             value: baseTier.replace("_", " ").replace(/\b\w/g, (c: string) => c.toUpperCase()),
-            icon: <Layers3 color={palette.muted} size={18} />,
+            icon: <Layers3 color={pal.muted} size={18} />,
           },
           {
             kind: "info",
             label: "Current Edge Balance",
             value: `${(profile?.edge_subscription ?? 0) + (profile?.edge_purchased ?? 0)} Edge`,
-            icon: <Zap color={palette.cyan} size={18} />,
+            icon: <Zap color={pal.cyan} size={18} />,
           },
-          // Admin override
           ...(isAdminOverrideActive && profile
             ? [
                 {
@@ -551,7 +783,7 @@ export default function SettingsScreen(): JSX.Element {
             kind: "button",
             label: "Manage Subscription",
             variant: "primary",
-            icon: <Sliders color={palette.gold} size={18} />,
+            icon: <Sliders color={pal.gold} size={18} />,
             onPress: handleManageSubscription,
           },
         ],
@@ -559,27 +791,27 @@ export default function SettingsScreen(): JSX.Element {
       {
         id: "privacy",
         title: "Privacy & Safety",
-        titleIcon: <Shield color={palette.success} size={15} />,
+        titleIcon: <Shield color={pal.success} size={15} />,
         rows: [
           {
             kind: "button",
             label: "Clear Local Cache",
             variant: "primary",
-            icon: <RefreshCcw color={palette.cyan} size={18} />,
+            icon: <RefreshCcw color={pal.cyan} size={18} />,
             onPress: handleClearCache,
           },
           {
             kind: "button",
             label: "Export My Data",
             variant: "primary",
-            icon: <Upload color={palette.muted} size={18} />,
+            icon: <Upload color={pal.muted} size={18} />,
             onPress: handleExportData,
           },
           {
             kind: "button",
             label: "Delete Account",
             variant: "danger",
-            icon: <Trash2 color={palette.ember} size={18} />,
+            icon: <Trash2 color={pal.ember} size={18} />,
             onPress: handleDeleteAccount,
           },
         ],
@@ -587,24 +819,24 @@ export default function SettingsScreen(): JSX.Element {
       {
         id: "legal",
         title: "Legal",
-        titleIcon: <FileText color={palette.muted} size={15} />,
+        titleIcon: <FileText color={pal.muted} size={15} />,
         rows: [
           {
             kind: "link",
             label: "Terms of Service",
-            icon: <FileText color={palette.muted} size={18} />,
+            icon: <FileText color={pal.muted} size={18} />,
             onPress: navigateTo("/legal/terms"),
           },
           {
             kind: "link",
             label: "Privacy Policy",
-            icon: <Shield color={palette.muted} size={18} />,
+            icon: <Shield color={pal.muted} size={18} />,
             onPress: navigateTo("/legal/privacy"),
           },
           {
             kind: "link",
             label: "Disclaimer",
-            icon: <AlertTriangle color={palette.muted} size={18} />,
+            icon: <AlertTriangle color={pal.muted} size={18} />,
             onPress: navigateTo("/legal/disclaimer"),
           },
         ],
@@ -612,31 +844,31 @@ export default function SettingsScreen(): JSX.Element {
       {
         id: "about",
         title: "About EAGOH",
-        titleIcon: <Info color={palette.blue} size={15} />,
+        titleIcon: <Info color={pal.blue} size={15} />,
         rows: [
           {
             kind: "info",
             label: "App Name",
             value: "EAGOH",
-            icon: <Cpu color={palette.cyan} size={18} />,
+            icon: <Cpu color={pal.cyan} size={18} />,
           },
           {
             kind: "info",
             label: "Full Name",
             value: "Enhanced Analytics & Game Oracle Hub",
-            icon: <Info color={palette.muted} size={18} />,
+            icon: <Info color={pal.muted} size={18} />,
           },
           {
             kind: "info",
             label: "Company",
             value: "NDSTRII Studios LLC",
-            icon: <Star color={palette.gold} size={18} />,
+            icon: <Star color={pal.gold} size={18} />,
           },
           {
             kind: "info",
             label: "App Version",
             value: Constants.expoConfig?.version ?? "1.0.0",
-            icon: <Layers3 color={palette.muted} size={18} />,
+            icon: <Layers3 color={pal.muted} size={18} />,
           },
           {
             kind: "info",
@@ -646,12 +878,12 @@ export default function SettingsScreen(): JSX.Element {
                 Constants.expoConfig?.android?.versionCode ??
                 "1",
             ),
-            icon: <Cpu color={palette.muted} size={18} />,
+            icon: <Cpu color={pal.muted} size={18} />,
           },
           {
             kind: "link",
             label: "Contact Support",
-            icon: <MessageCircle color={palette.cyan} size={18} />,
+            icon: <MessageCircle color={pal.cyan} size={18} />,
             onPress: () => {
               Alert.alert("Contact Support", "support@eagoh.com");
             },
@@ -660,7 +892,7 @@ export default function SettingsScreen(): JSX.Element {
       },
     ];
 
-    return s;
+    return secs;
   }, [
     email,
     displayUsername,
@@ -683,51 +915,50 @@ export default function SettingsScreen(): JSX.Element {
     handleExportData,
     handleDeleteAccount,
     navigateTo,
+    pal,
   ]);
 
   // ── Render ──────────────────────────────────────────────────────────────
 
   return (
-    <SafeAreaView edges={["top"]} style={styles.safe}>
-      {/* Header */}
-      <View style={styles.header}>
+    <SafeAreaView edges={["top"]} style={s.safe}>
+      <View style={s.header}>
         <Pressable
           onPress={() => router.back()}
-          style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.6 }]}
+          style={({ pressed }) => [s.backBtn, pressed && { opacity: 0.6 }]}
         >
-          <ArrowLeft color={palette.text} size={20} />
+          <ArrowLeft color={pal.text} size={20} />
         </Pressable>
-        <Sliders color={palette.cyan} size={20} />
-        <Text style={styles.headerTitle}>Settings</Text>
+        <Sliders color={pal.cyan} size={20} />
+        <Text style={s.headerTitle}>Settings</Text>
       </View>
 
-      {/* Content */}
       <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
+        style={s.scroll}
+        contentContainerStyle={s.scrollContent}
         showsVerticalScrollIndicator={false}
       >
         {sections.map((section) => (
-          <View key={section.id} style={styles.section}>
-            <SectionHeader title={section.title} icon={section.titleIcon} />
-            <View style={styles.sectionBody}>
+          <View key={section.id} style={s.section}>
+            <SectionHeader title={section.title} icon={section.titleIcon} s={s} />
+            <View style={s.sectionBody}>
               {section.rows.map((row, idx) => {
                 const key = `${section.id}-${idx}`;
                 switch (row.kind) {
                   case "info":
-                    return <InfoRow key={key} {...row} />;
+                    return <InfoRow key={key} {...row} s={s} />;
                   case "input":
-                    return <InputRow key={key} {...row} />;
+                    return <InputRow key={key} {...row} s={s} pal={pal} />;
                   case "button":
-                    return <ButtonRow key={key} {...row} />;
+                    return <ButtonRow key={key} {...row} s={s} pal={pal} />;
                   case "toggle":
-                    return <ToggleRow key={key} {...row} />;
+                    return <ToggleRow key={key} {...row} s={s} />;
                   case "picker":
-                    return <PickerRow key={key} {...row} />;
+                    return <PickerRow key={key} {...row} s={s} />;
                   case "link":
-                    return <LinkRow key={key} {...row} />;
+                    return <LinkRow key={key} {...row} s={s} pal={pal} />;
                   case "adminOverride":
-                    return <AdminOverrideRow key={key} {...row} />;
+                    return <AdminOverrideRow key={key} {...row} s={s} pal={pal} />;
                   default:
                     return null;
                 }
@@ -739,217 +970,3 @@ export default function SettingsScreen(): JSX.Element {
     </SafeAreaView>
   );
 }
-
-// ── Styles ─────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: palette.void },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: palette.line,
-    backgroundColor: palette.obsidian,
-  },
-  backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 5,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderWidth: 1,
-    borderColor: palette.line,
-  },
-  headerTitle: {
-    color: palette.text,
-    fontSize: 18,
-    fontWeight: "900",
-    flex: 1,
-  },
-  scroll: { flex: 1 },
-  scrollContent: { padding: 18, paddingBottom: 120, gap: 14 },
-
-  // Section
-  section: {
-    borderRadius: 5,
-    backgroundColor: "rgba(10,20,40,0.50)",
-    borderWidth: 1,
-    borderColor: palette.line,
-    overflow: "hidden",
-  },
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    borderBottomWidth: 1,
-    borderBottomColor: palette.line,
-    backgroundColor: "rgba(255,255,255,0.025)",
-  },
-  sectionHeaderText: {
-    color: palette.text,
-    fontSize: 13,
-    fontWeight: "900",
-    letterSpacing: 0.8,
-    textTransform: "uppercase",
-  },
-  sectionBody: { gap: 0 },
-
-  // Row base
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    gap: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: palette.line,
-  },
-  rowDanger: {
-    backgroundColor: "rgba(255,77,109,0.06)",
-  },
-  rowIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 5,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.04)",
-    borderWidth: 1,
-    borderColor: palette.line,
-  },
-  rowContent: { flex: 1 },
-  rowLabel: {
-    color: palette.text,
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  rowValue: {
-    color: palette.muted,
-    fontSize: 12,
-    fontWeight: "600",
-    marginTop: 2,
-  },
-  rowHint: {
-    color: palette.muted,
-    fontSize: 11,
-    fontWeight: "600",
-    marginTop: 2,
-  },
-
-  // Input row
-  inputRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 6,
-  },
-  textInput: {
-    flex: 1,
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderWidth: 1,
-    borderColor: palette.line,
-    borderRadius: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    color: palette.text,
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  saveBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 5,
-    backgroundColor: palette.cyan,
-  },
-  saveBtnText: {
-    color: palette.void,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-
-  // Toggle
-  toggleTrack: {
-    width: 46,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: "rgba(141,162,181,0.24)",
-    justifyContent: "center",
-    padding: 3,
-  },
-  toggleTrackActive: {
-    backgroundColor: "rgba(0,255,178,0.30)",
-  },
-  toggleThumb: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: palette.muted,
-  },
-  toggleThumbActive: {
-    backgroundColor: palette.success,
-    alignSelf: "flex-end",
-  },
-
-  // Picker
-  pickerOptions: {
-    flexDirection: "row",
-    gap: 8,
-    marginTop: 8,
-  },
-  pickerChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 5,
-    backgroundColor: "rgba(255,255,255,0.04)",
-    borderWidth: 1,
-    borderColor: palette.line,
-  },
-  pickerChipActive: {
-    backgroundColor: "rgba(108,230,255,0.12)",
-    borderColor: palette.cyan,
-  },
-  pickerChipText: {
-    color: palette.muted,
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  pickerChipTextActive: {
-    color: palette.text,
-  },
-
-  // Admin override
-  adminOverrideRow: {
-    backgroundColor: "rgba(255,184,77,0.08)",
-    borderBottomColor: "rgba(255,184,77,0.22)",
-  },
-  adminOverrideHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 6,
-  },
-  adminOverrideLabel: {
-    color: palette.gold,
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-  },
-  adminOverrideDetails: {
-    gap: 2,
-  },
-  adminOverrideDetail: {
-    color: palette.muted,
-    fontSize: 11,
-    fontWeight: "600",
-    lineHeight: 16,
-  },
-});

@@ -1,5 +1,5 @@
 import { LinearGradient } from "expo-linear-gradient";
-import * as Haptics from "expo-haptics";
+import { useHaptics } from "@/hooks/useHaptics";
 import {
   Award,
   BarChart3,
@@ -163,6 +163,7 @@ const MiniImage = React.memo(function MiniImage({ accent, label }: { accent: Car
 });
 
 const SponsoredBanner = React.memo(function SponsoredBanner({ item, userId, reputation }: { item: EnrichedBanner; userId: string | null; reputation: ReputationRow | undefined }): JSX.Element {
+  const h = useHaptics();
   const [expanded, setExpanded] = useState<boolean>(false);
   const eagohRank: RankTier = (reputation?.rank as RankTier) ?? "Dormant";
   const repScore = reputation?.reputation_score ?? 0;
@@ -179,7 +180,7 @@ const SponsoredBanner = React.memo(function SponsoredBanner({ item, userId, repu
   };
 
   const onLongPress = (): void => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    h.medium();
     if (userId) recordBannerTapHold(item.id, userId).catch(() => undefined);
     setExpanded(true);
   };
@@ -348,13 +349,14 @@ const AnalystAccess = React.memo(function AnalystAccess(): JSX.Element {
 });
 
 const QuickCheckSection = React.memo(function QuickCheckSection(): JSX.Element {
+  const h = useHaptics();
   return (
     <View>
       <SectionHeader eyebrow="FAST SCANS" title="Quick Check access" />
       <View style={styles.quickGrid}>{quickChecks.map((check, index) => {
         const accent = [palette.cyan, palette.gold, palette.violet, palette.success][index];
         return (
-          <Pressable key={check} onPress={() => Haptics.selectionAsync()} style={({ pressed }) => [styles.quickButton, pressed && styles.pressed]}>
+          <Pressable key={check} onPress={h.selection} style={({ pressed }) => [styles.quickButton, pressed && styles.pressed]}>
             {index % 2 === 0 ? <ScanLine color={accent} size={18} /> : <Gauge color={accent} size={18} />}
             <Text style={styles.quickText}>{check}</Text>
           </Pressable>
@@ -461,11 +463,12 @@ function LoadingScreen({ onDone }: { onDone: () => void }): JSX.Element {
 }
 
 function OnboardingScreen({ onComplete }: { onComplete: () => void }): JSX.Element {
+  const h = useHaptics();
   const [step, setStep] = useState<number>(0);
   const item = onboarding[step];
   const isLast = step === onboarding.length - 1;
   const advance = (): void => {
-    Haptics.selectionAsync();
+    h.selection();
     if (isLast) onComplete(); else setStep((value) => value + 1);
   };
   return (
@@ -492,6 +495,7 @@ function friendlyAuthError(message: string): string {
 }
 
 function AuthScreen(): JSX.Element {
+  const h = useHaptics();
   const { signIn, signUp, signInState, signUpState } = useAuth();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState<string>("");
@@ -519,7 +523,7 @@ function AuthScreen(): JSX.Element {
       setLocalError("Password must be at least 6 characters.");
       return;
     }
-    Haptics.selectionAsync().catch(() => undefined);
+    h.selection();
     try {
       if (mode === "signin") {
         await signIn({ email: trimmedEmail, password });
@@ -608,11 +612,12 @@ function AuthScreen(): JSX.Element {
 }
 
 const LeaderboardsFeatureCard = React.memo(function LeaderboardsFeatureCard(): JSX.Element {
+  const h = useHaptics();
   const router = useRouter();
   return (
     <Pressable
       onPress={() => {
-        Haptics.selectionAsync().catch(() => undefined);
+        h.selection();
         router.push("/leaderboards" as never);
       }}
       style={({ pressed }) => [styles.featureCard, pressed && styles.pressed]}
@@ -669,6 +674,7 @@ function HomeDomainsSection(): JSX.Element {
 }
 
 function HomeApp({ userId, onPromote }: { userId: string | null; onPromote: () => void }): JSX.Element {
+  const h = useHaptics();
   const renderSection = useCallback(({ item }: { item: HomeSection }) => {
     if (item.kind === "hero") return <HeroSection />;
     if (item.kind === "sponsored") return <SponsoredSection userId={userId} />;
@@ -714,6 +720,7 @@ function BannerPurchaseModal({
   onPurchased: () => void;
   userId: string | null;
 }): JSX.Element {
+  const h = useHaptics();
   const { eagohs } = useEagohs();
   const { profile, effectiveSubscriptionTier: tier } = useProfile();
   const [selectedEagohId, setSelectedEagohId] = useState<string>("");
@@ -740,7 +747,7 @@ function BannerPurchaseModal({
         profile,
       );
       if (result.ok) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        h.success();
         Alert.alert("Banner Purchased", `Your EAGOH will be promoted for ${days} day(s) starting ${startDate}.`);
         onPurchased();
         onClose();
@@ -891,6 +898,7 @@ function BannerPurchaseModal({
 }
 
 export default function HomeScreen(): JSX.Element {
+  const h = useHaptics();
   const { isReady, isAuthenticated, user } = useAuth();
   const { profile, effectiveSubscriptionTier } = useProfile();
   const [phase, setPhase] = useState<Phase>("loading");
@@ -923,7 +931,7 @@ export default function HomeScreen(): JSX.Element {
         userId={user?.id ?? null}
         onPromote={() => {
           if (isPaid) {
-            Haptics.selectionAsync();
+            h.selection();
             setPurchaseModal(true);
           } else {
             Alert.alert("Subscription Required", "Upgrade to Pro or higher to promote your EAGOH with sponsored banners.");

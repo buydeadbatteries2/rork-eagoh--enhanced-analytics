@@ -28,7 +28,7 @@ import {
 } from "@/services/eagohIdentity";
 import { TIER_MAX_EAGOHS, TIER_MULTIPLIER, getForgeCost } from "@/services/edge";
 import type { EagohDraft } from "@/services/eagohs";
-import * as Haptics from "expo-haptics";
+import { useHaptics } from "@/hooks/useHaptics";
 import TeamSelector from "@/app/components/TeamSelector";
 import { getTeamById, getSportCanonical } from "@/data/teams";
 import { MUSIC_GENRES, MUSIC_ROLES, getMusicGenre, getMusicRole } from "@/data/music";
@@ -248,11 +248,12 @@ const OptionChip = memo(function OptionChip({
   selected: boolean;
   onPress: (id: string) => void;
 }): JSX.Element {
+  const h = useHaptics();
   const accent = toneColor(option.tone);
   const handlePress = useCallback((): void => {
-    Haptics.selectionAsync().catch(() => undefined);
+    h.selection();
     onPress(option.id);
-  }, [onPress, option.id]);
+  }, [onPress, option.id, h]);
 
   return (
     <Pressable
@@ -321,6 +322,7 @@ function ConfirmationSheet({
 }
 
 export default function ForgeScreen(): JSX.Element {
+  const h = useHaptics();
   const { profile } = useProfile();
   const { total: edgeTotal } = useEdge();
   const { pending, prepareForge, confirmForge, cancelForge, isGenerating } = useForge();
@@ -720,8 +722,8 @@ export default function ForgeScreen(): JSX.Element {
       setCollegeTeamFocusId("");
       setCollegeTeamFocusName("");
     }
-    Haptics.selectionAsync().catch(() => undefined);
-  }, []);
+    h.selection();
+  }, [h]);
 
   const validateCurrentStep = useCallback((): boolean => {
     if (currentStep.id === "name" && !name.trim()) {
@@ -738,18 +740,18 @@ export default function ForgeScreen(): JSX.Element {
 
   const goNext = useCallback((): void => {
     if (!validateCurrentStep()) return;
-    Haptics.selectionAsync().catch(() => undefined);
+    h.selection();
     setCurrentStepIndex((prev) => Math.min(prev + 1, wizardSteps.length - 1));
-  }, [validateCurrentStep, wizardSteps.length]);
+  }, [validateCurrentStep, wizardSteps.length, h]);
 
   const goBack = useCallback((): void => {
-    Haptics.selectionAsync().catch(() => undefined);
+    h.selection();
     setForgeError(null);
     setCurrentStepIndex((prev) => Math.max(prev - 1, 0));
-  }, []);
+  }, [h]);
 
   const goToStep = useCallback((index: number): void => {
-    Haptics.selectionAsync().catch(() => undefined);
+    h.selection();
     setForgeError(null);
     setCurrentStepIndex(index);
   }, []);

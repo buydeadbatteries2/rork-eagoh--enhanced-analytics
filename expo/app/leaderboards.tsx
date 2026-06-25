@@ -2,7 +2,7 @@ import { palette } from "@/constants/colors";
 import { getTeamById } from "@/data/teams";
 import { HORIZONTAL_LIST_PERFORMANCE_PROPS, LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/components/PerformancePrimitives";
 import { LinearGradient } from "expo-linear-gradient";
-import * as Haptics from "expo-haptics";
+import { useHaptics } from "@/hooks/useHaptics";
 import {
   Award,
   BarChart3,
@@ -176,6 +176,7 @@ const LeaderboardCard = React.memo(function LeaderboardCard({ item }: { item: Le
 // ── Main Screen ────────────────────────────────────────────────────────
 
 export default function LeaderboardsScreen(): JSX.Element {
+  const h = useHaptics();
   const [category, setCategory] = useState<LeaderboardCategory>("overall");
   const [filters, setFilters] = useState<LeaderboardFilters>({});
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
@@ -221,11 +222,11 @@ export default function LeaderboardsScreen(): JSX.Element {
   }, [loading, entries.length, total]);
 
   const handleCategoryChange = useCallback((cat: LeaderboardCategory) => {
-    Haptics.selectionAsync().catch(() => undefined);
+    h.selection();
     setCategory(cat);
     setFilters({});
     setShowFilters(false);
-  }, []);
+  }, [h]);
 
   const handleFilterChange = useCallback((update: Partial<LeaderboardFilters>) => {
     setFilters((prev) => ({ ...prev, ...update }));
@@ -233,8 +234,8 @@ export default function LeaderboardsScreen(): JSX.Element {
 
   const clearFilters = useCallback(() => {
     setFilters({});
-    Haptics.selectionAsync().catch(() => undefined);
-  }, []);
+    h.selection();
+  }, [h]);
 
   const hasActiveFilters = Object.values(filters).some((v) => v);
 
@@ -293,7 +294,7 @@ export default function LeaderboardsScreen(): JSX.Element {
         </View>
         <Pressable
           onPress={() => {
-            Haptics.selectionAsync().catch(() => undefined);
+            h.selection();
             setShowFilters(!showFilters);
           }}
           style={[styles.filterToggle, showFilters && styles.filterToggleActive]}

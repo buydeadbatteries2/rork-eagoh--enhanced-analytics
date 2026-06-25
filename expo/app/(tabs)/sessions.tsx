@@ -11,7 +11,7 @@
  */
 
 import { palette } from "@/constants/colors";
-import * as Haptics from "expo-haptics";
+import { useHaptics } from "@/hooks/useHaptics";
 import {
   Activity,
   ArrowLeft,
@@ -369,6 +369,7 @@ function SessionSetup({
   onStart: (eagohId: string, prompt: string) => void;
   onChangeEagoh: () => void;
 }): JSX.Element {
+  const h = useHaptics();
   const { eagohs } = useEagohs();
   const { profile } = useProfile();
   const [prompt, setPrompt] = useState<string>("");
@@ -385,9 +386,9 @@ function SessionSetup({
 
   const handleStart = useCallback((): void => {
     if (!selectedEagohId || !prompt.trim()) return;
-    Haptics.selectionAsync().catch(() => undefined);
+    h.selection();
     onStart(selectedEagohId, prompt);
-  }, [selectedEagohId, prompt, onStart]);
+  }, [selectedEagohId, prompt, onStart, h]);
 
   return (
     <KeyboardAvoidingView
@@ -636,6 +637,7 @@ function OpenIntelSession({
   onBack: () => void;
   onChangeEagoh: () => void;
 }): JSX.Element {
+  const h = useHaptics();
   const { eagohs } = useEagohs();
   const { profile } = useProfile();
   const { balances } = useEdge();
@@ -694,7 +696,7 @@ function OpenIntelSession({
 
   const handleSubmit = useCallback(async (): Promise<void> => {
     if (!selectedEagohId || !profile || !content.trim()) return;
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+    h.success();
     setIsSubmitting(true);
     setSubmitError(null);
     setSubmitSuccess(null);
@@ -1505,6 +1507,7 @@ function MyRankingsSession({
 
 // ── Main screen ──
 export default function SessionsScreen(): JSX.Element {
+  const h = useHaptics();
   const { eagohs } = useEagohs();
   const { profile } = useProfile();
   const { effectiveSubscriptionTier: userTier } = useProfile();
@@ -1526,10 +1529,10 @@ export default function SessionsScreen(): JSX.Element {
   }, [eagohs, selectedEagohId]);
 
   const handleSessionPress = useCallback((session: SessionType): void => {
-    Haptics.selectionAsync().catch(() => undefined);
+    h.selection();
     if (eagohs.length === 0) return;
     setActiveSession(session);
-  }, [eagohs.length]);
+  }, [eagohs.length, h]);
 
   const handleBack = useCallback((): void => {
     setActiveSession(null);

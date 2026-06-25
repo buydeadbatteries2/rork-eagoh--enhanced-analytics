@@ -2,7 +2,7 @@ import { palette } from "@/constants/colors";
 import { LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/components/PerformancePrimitives";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
-import * as Haptics from "expo-haptics";
+import { useHaptics } from "@/hooks/useHaptics";
 import { useRouter } from "expo-router";
 import { Activity, Award, BadgeCheck, BarChart3, BrainCircuit, Cpu, Crown, FlaskConical, Gauge, Layers3, Lock, LogOut, Radar, RefreshCcw, Settings, Shield, Sparkles, Swords, TrendingUp, Trophy, Wrench, WalletCards, Zap, Users, Globe } from "lucide-react-native";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
@@ -272,14 +272,15 @@ const LabCard = memo(function LabCard({ item, selected, onPress }: { item: LabEn
 });
 
 export default function ProfileScreen(): JSX.Element {
+  const h = useHaptics();
   const { user, signOut, signOutState } = useAuth();
   const { eagohs } = useEagohs();
   const { profile, setTestTier, setSubscriptionTier, effectiveSubscriptionTier, isAdminOverrideActive } = useProfile();
   const router = useRouter();
   const handleSignOut = useCallback((): void => {
-    Haptics.selectionAsync().catch(() => undefined);
+    h.selection();
     signOut().catch((e) => console.warn("[auth] signOut failed", e));
-  }, [signOut]);
+  }, [signOut, h]);
   const displayAlias = (user?.user_metadata as { username?: string } | undefined)?.username ?? user?.email ?? "EAGOH operator";
   const [selectedLabId, setSelectedLabId] = useState<string>("neon");
   const selectedLab = useMemo<LabEnvironment>(() => labs.find((lab) => lab.id === selectedLabId) ?? labs[0], [selectedLabId]);
@@ -321,18 +322,18 @@ export default function ProfileScreen(): JSX.Element {
 
   const currentTier = effectiveSubscriptionTier;
   const handleSetTestTier = useCallback((tier: SubscriptionTier): void => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+    h.medium();
     setTestTier(tier).catch((err: unknown) => console.warn("[testMode] setTestTier failed", err));
-  }, [setTestTier]);
+  }, [setTestTier, h]);
   const handleLabPress = useCallback((id: string): void => {
     setSelectedLabId(id);
-    Haptics.selectionAsync().catch(() => undefined);
-  }, []);
+    h.selection();
+  }, [h]);
 
   const handleSettingsPress = useCallback((): void => {
-    Haptics.selectionAsync().catch(() => undefined);
+    h.selection();
     router.push("/settings" as never);
-  }, [router]);
+  }, [router, h]);
 
   const renderSection = useCallback(({ item }: { item: ProfileSection }): JSX.Element => {
     if (item.kind === "hero") {
@@ -517,19 +518,19 @@ export default function ProfileScreen(): JSX.Element {
     }
     if (item.kind === "features") {
       const handleLabsPress = (): void => {
-        Haptics.selectionAsync().catch(() => undefined);
+        h.selection();
         router.push("/labs" as never);
       };
       const handleFactionsPress = (): void => {
-        Haptics.selectionAsync().catch(() => undefined);
+        h.selection();
         router.push("/factions" as never);
       };
       const handleOpenIntelPress = (): void => {
-        Haptics.selectionAsync().catch(() => undefined);
+        h.selection();
         router.push("/open-intelligence" as never);
       };
       const handleLeaderboardsPress = (): void => {
-        Haptics.selectionAsync().catch(() => undefined);
+        h.selection();
         router.push("/leaderboards" as never);
       };
       return (

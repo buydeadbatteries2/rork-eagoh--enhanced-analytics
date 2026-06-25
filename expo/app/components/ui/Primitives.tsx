@@ -1,5 +1,5 @@
 import { LinearGradient } from "expo-linear-gradient";
-import * as Haptics from "expo-haptics";
+import { useHaptics } from "@/hooks/useHaptics";
 import React, { useCallback } from "react";
 import { Animated, Pressable, StyleSheet, Text, View, type ViewStyle, type TextStyle } from "react-native";
 import { palette, radii, glow } from "@/constants/colors";
@@ -25,11 +25,12 @@ export function GlowCard({ children, style, tone = "blue" }: { children: React.R
 }
 
 export function GlowButton({ label, onPress, tone = "blue", style }: { label: string; onPress: () => void; tone?: "blue" | "cyan" | "violet" | "gold"; style?: ViewStyle }): JSX.Element {
+  const h = useHaptics();
   const accent = tone === "cyan" ? palette.cyan : tone === "violet" ? palette.violet : tone === "gold" ? palette.gold : palette.blue;
   const handlePress = useCallback((): void => {
-    Haptics.selectionAsync().catch(() => undefined);
+    h.selection();
     onPress();
-  }, [onPress]);
+  }, [onPress, h]);
   return (
     <Pressable onPress={handlePress} style={({ pressed }) => [styles.button, { backgroundColor: accent, shadowColor: accent }, pressed && styles.pressed, style]}>
       <Text style={[styles.buttonLabel, { color: palette.void }]}>{label}</Text>
@@ -38,10 +39,11 @@ export function GlowButton({ label, onPress, tone = "blue", style }: { label: st
 }
 
 export function GhostButton({ label, onPress, style }: { label: string; onPress: () => void; style?: ViewStyle }): JSX.Element {
+  const h = useHaptics();
   const handlePress = useCallback((): void => {
-    Haptics.selectionAsync().catch(() => undefined);
+    h.selection();
     onPress();
-  }, [onPress]);
+  }, [onPress, h]);
   return (
     <Pressable onPress={handlePress} style={({ pressed }) => [styles.ghostButton, pressed && styles.pressed, style]}>
       <Text style={styles.ghostLabel}>{label}</Text>

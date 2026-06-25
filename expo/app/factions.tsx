@@ -41,7 +41,7 @@ import type { ReputationRow } from "@/services/reputation";
 import { supabase } from "@/lib/supabase";
 import TeamSelector from "@/app/components/TeamSelector";
 import { LinearGradient } from "expo-linear-gradient";
-import * as Haptics from "expo-haptics";
+import { useHaptics } from "@/hooks/useHaptics";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Award,
@@ -132,6 +132,7 @@ function CreateFactionModal({
   }) => void;
   isCreating: boolean;
 }): JSX.Element {
+  const h = useHaptics();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [motto, setMotto] = useState("");
@@ -229,7 +230,7 @@ function CreateFactionModal({
                   style={[styles.domainChip, domain === d && styles.domainChipActive]}
                   onPress={() => {
                     setDomain(d);
-                    Haptics.selectionAsync().catch(() => undefined);
+                    h.selection();
                   }}
                 >
                   <Text style={[styles.domainChipText, domain === d && styles.domainChipTextActive]}>
@@ -781,6 +782,7 @@ function ScoreDetail({ label, value, color }: { label: string; value: string; co
 // ── Main Screen ────────────────────────────────────────────────────────
 
 export default function FactionsScreen(): JSX.Element {
+  const h = useHaptics();
   const { user } = useAuth();
   const { profile } = useProfile();
   const userId = user?.id;
@@ -842,7 +844,7 @@ export default function FactionsScreen(): JSX.Element {
         setCreateModalVisible(false);
         queryClient.invalidateQueries({ queryKey: ["factions", "user", userId] });
         queryClient.invalidateQueries({ queryKey: ["factions", "all"] });
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+        h.success();
       } else {
         Alert.alert("Error", result.error);
       }
@@ -859,7 +861,7 @@ export default function FactionsScreen(): JSX.Element {
       if (result.ok) {
         queryClient.invalidateQueries({ queryKey: ["factions", "invites", userId] });
         queryClient.invalidateQueries({ queryKey: ["factions", "user", userId] });
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+        h.success();
       } else {
         Alert.alert("Error", result.error);
       }
@@ -932,7 +934,7 @@ export default function FactionsScreen(): JSX.Element {
           queryClient.invalidateQueries({ queryKey: ["factions", "user", userId] });
           queryClient.invalidateQueries({ queryKey: ["factions", "all"] });
           queryClient.invalidateQueries({ queryKey: ["faction", factionId] });
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+          h.success();
         } else {
           Alert.alert("Error", result.error);
         }
@@ -966,7 +968,7 @@ export default function FactionsScreen(): JSX.Element {
                 <Pressable
                   style={styles.createFactionBtn}
                   onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+                    h.light();
                     setCreateModalVisible(true);
                   }}
                 >
@@ -1060,7 +1062,7 @@ export default function FactionsScreen(): JSX.Element {
                     onExpand={() => {
                       const next = isExpanded ? null : faction.id;
                       setExpandedFactionId(next);
-                      Haptics.selectionAsync().catch(() => undefined);
+                      h.selection();
                     }}
                   />
                   {isExpanded && (
@@ -1161,7 +1163,7 @@ export default function FactionsScreen(): JSX.Element {
             <Pressable
               style={styles.createFactionBtn}
               onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+                h.light();
                 setCreateModalVisible(true);
               }}
             >

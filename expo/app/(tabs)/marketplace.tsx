@@ -2,7 +2,7 @@ import { palette } from "@/constants/colors";
 import { getTeamById } from "@/data/teams";
 import { HORIZONTAL_LIST_PERFORMANCE_PROPS, LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/components/PerformancePrimitives";
 import { LinearGradient } from "expo-linear-gradient";
-import * as Haptics from "expo-haptics";
+import { useHaptics } from "@/hooks/useHaptics";
 import {
   ArrowRightLeft,
   Award,
@@ -551,6 +551,7 @@ function CreateListingModal({
   onCreated: () => void;
   creating: boolean;
 }): JSX.Element {
+  const h = useHaptics();
   const { user } = useAuth();
   const { eagohs } = useEagohs();
   const [selectedEagohId, setSelectedEagohId] = useState<string>("");
@@ -582,7 +583,7 @@ function CreateListingModal({
         price100PerDay: parseInt(price100, 10) || 0,
         description: description.trim() || undefined,
       });
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      h.success();
       reset();
       onCreated();
       onClose();
@@ -707,6 +708,7 @@ function EditListingModal({
   onUpdated: () => void;
   updating: boolean;
 }): JSX.Element {
+  const h = useHaptics();
   const [price25, setPrice25] = useState("");
   const [price50, setPrice50] = useState("");
   const [price75, setPrice75] = useState("");
@@ -731,7 +733,7 @@ function EditListingModal({
         price75PerDay: parseInt(price75, 10) || 0,
         price100PerDay: parseInt(price100, 10) || 0,
       });
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      h.success();
       onUpdated();
       onClose();
     } catch (err: unknown) {
@@ -1050,6 +1052,7 @@ const MyListingCard = memo(function MyListingCard({
 // ── Marketplace Sponsored Banner Carousel ──────────────────────────────
 
 const MktSponsoredBanner = memo(function MktSponsoredBanner({ item, userId, reputation }: { item: EnrichedBanner; userId: string | null; reputation: ReputationRow | undefined }): JSX.Element {
+  const h = useHaptics();
   const eagohRank: RankTier = (reputation?.rank as RankTier) ?? "Dormant";
   const repScore = reputation?.reputation_score ?? 0;
   const accent = repScore > 0 ? rankColor(eagohRank) : (item.vendor_rank === "S-TIER" ? palette.gold : item.vendor_rank === "ELITE" ? palette.cyan : palette.violet);
@@ -1062,7 +1065,7 @@ const MktSponsoredBanner = memo(function MktSponsoredBanner({ item, userId, repu
   return (
     <Pressable
       onLongPress={() => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        h.medium();
         if (userId) recordBannerTapHold(item.id, userId).catch(() => undefined);
       }}
       onPress={() => {
@@ -1145,6 +1148,7 @@ const MktSponsoredCarousel = memo(function MktSponsoredCarousel({ userId }: { us
 // ── Main Screen ────────────────────────────────────────────────────────
 
 export default function MarketplaceScreen(): JSX.Element {
+  const h = useHaptics();
   const { user } = useAuth();
   const { profile } = useProfile();
   const { balances } = useEdge();
@@ -1213,7 +1217,7 @@ export default function MarketplaceScreen(): JSX.Element {
       if (!result.ok) {
         Alert.alert("Purchase Failed", result.error);
       } else {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        h.success();
         Alert.alert("Sync Purchased", `You now have ${level} sync access for ${days} day(s).`);
         setPurchaseModal(null);
         loadData();
@@ -1228,12 +1232,12 @@ export default function MarketplaceScreen(): JSX.Element {
   const handleToggleListing = useCallback(async (id: string, active: boolean) => {
     try {
       await toggleListingActive(id, active);
-      Haptics.selectionAsync();
+      h.selection();
       loadData();
     } catch {
       Alert.alert("Error", "Failed to update listing.");
     }
-  }, [loadData]);
+  }, [loadData, h]);
 
   const renderHeader = useCallback(
     () => (

@@ -33,7 +33,7 @@ import {
   type EntryType,
   type OpenIntelligenceRow,
 } from "@/services/openIntelligence";
-import * as Haptics from "expo-haptics";
+import { useHaptics } from "@/hooks/useHaptics";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   Activity,
@@ -104,16 +104,17 @@ const EagohSelector = memo(function EagohSelector({
   selectedId: string;
   onSelect: (id: string) => void;
 }): JSX.Element {
+  const h = useHaptics();
   const [open, setOpen] = useState<boolean>(false);
   const selected = useMemo(() => eagohs.find((e) => e.id === selectedId), [eagohs, selectedId]);
   const domain = selected ? getDomain(selected.domain ?? "") : undefined;
   const accent = domain ? toneColor(domain.tone) : palette.muted;
 
   const handleSelect = useCallback((id: string): void => {
-    Haptics.selectionAsync().catch(() => undefined);
+    h.selection();
     onSelect(id);
     setOpen(false);
-  }, [onSelect]);
+  }, [onSelect, h]);
 
   return (
     <View>
@@ -246,6 +247,7 @@ const TagSelector = memo(function TagSelector({
   customTag: string;
   setCustomTag: (v: string) => void;
 }): JSX.Element {
+  const h = useHaptics();
   const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({});
   const [showCustom, setShowCustom] = useState<boolean>(false);
   const isCustom = selectedTag.startsWith("custom:");
@@ -255,10 +257,10 @@ const TagSelector = memo(function TagSelector({
   }, []);
 
   const handleSelectTag = useCallback((tagId: string): void => {
-    Haptics.selectionAsync().catch(() => undefined);
+    h.selection();
     onSelect(tagId);
     setShowCustom(false);
-  }, [onSelect]);
+  }, [onSelect, h]);
 
   const handleCustomPress = useCallback((): void => {
     setShowCustom(!showCustom);
@@ -487,6 +489,7 @@ const LearningEntry = memo(function LearningEntry({
 // ── Main Screen ───────────────────────────────────────────────────────
 
 export default function OpenIntelligenceScreen(): JSX.Element {
+  const h = useHaptics();
   const { eagohs } = useEagohs();
   const { profile } = useProfile();
   const { balances } = useEdge();
@@ -552,7 +555,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
 
   const handleSubmit = useCallback(async (): Promise<void> => {
     if (!selectedEagohId || !profile || !content.trim()) return;
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+    h.success();
     setIsSubmitting(true);
     setSubmitError(null);
     setSubmitSuccess(null);

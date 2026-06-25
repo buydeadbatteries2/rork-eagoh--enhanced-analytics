@@ -763,7 +763,7 @@ const styles = StyleSheet.create({
   progressTrack: { height: 7, borderRadius: 5, backgroundColor: "rgba(141,162,181,0.16)", overflow: "hidden", marginTop: 10 },
   progressFill: { height: "100%", borderRadius: 5 },
   usageDetail: { color: palette.muted, fontSize: 11, marginTop: 7 },
-  subscriptionCard: { borderRadius: 5, padding: 14, backgroundColor: "rgba(3,6,11,0.48)", borderWidth: 1, borderColor: palette.line, overflow: "hidden", gap: 12 },
+  subscriptionCard: { height: 420, borderRadius: 5, padding: 14, backgroundColor: "rgba(3,6,11,0.48)", borderWidth: 1, borderColor: palette.line, overflow: "hidden", gap: 12, justifyContent: "space-between" as const },
   planHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
   planIcon: { width: 40, height: 40, borderRadius: 5, alignItems: "center", justifyContent: "center", borderWidth: 1 },
   planTitleBlock: { flex: 1 },

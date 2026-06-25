@@ -11,6 +11,7 @@ import {
   Dna,
   Filter,
   PackageOpen,
+  Pencil,
   PlusCircle,
   Power,
   Search,
@@ -60,6 +61,7 @@ import {
   purchaseSync,
   recalculateVendorStats,
   toggleListingActive,
+  updateListing,
   type EnrichedListing,
   type EnrichedPurchase,
   type ListingFilters,
@@ -683,7 +685,234 @@ function CreateListingModal({
   );
 }
 
+// ── Edit Listing Modal ─────────────────────────────────────────────────
+
+function EditListingModal({
+  visible,
+  listing,
+  onClose,
+  onUpdated,
+  updating,
+}: {
+  visible: boolean;
+  listing: EnrichedListing | null;
+  onClose: () => void;
+  onUpdated: () => void;
+  updating: boolean;
+}): JSX.Element {
+  const [price25, setPrice25] = useState("");
+  const [price50, setPrice50] = useState("");
+  const [price75, setPrice75] = useState("");
+  const [price100, setPrice100] = useState("");
+
+  useEffect(() => {
+    if (listing) {
+      setPrice25(listing.price_25_per_day > 0 ? String(listing.price_25_per_day) : "");
+      setPrice50(listing.price_50_per_day > 0 ? String(listing.price_50_per_day) : "");
+      setPrice75(listing.price_75_per_day > 0 ? String(listing.price_75_per_day) : "");
+      setPrice100(listing.price_100_per_day > 0 ? String(listing.price_100_per_day) : "");
+    }
+  }, [listing?.id]);
+
+  const handleUpdate = async () => {
+    Keyboard.dismiss();
+    if (!listing?.id) return;
+    try {
+      await updateListing(listing.id, {
+        price25PerDay: parseInt(price25, 10) || 0,
+        price50PerDay: parseInt(price50, 10) || 0,
+        price75PerDay: parseInt(price75, 10) || 0,
+        price100PerDay: parseInt(price100, 10) || 0,
+      });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      onUpdated();
+      onClose();
+    } catch (err: unknown) {
+      Alert.alert("Error", (err as Error).message ?? "Failed to update listing.");
+    }
+  };
+
+  if (!listing) return <></>;
+
+  const eagoh = listing.eagoh;
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.modalOverlay} onPress={Keyboard.dismiss}>
+        <Pressable style={[styles.modalSheet, styles.modalSheetCreate]} onPress={() => {}}>
+          <LinearGradient colors={["#0A1628", "#050D18"]} style={StyleSheet.absoluteFill} />
+          <View style={styles.modalHandle} />
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Edit Pricing</Text>
+            <Pressable onPress={() => { Keyboard.dismiss(); onClose(); }} style={styles.modalClose}>
+              <X color={palette.muted} size={20} />
+            </Pressable>
+          </View>
+
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            style={{ flex: 1 }}
+          >
+            <ScrollView
+              contentContainerStyle={styles.createModalScroll}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+            >
+              {/* EAGOH preview */}
+              <View style={styles.editEagohPreview}>
+                <View style={styles.editEagohImage}>
+                  {eagoh?.image_thumb_url ? (
+                    <OptimizedEagohImage tone="cyan" label={eagoh.name} size="banner" />
+                  ) : (
+                    <View style={styles.myListingImagePlaceholder}>
+                      <Dna color={palette.muted} size={24} />
+                    </View>
+                  )}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.modalEagohName}>{eagoh?.name ?? "Unnamed"}</Text>
+                  <Text style={styles.modalEagohDomain}>{domainLabel(eagoh?.domain ?? eagoh?.sport ?? "")}</Text>
+                  <View style={[styles.activeDot, listing.active ? styles.activeDotOn : styles.activeDotOff, { marginTop: 4 }]} />
+                  <Text style={[styles.editStatusText, { color: listing.active ? palette.success : palette.ember }]}>
+                    {listing.active ? "Active" : "Inactive"}
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={styles.modalSectionLabel}>Price Per Day (EC)</Text>
+              <View style={styles.priceGrid}>
+                <View style={styles.priceInputWrap}>
+                  <Text style={styles.priceInputLabel}>25% Sync</Text>
+                  <TextInput value={price25} onChangeText={setPrice25} keyboardType="numeric" placeholder="0" placeholderTextColor={palette.muted} style={styles.priceInput} returnKeyType="done" />
+                </View>
+                <View style={styles.priceInputWrap}>
+                  <Text style={styles.priceInputLabel}>50% Sync</Text>
+                  <TextInput value={price50} onChangeText={setPrice50} keyboardType="numeric" placeholder="0" placeholderTextColor={palette.muted} style={styles.priceInput} returnKeyType="done" />
+                </View>
+                <View style={styles.priceInputWrap}>
+                  <Text style={styles.priceInputLabel}>75% Sync</Text>
+                  <TextInput value={price75} onChangeText={setPrice75} keyboardType="numeric" placeholder="0" placeholderTextColor={palette.muted} style={styles.priceInput} returnKeyType="done" />
+                </View>
+                <View style={styles.priceInputWrap}>
+                  <Text style={styles.priceInputLabel}>100% Sync</Text>
+                  <TextInput value={price100} onChangeText={setPrice100} keyboardType="numeric" placeholder="0" placeholderTextColor={palette.muted} style={styles.priceInput} returnKeyType="done" />
+                </View>
+              </View>
+
+              <Pressable
+                onPress={handleUpdate}
+                disabled={updating}
+                style={({ pressed }) => [
+                  styles.confirmButton,
+                  updating && styles.confirmButtonDisabled,
+                  pressed && styles.pressed,
+                  { marginTop: 20 },
+                ]}
+              >
+                {updating ? (
+                  <ActivityIndicator color={palette.void} size="small" />
+                ) : (
+                  <>
+                    <Pencil color={palette.void} size={17} />
+                    <Text style={styles.confirmButtonText}>Save Changes</Text>
+                  </>
+                )}
+              </Pressable>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 // ── Active Syncs ───────────────────────────────────────────────────────
+
+// ── Netflix-style Domain Carousel ──────────────────────────────────────
+
+const CarouselListingCard = memo(function CarouselListingCard({
+  item,
+  isPaid,
+  onPurchase,
+}: {
+  item: EnrichedListing;
+  isPaid: boolean;
+  onPurchase: (listing: EnrichedListing) => void;
+}): JSX.Element {
+  const eagoh = item.eagoh;
+  const minPrice = [item.price_25_per_day, item.price_50_per_day, item.price_75_per_day, item.price_100_per_day]
+    .filter((p) => p > 0)
+    .sort((a, b) => a - b)[0];
+
+  return (
+    <Pressable
+      onPress={() => isPaid && onPurchase(item)}
+      style={({ pressed }) => [
+        styles.carouselCard,
+        pressed && styles.pressed,
+      ]}
+    >
+      <View style={styles.carouselCardImage}>
+        {eagoh?.image_thumb_url ? (
+          <OptimizedEagohImage tone="cyan" label={eagoh.name} size="compact" />
+        ) : (
+          <View style={styles.carouselImagePlaceholder}>
+            <Dna color={palette.muted} size={20} />
+          </View>
+        )}
+      </View>
+      <View style={styles.carouselCardInfo}>
+        <Text style={styles.carouselCardName} numberOfLines={1}>{eagoh?.name ?? "Unnamed"}</Text>
+        <Text style={styles.carouselCardVendor} numberOfLines={1}>{item.vendor_username ?? "Anonymous"}</Text>
+        {minPrice ? (
+          <View style={styles.carouselCardPrice}>
+            <Coins color={palette.gold} size={10} />
+            <Text style={styles.carouselCardPriceText}>{minPrice} EC/day</Text>
+          </View>
+        ) : (
+          <Text style={styles.carouselCardPriceFree}>Free</Text>
+        )}
+      </View>
+    </Pressable>
+  );
+});
+
+const DomainCarouselSection = memo(function DomainCarouselSection({
+  domain,
+  listings,
+  isPaid,
+  onPurchase,
+}: {
+  domain: string;
+  listings: EnrichedListing[];
+  isPaid: boolean;
+  onPurchase: (listing: EnrichedListing) => void;
+}): JSX.Element {
+  return (
+    <View style={styles.carouselSection}>
+      <View style={styles.carouselSectionHeader}>
+        <Text style={styles.carouselSectionTitle}>{domainLabel(domain)}</Text>
+        <Text style={styles.carouselSectionCount}>{listings.length}</Text>
+      </View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.carouselRail}
+        {...HORIZONTAL_LIST_PERFORMANCE_PROPS}
+      >
+        {listings.map((item) => (
+          <CarouselListingCard
+            key={item.id}
+            item={item}
+            isPaid={isPaid}
+            onPurchase={onPurchase}
+          />
+        ))}
+      </ScrollView>
+    </View>
+  );
+});
 
 const ActiveSyncCard = memo(function ActiveSyncCard({ item }: { item: EnrichedPurchase }): JSX.Element {
   const remaining = timeLeft(item.expires_at);
@@ -720,34 +949,76 @@ const ActiveSyncCard = memo(function ActiveSyncCard({ item }: { item: EnrichedPu
 const MyListingCard = memo(function MyListingCard({
   item,
   onToggle,
+  onEdit,
   onRecalc,
   reputation,
 }: {
   item: EnrichedListing;
   onToggle: (id: string, active: boolean) => void;
+  onEdit: (listing: EnrichedListing) => void;
   onRecalc: () => void;
   reputation: ReputationRow | undefined;
 }): JSX.Element {
+  const eagoh = item.eagoh;
   const eagohRank: RankTier = (reputation?.rank as RankTier) ?? "Dormant";
   const rkColor = rankColor(eagohRank);
+  const minPrice = [item.price_25_per_day, item.price_50_per_day, item.price_75_per_day, item.price_100_per_day]
+    .filter((p) => p > 0)
+    .sort((a, b) => a - b)[0];
+
   return (
     <View style={[styles.myListingCard, !item.active && styles.myListingCardInactive]}>
-      <View style={styles.myListingTop}>
-        <Text style={styles.myListingName}>{item.eagoh?.name ?? "Unnamed"}</Text>
-        <View style={[styles.activeDot, item.active ? styles.activeDotOn : styles.activeDotOff]} />
-      </View>
-      <View style={styles.myListingPrices}>
-        {(["25%", "50%", "75%", "100%"] as const).map((level) => {
-          const price = level === "25%" ? item.price_25_per_day : level === "50%" ? item.price_50_per_day : level === "75%" ? item.price_75_per_day : item.price_100_per_day;
-          if (price <= 0) return null;
-          return (
-            <View key={level} style={styles.myListingPriceTag}>
-              <Text style={styles.myListingPriceText}>{level}: {price} EC</Text>
+      <View style={styles.myListingRow}>
+        {/* EAGOH Image */}
+        <View style={styles.myListingImageWrap}>
+          {eagoh?.image_thumb_url ? (
+            <OptimizedEagohImage
+              tone={eagohRank === "Syndicate Prime" || eagohRank === "Oracle" ? "gold" : eagohRank === "Diamond" ? "cyan" : "violet"}
+              label={eagoh.name}
+              size="banner"
+            />
+          ) : (
+            <View style={styles.myListingImagePlaceholder}>
+              <Dna color={palette.muted} size={22} />
             </View>
-          );
-        })}
+          )}
+        </View>
+
+        {/* Info */}
+        <View style={styles.myListingInfo}>
+          <View style={styles.myListingTop}>
+            <Text style={styles.myListingName} numberOfLines={1}>{eagoh?.name ?? "Unnamed"}</Text>
+            <View style={[styles.activeDot, item.active ? styles.activeDotOn : styles.activeDotOff]} />
+          </View>
+          {eagoh?.domain && (
+            <Text style={styles.listingDomain}>{domainLabel(eagoh.domain)}</Text>
+          )}
+          <View style={styles.myListingPrices}>
+            {(["25%", "50%", "75%", "100%"] as const).map((level) => {
+              const price = level === "25%" ? item.price_25_per_day : level === "50%" ? item.price_50_per_day : level === "75%" ? item.price_75_per_day : item.price_100_per_day;
+              if (price <= 0) return null;
+              return (
+                <View key={level} style={styles.myListingPriceTag}>
+                  <Text style={styles.myListingPriceText}>{level}: {price} EC</Text>
+                </View>
+              );
+            })}
+          </View>
+          {minPrice && (
+            <Text style={styles.myListingMinPrice}>From {minPrice} EC/day</Text>
+          )}
+        </View>
       </View>
+
+      {/* Actions */}
       <View style={styles.myListingActions}>
+        <Pressable
+          onPress={() => onEdit(item)}
+          style={styles.myListingEditBtn}
+        >
+          <Pencil color={palette.cyan} size={13} />
+          <Text style={styles.myListingEditText}>Edit Pricing</Text>
+        </Pressable>
         <Pressable
           onPress={() => onToggle(item.id, !item.active)}
           style={[styles.myListingActionBtn, item.active ? styles.myListingActionBtnOff : styles.myListingActionBtnOn]}
@@ -888,6 +1159,9 @@ export default function MarketplaceScreen(): JSX.Element {
 
   const [createModal, setCreateModal] = useState(false);
   const [creating, setCreating] = useState(false);
+
+  const [editModal, setEditModal] = useState<EnrichedListing | null>(null);
+  const [updating, setUpdating] = useState(false);
 
   const isPaid = profile ? canTransact(profile.subscription_tier) : false;
 
@@ -1059,15 +1333,26 @@ export default function MarketplaceScreen(): JSX.Element {
           </View>
         );
       }
+
+      // Group listings by domain for Netflix-style carousels
+      const domainGroups = new Map<string, EnrichedListing[]>();
+      for (const l of listings) {
+        const domain = l.eagoh?.domain ?? "unknown";
+        if (!domainGroups.has(domain)) domainGroups.set(domain, []);
+        domainGroups.get(domain)!.push(l);
+      }
+      // Sort domains alphabetically
+      const sortedDomains = [...domainGroups.keys()].sort();
+
       return (
-        <View style={styles.listingsWrap}>
-          {listings.map((item) => (
-            <ListingCard
-              key={item.id}
-              item={item}
+        <View style={styles.carouselsWrap}>
+          {sortedDomains.map((domain) => (
+            <DomainCarouselSection
+              key={domain}
+              domain={domain}
+              listings={domainGroups.get(domain) ?? []}
               isPaid={isPaid}
               onPurchase={(l) => setPurchaseModal(l)}
-              reputation={repMap.get(item.eagoh_id)}
             />
           ))}
         </View>
@@ -1095,6 +1380,7 @@ export default function MarketplaceScreen(): JSX.Element {
               key={item.id}
               item={item}
               onToggle={handleToggleListing}
+              onEdit={(l) => setEditModal(l)}
               onRecalc={loadData}
               reputation={repMap.get(item.eagoh_id)}
             />
@@ -1244,6 +1530,13 @@ export default function MarketplaceScreen(): JSX.Element {
         onClose={() => setCreateModal(false)}
         onCreated={loadData}
         creating={creating}
+      />
+      <EditListingModal
+        visible={!!editModal}
+        listing={editModal}
+        onClose={() => setEditModal(null)}
+        onUpdated={loadData}
+        updating={updating}
       />
     </LinearGradient>
   );
@@ -1484,12 +1777,28 @@ const styles = StyleSheet.create({
     borderColor: palette.line,
   },
   myListingCardInactive: { opacity: 0.55 },
+  myListingRow: { flexDirection: "row", gap: 12 },
+  myListingImageWrap: {
+    width: 80,
+    height: 96,
+    borderRadius: 5,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: palette.void,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  myListingImagePlaceholder: { alignItems: "center", justifyContent: "center", flex: 1 },
+  myListingInfo: { flex: 1, gap: 4 },
   myListingTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  myListingName: { color: palette.text, fontSize: 16, fontWeight: "900" },
-  activeDot: { width: 10, height: 10, borderRadius: 5 },
+  myListingName: { color: palette.text, fontSize: 16, fontWeight: "900", flex: 1 },
+  myListingMinPrice: { color: palette.gold, fontSize: 12, fontWeight: "900" },
+  activeDot: { width: 10, height: 10, borderRadius: 5, flexShrink: 0, marginLeft: 8 },
   activeDotOn: { backgroundColor: palette.success },
   activeDotOff: { backgroundColor: palette.ember },
-  myListingPrices: { flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 8 },
+  myListingPrices: { flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 4 },
   myListingPriceTag: {
     backgroundColor: "rgba(255,255,255,0.06)",
     borderRadius: 5,
@@ -1498,6 +1807,18 @@ const styles = StyleSheet.create({
   },
   myListingPriceText: { color: palette.muted, fontSize: 11, fontWeight: "800" },
   myListingActions: { flexDirection: "row", gap: 8, marginTop: 10 },
+  myListingEditBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    borderWidth: 1,
+    borderColor: palette.cyan,
+    borderRadius: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: palette.cyanSoft,
+  },
+  myListingEditText: { color: palette.cyan, fontSize: 12, fontWeight: "900" },
   myListingActionBtn: { borderRadius: 5, paddingHorizontal: 14, paddingVertical: 7 },
   myListingActionBtnOff: { backgroundColor: palette.emberSoft, borderWidth: 1, borderColor: palette.ember },
   myListingActionBtnOn: { backgroundColor: palette.successSoft, borderWidth: 1, borderColor: palette.success },
@@ -1729,6 +2050,67 @@ const styles = StyleSheet.create({
     minHeight: 70,
     textAlignVertical: "top",
   },
+
+  // Edit listing modal specific
+  editEagohPreview: { flexDirection: "row", gap: 12, marginBottom: 4 },
+  editEagohImage: {
+    width: 72,
+    height: 86,
+    borderRadius: 5,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: palette.void,
+  },
+  editStatusText: { fontSize: 10, fontWeight: "800", marginTop: 2 },
+
+  // Netflix-style domain carousels
+  carouselsWrap: { gap: 20, paddingBottom: 8 },
+  carouselSection: { gap: 8 },
+  carouselSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingRight: 4,
+  },
+  carouselSectionTitle: { color: palette.text, fontSize: 17, fontWeight: "900", letterSpacing: -0.3 },
+  carouselSectionCount: {
+    color: palette.cyan,
+    fontSize: 11,
+    fontWeight: "900",
+    backgroundColor: palette.cyanSoft,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 5,
+  },
+  carouselRail: { gap: 10, paddingRight: 8 },
+  carouselCard: {
+    width: 164,
+    borderRadius: 5,
+    backgroundColor: "rgba(14,24,37,0.84)",
+    borderWidth: 1,
+    borderColor: palette.line,
+    overflow: "hidden",
+  },
+  carouselCardImage: {
+    width: "100%",
+    height: 146,
+    overflow: "hidden",
+    borderBottomWidth: 1,
+    borderBottomColor: palette.line,
+  },
+  carouselImagePlaceholder: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: palette.void,
+  },
+  carouselCardInfo: { padding: 10, gap: 3 },
+  carouselCardName: { color: palette.text, fontSize: 13, fontWeight: "900" },
+  carouselCardVendor: { color: palette.muted, fontSize: 11, fontWeight: "700" },
+  carouselCardPrice: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 3 },
+  carouselCardPriceText: { color: palette.gold, fontSize: 12, fontWeight: "900" },
+  carouselCardPriceFree: { color: palette.success, fontSize: 12, fontWeight: "900", marginTop: 3 },
 
   repScoreBadge: { flexDirection: "row" as const, alignItems: "center" as const, gap: 3, borderWidth: 1, borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 },
   repScoreText: { fontSize: 10, fontWeight: "900" as const },

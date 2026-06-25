@@ -463,6 +463,38 @@ export async function toggleListingActive(listingId: string, active: boolean): P
   if (error) throw error;
 }
 
+export async function updateListing(
+  listingId: string,
+  updates: {
+    price25PerDay?: number;
+    price50PerDay?: number;
+    price75PerDay?: number;
+    price100PerDay?: number;
+    description?: string;
+  },
+): Promise<MarketplaceListingRow> {
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (updates.price25PerDay != null) patch.price_25_per_day = Math.max(0, Math.floor(updates.price25PerDay));
+  if (updates.price50PerDay != null) patch.price_50_per_day = Math.max(0, Math.floor(updates.price50PerDay));
+  if (updates.price75PerDay != null) patch.price_75_per_day = Math.max(0, Math.floor(updates.price75PerDay));
+  if (updates.price100PerDay != null) patch.price_100_per_day = Math.max(0, Math.floor(updates.price100PerDay));
+  if (updates.description !== undefined) patch.description = updates.description?.trim() || null;
+
+  const { data, error } = await supabase
+    .from("marketplace_listings")
+    .update(patch)
+    .eq("id", listingId)
+    .select("*");
+  if (error) throw error;
+  const listing = (data as MarketplaceListingRow[])?.[0];
+  if (!listing) throw new Error("Failed to update listing — no row returned.");
+
+  // Recalc vendor stats
+  await recalculateVendorStats(listing.vendor_id);
+
+  return listing;
+}
+
 export async function deleteListing(listingId: string): Promise<void> {
   const { error } = await supabase.from("marketplace_listings").delete().eq("id", listingId);
   if (error) throw error;

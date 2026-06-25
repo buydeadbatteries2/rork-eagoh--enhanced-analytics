@@ -35,6 +35,7 @@ import { MUSIC_GENRES, MUSIC_ROLES, getMusicGenre, getMusicRole } from "@/data/m
 import { FILM_TV_CATEGORIES, FILM_TV_GENRES, FILM_TV_ROLES, getFilmTvCategory, getFilmTvGenre, getFilmTvRole } from "@/data/filmTv";
 import { FASHION_STYLE_CATEGORIES, FASHION_ROLES, getFashionStyleCategory, getFashionRole } from "@/data/fashion";
 import { EDUCATION_SUBJECTS, EDUCATION_ROLES, getEducationSubject, getEducationRole } from "@/data/education";
+import { GAMING_GENRES, GAMING_ROLES, getGamingGenre, getGamingRole } from "@/data/gaming";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   AlertTriangle,
@@ -100,6 +101,8 @@ type WizardStepId =
   | "fashion_role"
   | "education_subject"
   | "education_role"
+  | "gaming_genre"
+  | "gaming_role"
   | "lab";
 
 type WizardStep = {
@@ -334,6 +337,8 @@ export default function ForgeScreen(): JSX.Element {
   const [fashionRole, setFashionRole] = useState<string>("");
   const [educationSubject, setEducationSubject] = useState<string>("");
   const [educationRole, setEducationRole] = useState<string>("");
+  const [gamingGenre, setGamingGenre] = useState<string>("");
+  const [gamingRole, setGamingRole] = useState<string>("");
   const [appearance, setAppearance] = useState<Record<string, string>>({});
   const [cyberneticIntensity, setCyberneticIntensity] = useState<string>("moderate");
   const [pose, setPose] = useState<string>("calm-sentinel");
@@ -385,6 +390,8 @@ export default function ForgeScreen(): JSX.Element {
     setFashionRole(editingEagoh.fashion_role ?? "");
     setEducationSubject(editingEagoh.education_subject ?? "");
     setEducationRole(editingEagoh.education_role ?? "");
+    setGamingGenre(editingEagoh.gaming_genre ?? "");
+    setGamingRole(editingEagoh.gaming_role ?? "");
     setAppearance(editingEagoh.appearance ?? {});
     setCyberneticIntensity(editingEagoh.cybernetic_intensity ?? "moderate");
     setPose(editingEagoh.pose ?? "calm-sentinel");
@@ -425,6 +432,7 @@ export default function ForgeScreen(): JSX.Element {
   const isFilmTvDomain = domain === "film-tv";
   const isFashionDomain = domain === "fashion";
   const isEducationDomain = domain === "education";
+  const isGamingDomain = domain === "gaming";
 
   const wizardSteps: WizardStep[] = useMemo(() => {
     const base: WizardStep[] = [
@@ -468,11 +476,16 @@ export default function ForgeScreen(): JSX.Element {
       base.push({ id: "education_role", title: "Education Role", eyebrow: "Step 14", hint: "Choose the role or perspective this EAGOH embodies in education.", icon: <Sparkles color={palette.success} size={15} /> });
     }
 
-    const hasSpecialization = isSportsDomain || isMusicDomain || isFilmTvDomain || isFashionDomain || isEducationDomain;
-    const labEyebrowNum = hasSpecialization ? (isFilmTvDomain ? "Step 16" : (isFashionDomain || isEducationDomain) ? "Step 15" : "Step 15") : "Step 13";
+    if (isGamingDomain) {
+      base.push({ id: "gaming_genre", title: "Gaming Genre", eyebrow: "Step 13", hint: "Select the primary game genre this EAGOH specializes in — FPS, RPG, MOBA, or more.", icon: <Zap color={palette.cyan} size={15} /> });
+      base.push({ id: "gaming_role", title: "Gaming Role", eyebrow: "Step 14", hint: "Choose the role or perspective this EAGOH embodies in gaming.", icon: <Sparkles color={palette.cyan} size={15} /> });
+    }
+
+    const hasSpecialization = isSportsDomain || isMusicDomain || isFilmTvDomain || isFashionDomain || isEducationDomain || isGamingDomain;
+    const labEyebrowNum = hasSpecialization ? (isFilmTvDomain ? "Step 16" : (isFashionDomain || isEducationDomain || isGamingDomain) ? "Step 15" : "Step 15") : "Step 13";
     base.push({ id: "lab", title: "Forge Lab", eyebrow: labEyebrowNum, hint: "Select the lab environment for this EAGOH.", icon: <Cpu color={palette.cyan} size={15} /> });
     return base;
-  }, [isSportsDomain, isMusicDomain, isFilmTvDomain, isFashionDomain, isEducationDomain]);
+  }, [isSportsDomain, isMusicDomain, isFilmTvDomain, isFashionDomain, isEducationDomain, isGamingDomain]);
 
   const currentStep = wizardSteps[currentStepIndex];
   const isLastStep = currentStepIndex === wizardSteps.length - 1;
@@ -501,11 +514,13 @@ export default function ForgeScreen(): JSX.Element {
     fashionRole,
     educationSubject,
     educationRole,
+    gamingGenre,
+    gamingRole,
     appearance,
     cyberneticIntensity,
     pose,
     lab,
-  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, teamFocusMode, proTeamFocusId, proTeamFocusName, collegeTeamFocusId, collegeTeamFocusName, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole, educationSubject, educationRole, appearance, cyberneticIntensity, pose, lab]);
+  }), [name, sport, gender, domain, bodyType, styleNotes, dna, teams, teamFocusMode, proTeamFocusId, proTeamFocusName, collegeTeamFocusId, collegeTeamFocusName, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole, educationSubject, educationRole, gamingGenre, gamingRole, appearance, cyberneticIntensity, pose, lab]);
 
   /** Dynamic reforge cost when editing — compares current form vs EAGOH's saved state. */
   const reforgeCost = useMemo(() => {
@@ -523,6 +538,8 @@ export default function ForgeScreen(): JSX.Element {
       fashionRole: editingEagoh.fashion_role ?? "",
       educationSubject: editingEagoh.education_subject ?? "",
       educationRole: editingEagoh.education_role ?? "",
+      gamingGenre: editingEagoh.gaming_genre ?? "",
+      gamingRole: editingEagoh.gaming_role ?? "",
     };
     const newState = {
       appearance,
@@ -537,9 +554,11 @@ export default function ForgeScreen(): JSX.Element {
       fashionRole,
       educationSubject,
       educationRole,
+      gamingGenre,
+      gamingRole,
     };
     return calculateReforgeCost(oldState, newState);
-  }, [isEditing, editingEagoh, appearance, styleNotes, pose, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole, educationSubject, educationRole]);
+  }, [isEditing, editingEagoh, appearance, styleNotes, pose, musicGenre, musicRole, filmTvCategory, filmTvGenre, filmTvRole, fashionStyleCategory, fashionRole, educationSubject, educationRole, gamingGenre, gamingRole]);
 
   const setAppearanceField = useCallback((category: string, text: string): void => {
     setAppearance((prev) => ({ ...prev, [category]: text }));
@@ -1066,6 +1085,38 @@ export default function ForgeScreen(): JSX.Element {
       );
     }
 
+    if (currentStep.id === "gaming_genre") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Select the primary game genre this EAGOH specializes in. This is used for filtering, Marketplace searches, and genre-specific intelligence.</Text>
+          {GAMING_GENRES.map((g) => (
+            <OptionChip
+              key={g.id}
+              option={{ id: g.id, label: g.label, tone: "cyan" }}
+              selected={gamingGenre === g.id}
+              onPress={setGamingGenre}
+            />
+          ))}
+        </>
+      );
+    }
+
+    if (currentStep.id === "gaming_role") {
+      return (
+        <>
+          <Text style={styles.sectionHint}>Choose the role or perspective this EAGOH embodies in gaming. This shapes its analysis style and marketplace discoverability.</Text>
+          {GAMING_ROLES.map((r) => (
+            <OptionChip
+              key={r.id}
+              option={{ id: r.id, label: r.label, tone: "cyan" }}
+              selected={gamingRole === r.id}
+              onPress={setGamingRole}
+            />
+          ))}
+        </>
+      );
+    }
+
     if (currentStep.id === "teams") {
       const sportCanonical = getSportCanonical(sport);
       const hasTeams = sportCanonical !== undefined;
@@ -1223,6 +1274,10 @@ export default function ForgeScreen(): JSX.Element {
     educationRole,
     setEducationSubject,
     setEducationRole,
+    gamingGenre,
+    gamingRole,
+    setGamingGenre,
+    setGamingRole,
   ]);
 
   const previewHeight = Math.min(windowHeight * 0.27, 248);

@@ -105,6 +105,9 @@ export type ListingFilters = {
   /** Education domain filters (canonical IDs). */
   educationSubject?: string;
   educationRole?: string;
+  /** Gaming domain filters (canonical IDs). */
+  gamingGenre?: string;
+  gamingRole?: string;
   syncLevel?: SyncLevel;
   maxPrice?: number;
   minPrice?: number;
@@ -389,6 +392,12 @@ export async function listActiveListings(
   if (filters.educationRole) {
     result = result.filter((l) => l.eagoh?.education_role === filters.educationRole);
   }
+  if (filters.gamingGenre) {
+    result = result.filter((l) => l.eagoh?.gaming_genre === filters.gamingGenre);
+  }
+  if (filters.gamingRole) {
+    result = result.filter((l) => l.eagoh?.gaming_role === filters.gamingRole);
+  }
   if (filters.team) {
     const teamQuery = filters.team!.toLowerCase();
     result = result.filter((l) => {
@@ -432,6 +441,8 @@ export async function listActiveListings(
         l.eagoh?.fashion_role,
         l.eagoh?.education_subject,
         l.eagoh?.education_role,
+        l.eagoh?.gaming_genre,
+        l.eagoh?.gaming_role,
         ...l.fanatic_teams,
       ].filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(q);

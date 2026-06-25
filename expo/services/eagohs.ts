@@ -47,6 +47,8 @@ export type EagohRecord = {
   fashion_role: string | null;
   education_subject: string | null;
   education_role: string | null;
+  gaming_genre: string | null;
+  gaming_role: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -95,6 +97,9 @@ export type EagohDraft = {
   /** Education domain specialization. */
   educationSubject: string;
   educationRole: string;
+  /** Gaming domain specialization. */
+  gamingGenre: string;
+  gamingRole: string;
   appearance: Record<string, string>;
   cyberneticIntensity: string;
   pose: string;
@@ -117,7 +122,7 @@ export function getEagohLimit(tier: SubscriptionTier): number {
 export async function listEagohs(userId: string): Promise<EagohRecord[]> {
   const { data, error } = await supabase
     .from("eagohs")
-    .select("id,user_id,name,sport,gender,domain,body_type,style_notes,cybernetic_intensity,pose,lab,dna,image_url,image_thumb_url,image_prompt,image_generated_at,last_name_change,team_focus_mode,pro_team_focus_id,pro_team_focus_name,college_team_focus_id,college_team_focus_name,music_genre,music_role,film_tv_category,film_tv_genre,film_tv_role,fashion_style_category,fashion_role,education_subject,education_role,created_at,updated_at")
+    .select("id,user_id,name,sport,gender,domain,body_type,style_notes,cybernetic_intensity,pose,lab,dna,image_url,image_thumb_url,image_prompt,image_generated_at,last_name_change,team_focus_mode,pro_team_focus_id,pro_team_focus_name,college_team_focus_id,college_team_focus_name,music_genre,music_role,film_tv_category,film_tv_genre,film_tv_role,fashion_style_category,fashion_role,education_subject,education_role,gaming_genre,gaming_role,created_at,updated_at")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -196,6 +201,8 @@ export async function createEagoh(
     fashion_role: draft.fashionRole || null,
     education_subject: draft.educationSubject || null,
     education_role: draft.educationRole || null,
+    gaming_genre: draft.gamingGenre || null,
+    gaming_role: draft.gamingRole || null,
   };
 
   const { data: created, error } = await supabase

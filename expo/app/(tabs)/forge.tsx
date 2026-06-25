@@ -1498,113 +1498,115 @@ export default function ForgeScreen(): JSX.Element {
   // ══════════════════════════════════════════════════════════════════
   //  LAYOUT
   //
-  //  Preview, info strip, and stepper stay fixed outside the keyboard
-  //  avoidance zone. Only the wizard ScrollView is wrapped in
-  //  KeyboardAvoidingView so that keyboard resizing only affects the
-  //  scrollable content area. The CTA bar is pinned below the scroll.
+  //  Everything scrolls together inside KeyboardAvoidingView so the
+  //  preview, info strip, stepper, and wizard steps all move up when
+  //  the soft keyboard appears. Only the bottom CTA bar and overlays
+  //  remain fixed.
   // ══════════════════════════════════════════════════════════════════
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      {/* ── Fixed header: preview + info + stepper ───────────────── */}
-      <Pressable
-        onPress={(): void => setShowPicker(true)}
-        style={[styles.previewArea, { height: previewHeight }]}
-      >
-        <ForgePreview
-          name={name}
-          sport={sport}
-          gender={gender}
-          domain={domain}
-          cyberneticIntensity={cyberneticIntensity}
-          pose={pose}
-          tier={currentTier}
-          imageUrl={isEditing ? editingEagoh?.image_url ?? editingEagoh?.image_thumb_url : null}
-          isEditing={isEditing}
-        />
-        {/* Change/Select EAGOH pill */}
-        <View style={[styles.eagohSelectBtn, isEditing && styles.eagohSelectBtnEditing]}>
-          {isEditing ? (
-            <>
-              <BrainCircuit color={palette.gold} size={11} />
-              <Text style={styles.eagohSelectBtnText} numberOfLines={1}>
-                {editingEagoh?.name ?? "Selected"}
-              </Text>
-              <ChevronDown color={palette.gold} size={10} />
-            </>
-          ) : (
-            <>
-              <Plus color={palette.cyan} size={11} />
-              <Text style={styles.eagohSelectBtnText}>Select EAGOH</Text>
-            </>
-          )}
-        </View>
-        <View style={[styles.tierChipFloat, currentTier !== "free" && styles.tierChipFloatPaid]}>
-          <Zap color={currentTier !== "free" ? palette.cyan : palette.muted} size={11} />
-          <Text style={[styles.tierChipFloatText, currentTier !== "free" && { color: palette.cyan }]}>
-            {currentTier.replace("_", " ").toUpperCase()}
-          </Text>
-        </View>
-      </Pressable>
-
-      <View style={styles.infoStrip}>
-        <Text style={styles.infoName} numberOfLines={1}>{name || "Unnamed EAGOH"}</Text>
-        <View style={styles.infoMeta}>
-          {isEditing ? (
-            <View style={styles.editingChip}>
-              <Sparkles color={palette.gold} size={10} />
-              <Text style={styles.editingChipText}>EDITING</Text>
-            </View>
-          ) : (
-            <>
-              <Text style={styles.infoDomain}>{domainLabel}</Text>
-              <View style={styles.infoDot} />
-              <Text style={styles.infoShell}>{currentTier === "free" ? "DORMANT SHELL" : "ACTIVATED CHASSIS"}</Text>
-            </>
-          )}
-          <View style={styles.infoDot} />
-          <Text style={styles.infoSlots}>{remaining}/{maxEagohs} slots</Text>
-          {multiplier > 0 ? <Text style={styles.multiplier}>{multiplier.toFixed(1)}x</Text> : null}
-        </View>
-      </View>
-
-      <View style={styles.stepperBar}>
-        <View style={styles.stepperTopRow}>
-          <Text style={styles.stepCounter}>{currentStepIndex + 1}/{wizardSteps.length}</Text>
-          <Text style={styles.stepMiniTitle} numberOfLines={1}>{currentStep.title}</Text>
-        </View>
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${progressPercent}%` }]} />
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stepDotsContent}>
-          {wizardSteps.map((step, index) => {
-            const isActive = index === currentStepIndex;
-            const isComplete = index < currentStepIndex;
-            return (
-              <Pressable key={step.id} onPress={() => goToStep(index)} style={[styles.stepDot, isActive && styles.stepDotActive, isComplete && styles.stepDotComplete]}>
-                <Text style={[styles.stepDotText, (isActive || isComplete) && styles.stepDotTextActive]}>{index + 1}</Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      </View>
-
-      {/* ── Keyboard-avoided wizard scroll area ───────────────────── */}
       <KeyboardAvoidingView
-        style={styles.scrollWrapper}
+        style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
       >
         <ScrollView
           ref={scrollViewRef}
-          style={styles.wizardScroll}
-          contentContainerStyle={styles.wizardContent}
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
           onScroll={handleScroll}
           scrollEventThrottle={16}
         >
+          {/* ── Preview area ────────────────────────────────────── */}
+          <Pressable
+            onPress={(): void => setShowPicker(true)}
+            style={[styles.previewArea, { height: previewHeight }]}
+          >
+            <ForgePreview
+              name={name}
+              sport={sport}
+              gender={gender}
+              domain={domain}
+              cyberneticIntensity={cyberneticIntensity}
+              pose={pose}
+              tier={currentTier}
+              imageUrl={isEditing ? editingEagoh?.image_url ?? editingEagoh?.image_thumb_url : null}
+              isEditing={isEditing}
+            />
+            {/* Change/Select EAGOH pill */}
+            <View style={[styles.eagohSelectBtn, isEditing && styles.eagohSelectBtnEditing]}>
+              {isEditing ? (
+                <>
+                  <BrainCircuit color={palette.gold} size={11} />
+                  <Text style={styles.eagohSelectBtnText} numberOfLines={1}>
+                    {editingEagoh?.name ?? "Selected"}
+                  </Text>
+                  <ChevronDown color={palette.gold} size={10} />
+                </>
+              ) : (
+                <>
+                  <Plus color={palette.cyan} size={11} />
+                  <Text style={styles.eagohSelectBtnText}>Select EAGOH</Text>
+                </>
+              )}
+            </View>
+            <View style={[styles.tierChipFloat, currentTier !== "free" && styles.tierChipFloatPaid]}>
+              <Zap color={currentTier !== "free" ? palette.cyan : palette.muted} size={11} />
+              <Text style={[styles.tierChipFloatText, currentTier !== "free" && { color: palette.cyan }]}>
+                {currentTier.replace("_", " ").toUpperCase()}
+              </Text>
+            </View>
+          </Pressable>
+
+          {/* ── Info strip ──────────────────────────────────────── */}
+          <View style={styles.infoStrip}>
+            <Text style={styles.infoName} numberOfLines={1}>{name || "Unnamed EAGOH"}</Text>
+            <View style={styles.infoMeta}>
+              {isEditing ? (
+                <View style={styles.editingChip}>
+                  <Sparkles color={palette.gold} size={10} />
+                  <Text style={styles.editingChipText}>EDITING</Text>
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.infoDomain}>{domainLabel}</Text>
+                  <View style={styles.infoDot} />
+                  <Text style={styles.infoShell}>{currentTier === "free" ? "DORMANT SHELL" : "ACTIVATED CHASSIS"}</Text>
+                </>
+              )}
+              <View style={styles.infoDot} />
+              <Text style={styles.infoSlots}>{remaining}/{maxEagohs} slots</Text>
+              {multiplier > 0 ? <Text style={styles.multiplier}>{multiplier.toFixed(1)}x</Text> : null}
+            </View>
+          </View>
+
+          {/* ── Stepper bar ─────────────────────────────────────── */}
+          <View style={styles.stepperBar}>
+            <View style={styles.stepperTopRow}>
+              <Text style={styles.stepCounter}>{currentStepIndex + 1}/{wizardSteps.length}</Text>
+              <Text style={styles.stepMiniTitle} numberOfLines={1}>{currentStep.title}</Text>
+            </View>
+            <View style={styles.progressTrack}>
+              <View style={[styles.progressFill, { width: `${progressPercent}%` }]} />
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stepDotsContent}>
+              {wizardSteps.map((step, index) => {
+                const isActive = index === currentStepIndex;
+                const isComplete = index < currentStepIndex;
+                return (
+                  <Pressable key={step.id} onPress={() => goToStep(index)} style={[styles.stepDot, isActive && styles.stepDotActive, isComplete && styles.stepDotComplete]}>
+                    <Text style={[styles.stepDotText, (isActive || isComplete) && styles.stepDotTextActive]}>{index + 1}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+
+          {/* ── Wizard card ─────────────────────────────────────── */}
           <View style={styles.wizardCard}>
             <LinearGradient colors={["rgba(54,245,255,0.08)", "rgba(10,18,30,0.78)"]} style={StyleSheet.absoluteFill} />
             <View style={styles.wizardHeader}>
@@ -1649,8 +1651,8 @@ export default function ForgeScreen(): JSX.Element {
             </View>
           )}
 
-          {/* Extra bottom padding so content can scroll well above the CTA + keyboard */}
-          <View style={[styles.bottomSpacer, { height: keyboardHeight > 0 ? keyboardHeight + 48 : 24 }]} />
+          {/* Bottom padding so content ends comfortably above the CTA */}
+          <View style={styles.bottomSpacer} />
         </ScrollView>
       </KeyboardAvoidingView>
 
@@ -2133,10 +2135,8 @@ const styles = StyleSheet.create({
   stepDotText: { color: palette.muted, fontSize: 10, fontWeight: "900" },
   stepDotTextActive: { color: palette.text },
 
-  // ── Scrollable wizard (inside KeyboardAvoidingView) ──────────────
-  scrollWrapper: { flex: 1 },
-  wizardScroll: { flex: 1 },
-  wizardContent: { paddingHorizontal: 12, paddingTop: 8, gap: 8 },
+  // ── Unified scrollable content (preview + info + stepper + wizard) ─
+  scrollContent: { paddingBottom: 24, gap: 0 },
   wizardCard: {
     borderRadius: 5,
     borderWidth: 1,

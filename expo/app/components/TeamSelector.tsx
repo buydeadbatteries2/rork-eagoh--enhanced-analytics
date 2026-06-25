@@ -14,13 +14,12 @@ import { searchTeams, getTeamById, getSportCanonical, type TeamData } from "@/da
 import { Search, X, Check, AlertTriangle, MapPin } from "lucide-react-native";
 import React, { useCallback, useMemo, useState } from "react";
 import {
-  FlatList,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
-  type ListRenderItemInfo,
 } from "react-native";
 
 // ── Props ──────────────────────────────────────────────────────────────
@@ -113,49 +112,7 @@ export default function TeamSelector({
 
   const showDropdown = focused && query.trim().length > 0;
 
-  const renderTeamItem = useCallback(
-    ({ item }: ListRenderItemInfo<TeamData>): JSX.Element => {
-      const isSelected = selectedIds.includes(item.id);
-      const badge = leagueBadgeColor(item.league);
 
-      return (
-        <Pressable
-          onPress={() => handleToggle(item.id)}
-          style={({ pressed }) => [
-            styles.suggestionRow,
-            isSelected && styles.suggestionRowSelected,
-            pressed && styles.pressed,
-          ]}
-        >
-          <View style={styles.suggestionLeft}>
-            <View style={[styles.leagueBadge, { backgroundColor: `${badge}20`, borderColor: `${badge}50` }]}>
-              <Text style={[styles.leagueBadgeText, { color: badge }]}>{item.league}</Text>
-            </View>
-            <View style={styles.suggestionCopy}>
-              <Text style={styles.suggestionName} numberOfLines={1}>
-                {item.display_name}
-              </Text>
-              <View style={styles.suggestionMeta}>
-                <MapPin color={palette.muted} size={8} />
-                <Text style={styles.suggestionLocation} numberOfLines={1}>
-                  {item.city}, {item.state}
-                </Text>
-                <Text style={styles.suggestionLevel}>{item.level}</Text>
-              </View>
-            </View>
-          </View>
-          {isSelected && mode === "multi" ? (
-            <View style={styles.selectedDot}>
-              <Check color={palette.void} size={10} />
-            </View>
-          ) : isSelected && mode === "single" ? (
-            <Check color={palette.cyan} size={16} />
-          ) : null}
-        </Pressable>
-      );
-    },
-    [handleToggle, selectedIds, mode],
-  );
 
   return (
     <View style={styles.container}>
@@ -229,14 +186,48 @@ export default function TeamSelector({
       {showDropdown ? (
         <View style={styles.dropdown}>
           {results.length > 0 ? (
-            <FlatList
-              data={results}
-              renderItem={renderTeamItem}
-              keyExtractor={(item) => item.id}
-              style={styles.suggestionList}
-              keyboardShouldPersistTaps="handled"
-              nestedScrollEnabled
-            />
+            <ScrollView style={styles.suggestionList} keyboardShouldPersistTaps="handled" nestedScrollEnabled>
+              {results.map((item) => {
+                const isSelected = selectedIds.includes(item.id);
+                const badge = leagueBadgeColor(item.league);
+                return (
+                  <Pressable
+                    key={item.id}
+                    onPress={() => handleToggle(item.id)}
+                    style={({ pressed }) => [
+                      styles.suggestionRow,
+                      isSelected && styles.suggestionRowSelected,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <View style={styles.suggestionLeft}>
+                      <View style={[styles.leagueBadge, { backgroundColor: `${badge}20`, borderColor: `${badge}50` }]}>
+                        <Text style={[styles.leagueBadgeText, { color: badge }]}>{item.league}</Text>
+                      </View>
+                      <View style={styles.suggestionCopy}>
+                        <Text style={styles.suggestionName} numberOfLines={1}>
+                          {item.display_name}
+                        </Text>
+                        <View style={styles.suggestionMeta}>
+                          <MapPin color={palette.muted} size={8} />
+                          <Text style={styles.suggestionLocation} numberOfLines={1}>
+                            {item.city}, {item.state}
+                          </Text>
+                          <Text style={styles.suggestionLevel}>{item.level}</Text>
+                        </View>
+                      </View>
+                    </View>
+                    {isSelected && mode === "multi" ? (
+                      <View style={styles.selectedDot}>
+                        <Check color={palette.void} size={10} />
+                      </View>
+                    ) : isSelected && mode === "single" ? (
+                      <Check color={palette.cyan} size={16} />
+                    ) : null}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
           ) : (
             <View style={styles.notFound}>
               <AlertTriangle color={palette.muted} size={14} />

@@ -1,12 +1,13 @@
 /**
  * EAGOH image generation client.
  *
- * Calls the Rork toolkit image model endpoint via the secure proxy. Returns a
- * remote URL — generation is async, so callers should treat the URL as a
- * lazy-load reference (RN's Image component handles caching natively).
+ * Calls the Rork Toolkit V2 proxy which forwards to Vercel AI Gateway
+ * for image-only models (`type: "image"`). Returns a base64 data URI
+ * that can be used directly in React Native's <Image> component and
+ * stored in the EAGOH row.
  *
- * Modular and stateless. No persistence, no Edge deduction here — those are
- * orchestrated by `services/forge.ts` and `providers/ForgeProvider.tsx`.
+ * Modular and stateless. No persistence, no Edge deduction here — those
+ * are orchestrated by `services/forge.ts` and `providers/ForgeProvider.tsx`.
  */
 
 const TOOLKIT_URL = process.env.EXPO_PUBLIC_TOOLKIT_URL ?? "";
@@ -29,9 +30,13 @@ export type ImageGenResult =
 /**
  * Generate a full-body EAGOH render with a transparent background.
  *
- * Uses `openai/gpt-image-2` via the Rork proxy. The toolkit returns a
- * CDN-hosted URL — we use that URL directly as the lazy-loaded reference
- * and store it in the EAGOH row (no binary upload required).
+ * Uses `openai/gpt-image-1.5` via the Rork proxy — gpt-image-1.5 is the
+ * only OpenAI image model that supports transparent (alpha) PNG output.
+ * The Vercel AI Gateway v3 image-model endpoint returns base64-encoded
+ * images; we wrap them in a data URI for direct use in React Native.
+ *
+ * Endpoint: POST /v2/vercel/v3/ai/image-model
+ * Proxy: ${TOOLKIT_URL}/v2/vercel/v3/ai/image-model
  */
 export async function generateEagohImage(request: ImageGenRequest): Promise<ImageGenResult> {
   if (!TOOLKIT_URL || !TOOLKIT_SECRET) {
@@ -43,23 +48,35 @@ export async function generateEagohImage(request: ImageGenRequest): Promise<Imag
 
   const size = request.size ?? "1024x1536";
   const background = request.background ?? "transparent";
-  const model = "openai/gpt-image-2";
+
+  // gpt-image-1.5 is required for transparent background support.
+  // gpt-image-2 does not support alpha PNG output.
+  const model = background === "transparent" ? "openai/gpt-image-1.5" : "openai/gpt-image-2";
+
+  // Provider-specific options. For transparent backgrounds with OpenAI
+  // models, the background flag lives inside providerOptions.openai.
+  const providerOptions: Record<string, unknown> = {};
+  if (background === "transparent") {
+    providerOptions.openai = { background: "transparent" };
+  }
 
   try {
-    const response = await fetch(`${TOOLKIT_URL}/v3/ai/image-model`, {
+    const response = await fetch(`${TOOLKIT_URL}/v2/vercel/v3/ai/image-model`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${TOOLKIT_SECRET}`,
+        // Vercel AI Gateway v3 required protocol headers
+        "ai-gateway-protocol-version": "0.0.1",
+        "ai-image-model-specification-version": "4",
+        "ai-model-id": model,
       },
       body: JSON.stringify({
         model,
         prompt,
+        n: 1,
         size,
-        background,
-        // Lightweight quality default — Forge is the premium tier so we
-        // request high quality only for full reforges (caller controls).
-        quality: "high",
+        providerOptions,
       }),
     });
 
@@ -70,21 +87,23 @@ export async function generateEagohImage(request: ImageGenRequest): Promise<Imag
     }
 
     const data = (await response.json()) as {
-      url?: string;
-      imageUrl?: string;
-      thumbUrl?: string;
-      files?: Array<{ url?: string }>;
+      images?: string[];
+      warnings?: unknown[];
     };
 
-    const imageUrl = data.url ?? data.imageUrl ?? data.files?.[0]?.url ?? null;
-    if (!imageUrl) {
-      return { ok: false, error: "Image service returned no URL." };
+    // The v3 image-model endpoint returns base64 strings in `images[]`.
+    const base64 = data.images?.[0];
+    if (!base64) {
+      return { ok: false, error: "Image service returned no image data." };
     }
+
+    // Wrap in a data URI so React Native's <Image> can display it directly.
+    const imageUrl = `data:image/png;base64,${base64}`;
 
     return {
       ok: true,
       imageUrl,
-      thumbUrl: data.thumbUrl ?? null,
+      thumbUrl: imageUrl, // same base64 — tiny thumbnail generation would be a separate step
       model,
     };
   } catch (error) {

@@ -30,6 +30,7 @@ import {
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -106,7 +107,7 @@ function sessionIcon(id: string, color: string, size: number): React.ReactNode {
   return <BrainCircuit color={color} size={size} />;
 }
 
-// ── Compact session card (max 140px) ──
+// ── Compact glass session card (max 140px) ──
 function SessionCard({
   session,
   onPress,
@@ -123,43 +124,49 @@ function SessionCard({
       disabled={disabled}
       style={({ pressed }) => [
         styles.sessionCard,
-        { borderColor: session.active ? `${accent}44` : palette.line },
+        { borderColor: session.active ? `${accent}55` : palette.line, shadowColor: accent },
         disabled && styles.cardDisabled,
         pressed && styles.pressed,
       ]}
     >
-      {/* Left accent bar */}
-      <View style={[styles.cardAccent, { backgroundColor: accent }]} />
+      <LinearGradient
+        colors={[`${accent}14`, "rgba(8,15,26,0.85)", "rgba(6,11,20,0.92)"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+      {/* Left accent glow bar */}
+      <View style={[styles.cardAccent, { backgroundColor: accent, shadowColor: accent }]} />
       {/* Icon */}
-      <View style={[styles.cardIcon, { backgroundColor: toneBg(session.tone), borderColor: `${accent}33` }]}>
-        {sessionIcon(session.id, accent, 20)}
+      <View style={[styles.cardIcon, { backgroundColor: toneBg(session.tone), borderColor: `${accent}44` }]}>
+        {sessionIcon(session.id, accent, 22)}
       </View>
       {/* Body */}
       <View style={styles.cardBody}>
         <View style={styles.cardTopRow}>
-          <Text style={styles.cardName}>{session.name}</Text>
+          <Text style={styles.cardName} numberOfLines={1}>{session.name}</Text>
           {session.active ? (
             <View style={styles.liveBadge}>
-              <Sparkles color={palette.success} size={8} />
+              <View style={styles.liveDot} />
               <Text style={styles.liveBadgeText}>LIVE</Text>
             </View>
           ) : null}
         </View>
         <Text style={styles.cardDesc} numberOfLines={1}>{session.description}</Text>
         <View style={styles.cardMeta}>
-          <Clock color={palette.muted} size={10} />
+          <Clock color={palette.muted} size={11} />
           <Text style={styles.cardMetaText}>{session.duration}</Text>
-          <Cpu color={palette.muted} size={10} />
-          <Text style={styles.cardMetaText}>{session.model}</Text>
+          <View style={[styles.costChip, { backgroundColor: toneBg(session.tone), borderColor: `${accent}33` }]}>
+            <Zap color={accent} size={11} />
+            <Text style={[styles.cardCost, { color: accent }]}>{session.costRange}</Text>
+          </View>
         </View>
       </View>
-      {/* Cost + arrow */}
+      {/* Arrow */}
       <View style={styles.cardRight}>
-        <View style={styles.cardCostRow}>
-          <Zap color={accent} size={12} />
-          <Text style={[styles.cardCost, { color: accent }]}>{session.costRange}</Text>
+        <View style={[styles.cardArrow, { borderColor: `${accent}33` }]}>
+          <ChevronRight color={accent} size={16} />
         </View>
-        <ChevronRight color={accent} size={16} />
       </View>
     </Pressable>
   );
@@ -178,32 +185,46 @@ function SelectedEagohCard({
   userTier: string;
 }): JSX.Element {
   const domain = eagoh ? INTELLIGENCE_DOMAINS.find((d) => d.id === eagoh.domain) : null;
-  const domainTone = domain ? toneColor(domain.tone) : palette.muted;
+  const domainTone = domain ? toneColor(domain.tone) : palette.cyan;
+  const thumb = eagoh?.image_thumb_url ?? eagoh?.image_url ?? null;
+  const isActive = userTier !== "free";
 
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.eagohCard, pressed && styles.pressed]}>
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.eagohCard, { shadowColor: domainTone }, pressed && styles.pressed]}>
+      <LinearGradient
+        colors={[`${domainTone}1A`, "rgba(8,16,30,0.92)"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
       <View style={styles.eagohCardLeft}>
-        <View style={[styles.eagohCardAvatar, { borderColor: eagoh ? domainTone : palette.line }]}>
-          <BrainCircuit color={eagoh ? domainTone : palette.muted} size={22} />
+        <View style={[styles.eagohCardAvatar, { borderColor: eagoh ? domainTone : palette.line, shadowColor: domainTone }]}>
+          {thumb ? (
+            <Image source={{ uri: thumb }} style={styles.eagohCardImg} resizeMode="cover" />
+          ) : (
+            <BrainCircuit color={eagoh ? domainTone : palette.muted} size={26} />
+          )}
         </View>
         <View style={styles.eagohCardInfo}>
           <Text style={styles.eagohCardName} numberOfLines={1}>
             {eagoh?.name || "No EAGOH selected"}
           </Text>
-          <Text style={styles.eagohCardDomain}>
+          <Text style={[styles.eagohCardDomain, { color: domainTone }]} numberOfLines={1}>
             {eagoh ? (domain?.label ?? eagoh.domain ?? "No domain") : "Tap to select an EAGOH"}
           </Text>
+          {eagoh ? (
+            <View style={styles.eagohStatusRow}>
+              <View style={[styles.eagohStatusDot, { backgroundColor: isActive ? palette.success : palette.muted, shadowColor: isActive ? palette.success : "transparent" }]} />
+              <Text style={[styles.eagohStatusText, { color: isActive ? palette.success : palette.muted }]}>
+                {isActive ? "SHELL ACTIVE" : "SHELL DORMANT"}
+              </Text>
+            </View>
+          ) : null}
         </View>
       </View>
-      <View style={styles.eagohCardRight}>
-        {eagoh ? (
-          <View style={[styles.eagohShellBadge, { backgroundColor: toneBg(domainTone as SessionTone), borderColor: `${domainTone}33` }]}>
-            <Text style={[styles.eagohShellText, { color: domainTone }]}>
-              {userTier === "free" ? "DORMANT" : "ACTIVE"}
-            </Text>
-          </View>
-        ) : null}
-        <Text style={styles.eagohCardChange}>{hasMultiple ? "Change" : "Select"}</Text>
+      <View style={[styles.eagohChangeBtn, { borderColor: `${domainTone}44`, backgroundColor: `${domainTone}14` }]}>
+        <Text style={[styles.eagohChangeText, { color: domainTone }]}>{hasMultiple ? "Change" : "Select"}</Text>
+        <ChevronDown color={domainTone} size={13} />
       </View>
     </Pressable>
   );
@@ -704,88 +725,122 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     borderRadius: 5,
     borderWidth: 1,
-    borderColor: palette.line,
-    backgroundColor: "rgba(10,20,35,0.60)",
-    paddingHorizontal: 14,
+    borderColor: palette.lineStrong,
+    paddingHorizontal: 12,
     paddingVertical: 12,
     marginBottom: 16,
+    overflow: "hidden",
+    shadowOpacity: 0.28,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 4,
   },
-  eagohCardLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
+  eagohCardLeft: { flexDirection: "row", alignItems: "center", gap: 11, flex: 1 },
   eagohCardAvatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 5,
-    borderWidth: 1,
+    width: 52,
+    height: 52,
+    borderRadius: 6,
+    borderWidth: 1.5,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.03)",
+    overflow: "hidden",
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
   },
+  eagohCardImg: { width: "100%", height: "100%" },
   eagohCardInfo: { flex: 1 },
-  eagohCardName: { color: palette.text, fontSize: 14, fontWeight: "900" },
-  eagohCardDomain: { color: palette.muted, fontSize: 11, fontWeight: "700", marginTop: 1 },
-  eagohCardRight: { alignItems: "flex-end", gap: 4 },
-  eagohShellBadge: {
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 4,
+  eagohCardName: { color: palette.text, fontSize: 15, fontWeight: "900", letterSpacing: -0.2 },
+  eagohCardDomain: { fontSize: 11, fontWeight: "800", marginTop: 1, letterSpacing: 0.2 },
+  eagohStatusRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 4 },
+  eagohStatusDot: { width: 6, height: 6, borderRadius: 3, shadowOpacity: 0.9, shadowRadius: 5, shadowOffset: { width: 0, height: 0 } },
+  eagohStatusText: { fontSize: 8, fontWeight: "900", letterSpacing: 1.2 },
+  eagohChangeBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 5,
     borderWidth: 1,
   },
-  eagohShellText: { fontSize: 8, fontWeight: "900", letterSpacing: 1 },
-  eagohCardChange: { color: palette.cyan, fontSize: 11, fontWeight: "800" },
+  eagohChangeText: { fontSize: 11, fontWeight: "900", letterSpacing: 0.3 },
 
   // Section
   sectionLabel: { color: palette.gold, fontSize: 9, fontWeight: "900", letterSpacing: 2, marginBottom: 8 },
 
   // Session card list
-  sessionList: { gap: 6 },
+  sessionList: { gap: 8 },
 
-  // Session card (compact, max 140px)
+  // Session card (compact glass, max 140px)
   sessionCard: {
     flexDirection: "row",
     alignItems: "center",
+    borderRadius: 6,
+    borderWidth: 1,
+    maxHeight: 96,
+    overflow: "hidden",
+    shadowOpacity: 0.22,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 3,
+  },
+  cardAccent: {
+    width: 3,
+    alignSelf: "stretch",
+    shadowOpacity: 0.9,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  cardIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 6,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 11,
+    marginVertical: 11,
+  },
+  cardBody: { flex: 1, paddingHorizontal: 11, paddingVertical: 11, gap: 3 },
+  cardTopRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  cardName: { color: palette.text, fontSize: 15, fontWeight: "900", flexShrink: 1, letterSpacing: -0.2 },
+  liveBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: "rgba(0,255,178,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(0,255,178,0.28)",
+  },
+  liveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: palette.success },
+  liveBadgeText: { color: palette.success, fontSize: 7, fontWeight: "900", letterSpacing: 1 },
+  cardDesc: { color: palette.muted, fontSize: 11, fontWeight: "700" },
+  cardMeta: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 },
+  cardMetaText: { color: palette.muted, fontSize: 10, fontWeight: "800" },
+  costChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
     borderRadius: 5,
     borderWidth: 1,
-    backgroundColor: "rgba(10,20,35,0.55)",
-    maxHeight: 88,
-    overflow: "hidden",
   },
-  cardAccent: { width: 3, alignSelf: "stretch" },
-  cardIcon: {
-    width: 44,
-    height: 44,
+  cardCost: { fontSize: 11, fontWeight: "900" },
+  cardRight: { paddingRight: 12, paddingLeft: 4 },
+  cardArrow: {
+    width: 30,
+    height: 30,
     borderRadius: 5,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
-    marginLeft: 10,
-    marginVertical: 10,
   },
-  cardBody: { flex: 1, paddingHorizontal: 10, paddingVertical: 10, gap: 2 },
-  cardTopRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  cardName: { color: palette.text, fontSize: 14, fontWeight: "900", flexShrink: 1 },
-  liveBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 4,
-    backgroundColor: "rgba(0,255,178,0.10)",
-    borderWidth: 1,
-    borderColor: "rgba(0,255,178,0.22)",
-  },
-  liveBadgeText: { color: palette.success, fontSize: 7, fontWeight: "900", letterSpacing: 1 },
-  cardDesc: { color: palette.muted, fontSize: 11, fontWeight: "700" },
-  cardMeta: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 1 },
-  cardMetaText: { color: palette.muted, fontSize: 10, fontWeight: "700" },
-  cardRight: {
-    alignItems: "center",
-    gap: 4,
-    paddingRight: 12,
-    paddingVertical: 10,
-  },
-  cardCostRow: { flexDirection: "row", alignItems: "center", gap: 3 },
-  cardCost: { fontSize: 12, fontWeight: "900" },
   cardDisabled: { opacity: 0.45 },
   pressed: { transform: [{ scale: 0.985 }], opacity: 0.88 },
 

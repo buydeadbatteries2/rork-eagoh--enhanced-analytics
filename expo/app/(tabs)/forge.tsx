@@ -31,9 +31,10 @@ import {
   Sparkles,
   Zap,
 } from "lucide-react-native";
-import React, { memo, useCallback, useMemo, useState } from "react";
+import React, { memo, useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -305,6 +306,8 @@ export default function ForgeScreen(): JSX.Element {
   const [lab, setLab] = useState<string>("neon-vault");
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
   const [forgeError, setForgeError] = useState<string | null>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const inputLayouts = useRef<Record<string, number>>({});
 
   const currentTier = profile?.subscription_tier ?? tier ?? "free";
   const multiplier = TIER_MULTIPLIER[currentTier] ?? 0;
@@ -415,6 +418,15 @@ export default function ForgeScreen(): JSX.Element {
     prepareForge(draft, "initial");
   }, [domain.length, draft, name, prepareForge]);
 
+  const handleInputFocus = useCallback((inputKey: string): void => {
+    const y = inputLayouts.current[inputKey];
+    if (y != null && scrollViewRef.current) {
+      setTimeout(() => {
+        scrollViewRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: true });
+      }, 120);
+    }
+  }, []);
+
   const handlePrimaryAction = useCallback((): void => {
     if (isLastStep) handleForge();
     else goNext();
@@ -432,30 +444,45 @@ export default function ForgeScreen(): JSX.Element {
     cancelForge();
   }, [cancelForge]);
 
-  const renderTextInput = useCallback((value: string, onChange: (text: string) => void, placeholder: string): JSX.Element => (
-    <TextInput
-      value={value}
-      onChangeText={onChange}
-      placeholder={placeholder}
-      placeholderTextColor={palette.muted}
-      style={[styles.input, styles.textArea]}
-      multiline
-      returnKeyType="done"
-    />
-  ), []);
+  const renderTextInput = useCallback((inputKey: string, value: string, onChange: (text: string) => void, placeholder: string): JSX.Element => (
+    <View
+      onLayout={(e): void => {
+        inputLayouts.current[inputKey] = e.nativeEvent.layout.y;
+      }}
+    >
+      <TextInput
+        value={value}
+        onChangeText={onChange}
+        onFocus={(): void => handleInputFocus(inputKey)}
+        placeholder={placeholder}
+        placeholderTextColor={palette.muted}
+        style={[styles.input, styles.textArea]}
+        multiline
+        blurOnSubmit={false}
+        returnKeyType="done"
+      />
+    </View>
+  ), [handleInputFocus]);
 
   const renderStepContent = useCallback((): JSX.Element => {
     if (currentStep.id === "name") {
       return (
-        <TextInput
-          value={name}
-          onChangeText={setName}
-          placeholder="Enter EAGOH name…"
-          placeholderTextColor={palette.muted}
-          style={styles.input}
-          returnKeyType="next"
-          onSubmitEditing={goNext}
-        />
+        <View
+          onLayout={(e): void => {
+            inputLayouts.current.name = e.nativeEvent.layout.y;
+          }}
+        >
+          <TextInput
+            value={name}
+            onChangeText={setName}
+            onFocus={(): void => handleInputFocus("name")}
+            placeholder="Enter EAGOH name…"
+            placeholderTextColor={palette.muted}
+            style={styles.input}
+            returnKeyType="next"
+            onSubmitEditing={goNext}
+          />
+        </View>
       );
     }
 
@@ -490,31 +517,39 @@ export default function ForgeScreen(): JSX.Element {
     }
 
     if (currentStep.id === "headwear") {
-      return renderTextInput(appearance.headwear ?? "", (text) => setAppearanceField("headwear", text), "e.g. a sleek futuristic helmet with neon visor, tactical hood with optic glow…");
+      return renderTextInput("headwear", appearance.headwear ?? "", (text) => setAppearanceField("headwear", text), "e.g. a sleek futuristic helmet with neon visor, tactical hood with optic glow…");
     }
 
     if (currentStep.id === "bodyGear") {
-      return renderTextInput(appearance.body ?? "", (text) => setAppearanceField("body", text), "e.g. form-fitting cyber armor with layered alloy plates, tactical jacket with utility seams…");
+      return renderTextInput("bodyGear", appearance.body ?? "", (text) => setAppearanceField("body", text), "e.g. form-fitting cyber armor with layered alloy plates, tactical jacket with utility seams…");
     }
 
     if (currentStep.id === "footwear") {
-      return renderTextInput(appearance.footwear ?? "", (text) => setAppearanceField("footwear", text), "e.g. reinforced tactical boots with carbon plating, futuristic cleats with neon soles…");
+      return renderTextInput("footwear", appearance.footwear ?? "", (text) => setAppearanceField("footwear", text), "e.g. reinforced tactical boots with carbon plating, futuristic cleats with neon soles…");
     }
 
     if (currentStep.id === "accessories") {
-      return renderTextInput(appearance.accessories ?? "", (text) => setAppearanceField("accessories", text), "e.g. premium diamond chains, oversized cybernetic wrist module, stacked metallic rings…");
+      return renderTextInput("accessories", appearance.accessories ?? "", (text) => setAppearanceField("accessories", text), "e.g. premium diamond chains, oversized cybernetic wrist module, stacked metallic rings…");
     }
 
     if (currentStep.id === "notes") {
       return (
-        <TextInput
-          value={styleNotes}
-          onChangeText={setStyleNotes}
-          placeholder="e.g. matte black finish, gold trim, holographic accents…"
-          placeholderTextColor={palette.muted}
-          style={[styles.input, styles.textArea]}
-          multiline
-        />
+        <View
+          onLayout={(e): void => {
+            inputLayouts.current.notes = e.nativeEvent.layout.y;
+          }}
+        >
+          <TextInput
+            value={styleNotes}
+            onChangeText={setStyleNotes}
+            onFocus={(): void => handleInputFocus("notes")}
+            placeholder="e.g. matte black finish, gold trim, holographic accents…"
+            placeholderTextColor={palette.muted}
+            style={[styles.input, styles.textArea]}
+            multiline
+            blurOnSubmit={false}
+          />
+        </View>
       );
     }
 
@@ -579,7 +614,7 @@ export default function ForgeScreen(): JSX.Element {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}>
         <View style={[styles.previewArea, { height: previewHeight }]}>
           <ForgePreview
             name={name}
@@ -632,10 +667,12 @@ export default function ForgeScreen(): JSX.Element {
         </View>
 
         <ScrollView
+          ref={scrollViewRef}
           style={styles.wizardScroll}
           contentContainerStyle={styles.wizardContent}
           showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
+          keyboardShouldPersistTaps="always"
+          keyboardDismissMode="interactive"
         >
           <View style={styles.wizardCard}>
             <LinearGradient colors={["rgba(54,245,255,0.08)", "rgba(10,18,30,0.78)"]} style={StyleSheet.absoluteFill} />

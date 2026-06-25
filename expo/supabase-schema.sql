@@ -1,9 +1,11 @@
--- EAGOH Supabase schema
--- Run once in the Supabase SQL editor to enable profile + EAGOH persistence.
+-- =============================================================================
+-- EAGOH Supabase Schema — production-ready, single-pass executable
+-- Run once in the Supabase SQL editor to bootstrap the entire data layer.
+-- =============================================================================
 
--- =====================================================================
--- PROFILES
--- =====================================================================
+-- =============================================================================
+-- PROFILES (extends auth.users)
+-- =============================================================================
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   username text,
@@ -40,9 +42,9 @@ create policy "profiles_self_update"
   on public.profiles for update
   using (auth.uid() = id);
 
--- =====================================================================
+-- =============================================================================
 -- EAGOHS (core identity)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.eagohs (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -64,7 +66,6 @@ create table if not exists public.eagohs (
   updated_at timestamptz default now()
 );
 
--- additive migrations for existing rows
 alter table public.eagohs add column if not exists domain text;
 alter table public.eagohs add column if not exists body_type text;
 alter table public.eagohs add column if not exists style_notes text;
@@ -86,9 +87,9 @@ create policy "eagohs_self_insert" on public.eagohs for insert with check (auth.
 create policy "eagohs_self_update" on public.eagohs for update using (auth.uid() = user_id);
 create policy "eagohs_self_delete" on public.eagohs for delete using (auth.uid() = user_id);
 
--- =====================================================================
+-- =============================================================================
 -- EAGOH CUSTOMIZATION (appearance map)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.eagoh_customization (
   eagoh_id uuid primary key references public.eagohs(id) on delete cascade,
   appearance jsonb default '{}'::jsonb,
@@ -104,9 +105,9 @@ create policy "eagoh_customization_self_all" on public.eagoh_customization
   using (exists (select 1 from public.eagohs e where e.id = eagoh_id and e.user_id = auth.uid()))
   with check (exists (select 1 from public.eagohs e where e.id = eagoh_id and e.user_id = auth.uid()));
 
--- =====================================================================
+-- =============================================================================
 -- EAGOH FANATIC TEAMS (many-to-many)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.eagoh_fanatic_teams (
   eagoh_id uuid not null references public.eagohs(id) on delete cascade,
   team_id text not null,
@@ -125,9 +126,9 @@ create policy "eagoh_fanatic_teams_self_all" on public.eagoh_fanatic_teams
   using (exists (select 1 from public.eagohs e where e.id = eagoh_id and e.user_id = auth.uid()))
   with check (exists (select 1 from public.eagohs e where e.id = eagoh_id and e.user_id = auth.uid()));
 
--- =====================================================================
+-- =============================================================================
 -- EAGOH LABS (selected labs per EAGOH)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.eagoh_labs (
   eagoh_id uuid not null references public.eagohs(id) on delete cascade,
   lab_id text not null,
@@ -146,16 +147,16 @@ create policy "eagoh_labs_self_all" on public.eagoh_labs
   using (exists (select 1 from public.eagohs e where e.id = eagoh_id and e.user_id = auth.uid()))
   with check (exists (select 1 from public.eagohs e where e.id = eagoh_id and e.user_id = auth.uid()));
 
--- =====================================================================
+-- =============================================================================
 -- EDGE TRANSACTIONS (wallet history)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.edge_transactions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  kind text not null,                  -- 'deduction' | 'addition' | 'rollover' | 'purchase'
-  reason text not null,                -- 'quick_check' | 'observation' | 'marketplace' | 'customization' | 'subscription_allocation' | 'rollover' | 'purchase' | 'manual'
-  amount int not null,                 -- positive integer; sign implied by kind
-  bucket text not null,                -- 'subscription' | 'purchased' | 'mixed'
+  kind text not null,
+  reason text not null,
+  amount int not null,
+  bucket text not null,
   from_subscription int default 0,
   from_purchased int default 0,
   balance_subscription_after int default 0,
@@ -177,14 +178,14 @@ create policy "edge_transactions_self_select" on public.edge_transactions
 create policy "edge_transactions_self_insert" on public.edge_transactions
   for insert with check (auth.uid() = user_id);
 
--- =====================================================================
+-- =============================================================================
 -- EAGOH IMAGE GENERATIONS (history of forge renders)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.eagoh_image_generations (
   id uuid primary key default gen_random_uuid(),
   eagoh_id uuid not null references public.eagohs(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
-  mode text not null,                  -- 'initial' | 'full_reforge' | 'partial_reforge'
+  mode text not null,
   prompt text not null,
   image_url text not null,
   thumb_url text,
@@ -207,9 +208,9 @@ create policy "eagoh_image_generations_self_select" on public.eagoh_image_genera
 create policy "eagoh_image_generations_self_insert" on public.eagoh_image_generations
   for insert with check (auth.uid() = user_id);
 
--- =====================================================================
+-- =============================================================================
 -- OPEN INTELLIGENCE (user-submitted observation entries per EAGOH)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.open_intelligence (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -242,9 +243,9 @@ create policy "oi_self_select" on public.open_intelligence
 create policy "oi_self_insert" on public.open_intelligence
   for insert with check (auth.uid() = user_id);
 
--- =====================================================================
+-- =============================================================================
 -- FACTIONS (intelligence alliances)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.factions (
   id uuid primary key default gen_random_uuid(),
   commander_id uuid not null references auth.users(id) on delete cascade,
@@ -260,7 +261,7 @@ create table if not exists public.factions (
   influence_score int not null default 0,
   created_at timestamptz default now()
 );
--- additive migrations
+
 alter table public.factions add column if not exists motto text;
 alter table public.factions add column if not exists fanatic_team_focus text;
 
@@ -285,9 +286,9 @@ create policy "factions_commander_update" on public.factions
 create policy "factions_commander_delete" on public.factions
   for delete using (auth.uid() = commander_id);
 
--- =====================================================================
+-- =============================================================================
 -- FACTION MEMBERS (roles and statuses)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.faction_members (
   id uuid primary key default gen_random_uuid(),
   faction_id uuid not null references public.factions(id) on delete cascade,
@@ -326,9 +327,9 @@ create policy "fm_commander_delete" on public.faction_members
     )
   );
 
--- =====================================================================
+-- =============================================================================
 -- FACTION INVITES
--- =====================================================================
+-- =============================================================================
 create table if not exists public.faction_invites (
   id uuid primary key default gen_random_uuid(),
   faction_id uuid not null references public.factions(id) on delete cascade,
@@ -363,9 +364,9 @@ create policy "fi_commander_insert" on public.faction_invites
 create policy "fi_invitee_update" on public.faction_invites
   for update using (auth.uid() = invitee_id);
 
--- =====================================================================
+-- =============================================================================
 -- FACTION ACTIVITY (event log)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.faction_activity (
   id uuid primary key default gen_random_uuid(),
   faction_id uuid not null references public.factions(id) on delete cascade,
@@ -388,9 +389,9 @@ create policy "fa_select_all" on public.faction_activity
 create policy "fa_self_insert" on public.faction_activity
   for insert with check (auth.uid() = user_id);
 
--- =====================================================================
+-- =============================================================================
 -- FACTION SHARED INTELLIGENCE (links OI entries to factions)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.faction_shared_intelligence (
   id uuid primary key default gen_random_uuid(),
   faction_id uuid not null references public.factions(id) on delete cascade,
@@ -422,9 +423,9 @@ create policy "fsi_commander_delete" on public.faction_shared_intelligence
     )
   );
 
--- =====================================================================
+-- =============================================================================
 -- FACTION SLOT PURCHASES (expansion history)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.faction_slot_purchases (
   id uuid primary key default gen_random_uuid(),
   faction_id uuid not null references public.factions(id) on delete cascade,
@@ -447,9 +448,9 @@ create policy "fsp_select_all" on public.faction_slot_purchases
 create policy "fsp_self_insert" on public.faction_slot_purchases
   for insert with check (auth.uid() = user_id);
 
--- =====================================================================
+-- =============================================================================
 -- MARKETPLACE LISTINGS (EAGOHs listed for sync sale by vendors)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.marketplace_listings (
   id uuid primary key default gen_random_uuid(),
   vendor_id uuid not null references auth.users(id) on delete cascade,
@@ -487,9 +488,9 @@ create policy "ml_vendor_update" on public.marketplace_listings
 create policy "ml_vendor_delete" on public.marketplace_listings
   for delete using (auth.uid() = vendor_id);
 
--- =====================================================================
+-- =============================================================================
 -- MARKETPLACE SYNC PURCHASES
--- =====================================================================
+-- =============================================================================
 create table if not exists public.marketplace_sync_purchases (
   id uuid primary key default gen_random_uuid(),
   listing_id uuid not null references public.marketplace_listings(id) on delete cascade,
@@ -521,9 +522,9 @@ create policy "msp_self_select" on public.marketplace_sync_purchases
 create policy "msp_self_insert" on public.marketplace_sync_purchases
   for insert with check (auth.uid() = buyer_id);
 
--- =====================================================================
+-- =============================================================================
 -- MARKETPLACE VENDOR STATS
--- =====================================================================
+-- =============================================================================
 create table if not exists public.marketplace_vendor_stats (
   vendor_id uuid primary key references auth.users(id) on delete cascade,
   total_listings int default 0,
@@ -553,9 +554,9 @@ create policy "mvs_select_all" on public.marketplace_vendor_stats
 create policy "mvs_vendor_insert" on public.marketplace_vendor_stats
   for insert with check (auth.uid() = vendor_id);
 
--- =====================================================================
+-- =============================================================================
 -- SPONSORED BANNERS (active banner placements)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.sponsored_banners (
   id uuid primary key default gen_random_uuid(),
   purchaser_id uuid not null references auth.users(id) on delete cascade,
@@ -589,9 +590,9 @@ create policy "sb_purchaser_insert" on public.sponsored_banners
 create policy "sb_purchaser_select_all" on public.sponsored_banners
   for select using (auth.uid() = purchaser_id);
 
--- =====================================================================
+-- =============================================================================
 -- BANNER PURCHASES (purchase history)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.banner_purchases (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -619,9 +620,9 @@ create policy "bp_self_select" on public.banner_purchases
 create policy "bp_self_insert" on public.banner_purchases
   for insert with check (auth.uid() = user_id);
 
--- =====================================================================
+-- =============================================================================
 -- BANNER ANALYTICS (impressions, taps, tap-and-holds per banner)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.banner_analytics (
   id uuid primary key default gen_random_uuid(),
   banner_id uuid not null references public.sponsored_banners(id) on delete cascade,
@@ -653,9 +654,9 @@ create policy "ba_owner_select" on public.banner_analytics
     )
   );
 
--- =====================================================================
+-- =============================================================================
 -- EAGOH REPUTATION (per-EAGOH reputation score with component breakdown)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.eagoh_reputation (
   eagoh_id uuid primary key references public.eagohs(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -695,9 +696,9 @@ create policy "er_owner_insert" on public.eagoh_reputation
 create policy "er_owner_update" on public.eagoh_reputation
   for update using (auth.uid() = user_id);
 
--- =====================================================================
+-- =============================================================================
 -- EAGOH RANK HISTORY (tracks rank promotions/demotions over time)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.eagoh_rank_history (
   id uuid primary key default gen_random_uuid(),
   eagoh_id uuid not null references public.eagohs(id) on delete cascade,
@@ -723,9 +724,9 @@ create policy "erh_select_all" on public.eagoh_rank_history
 create policy "erh_owner_insert" on public.eagoh_rank_history
   for insert with check (auth.uid() = user_id);
 
--- =====================================================================
+-- =============================================================================
 -- EAGOH BADGES (earned profile badges per EAGOH)
--- =====================================================================
+-- =============================================================================
 create table if not exists public.eagoh_badges (
   id uuid primary key default gen_random_uuid(),
   eagoh_id uuid not null references public.eagohs(id) on delete cascade,
@@ -751,118 +752,9 @@ create policy "eb_select_all" on public.eagoh_badges
 create policy "eb_owner_insert" on public.eagoh_badges
   for insert with check (auth.uid() = user_id);
 
--- =====================================================================
+-- =============================================================================
 -- STORAGE BUCKET: eagoh-renders (public read, owner write)
--- Optional: rendered images are already CDN-hosted; the bucket is here
--- for projects that want to mirror copies into Supabase Storage.
--- =====================================================================
+-- =============================================================================
 insert into storage.buckets (id, name, public)
   values ('eagoh-renders', 'eagoh-renders', true)
   on conflict (id) do nothing;
-
--- =====================================================================
--- MARKETPLACE LISTINGS (EAGOHs listed for sync sale by vendors)
--- =====================================================================
-create table if not exists public.marketplace_listings (
-  id uuid primary key default gen_random_uuid(),
-  vendor_id uuid not null references auth.users(id) on delete cascade,
-  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
-  active boolean not null default true,
-  price_25_per_day int not null default 0,
-  price_50_per_day int not null default 0,
-  price_75_per_day int not null default 0,
-  price_100_per_day int not null default 0,
-  description text,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
-
-create index if not exists ml_vendor_idx on public.marketplace_listings(vendor_id);
-create index if not exists ml_eagoh_idx on public.marketplace_listings(eagoh_id);
-create index if not exists ml_active_idx on public.marketplace_listings(active) where active = true;
-
--- Allow anyone to browse active listings, but only vendors can modify theirs.
-alter table public.marketplace_listings enable row level security;
-
-drop policy if exists "ml_select_all" on public.marketplace_listings;
-drop policy if exists "ml_vendor_insert" on public.marketplace_listings;
-drop policy if exists "ml_vendor_update" on public.marketplace_listings;
-drop policy if exists "ml_vendor_delete" on public.marketplace_listings;
-
-create policy "ml_select_all" on public.marketplace_listings
-  for select using (active = true or auth.uid() = vendor_id);
-
-create policy "ml_vendor_insert" on public.marketplace_listings
-  for insert with check (auth.uid() = vendor_id);
-
-create policy "ml_vendor_update" on public.marketplace_listings
-  for update using (auth.uid() = vendor_id);
-
-create policy "ml_vendor_delete" on public.marketplace_listings
-  for delete using (auth.uid() = vendor_id);
-
--- =====================================================================
--- MARKETPLACE SYNC PURCHASES (buyer syncs vendor EAGOH)
--- =====================================================================
-create table if not exists public.marketplace_sync_purchases (
-  id uuid primary key default gen_random_uuid(),
-  listing_id uuid not null references public.marketplace_listings(id) on delete cascade,
-  buyer_id uuid not null references auth.users(id) on delete cascade,
-  vendor_id uuid not null references auth.users(id) on delete cascade,
-  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
-  sync_level text not null check (sync_level in ('25%', '50%', '75%', '100%')),
-  days int not null check (days between 1 and 5),
-  edge_cost int not null,
-  started_at timestamptz default now(),
-  expires_at timestamptz not null,
-  active boolean not null default true,
-  created_at timestamptz default now()
-);
-
-create index if not exists msp_buyer_idx on public.marketplace_sync_purchases(buyer_id, created_at desc);
-create index if not exists msp_vendor_idx on public.marketplace_sync_purchases(vendor_id, created_at desc);
-create index if not exists msp_expires_idx on public.marketplace_sync_purchases(expires_at) where active = true;
-create index if not exists msp_active_idx on public.marketplace_sync_purchases(buyer_id, eagoh_id, active);
-
-alter table public.marketplace_sync_purchases enable row level security;
-
-drop policy if exists "msp_self_select" on public.marketplace_sync_purchases;
-drop policy if exists "msp_self_insert" on public.marketplace_sync_purchases;
-
-create policy "msp_self_select" on public.marketplace_sync_purchases
-  for select using (auth.uid() = buyer_id or auth.uid() = vendor_id);
-
-create policy "msp_self_insert" on public.marketplace_sync_purchases
-  for insert with check (auth.uid() = buyer_id);
-
--- =====================================================================
--- MARKETPLACE VENDOR STATS (aggregated vendor metrics)
--- =====================================================================
-create table if not exists public.marketplace_vendor_stats (
-  vendor_id uuid primary key references auth.users(id) on delete cascade,
-  total_listings int default 0,
-  active_listings int default 0,
-  total_sales int default 0,
-  total_edge_earned int default 0,
-  edge_earned_this_month int default 0,
-  edge_earned_last_month int default 0,
-  month_key text not null default '',
-  sync_success_score int default 0,
-  avg_quality_score int default 0,
-  rank text default 'UNRANKED',
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
-
-create index if not exists mvs_rank_idx on public.marketplace_vendor_stats(rank);
-
-alter table public.marketplace_vendor_stats enable row level security;
-
-drop policy if exists "mvs_select_all" on public.marketplace_vendor_stats;
-drop policy if exists "mvs_vendor_insert" on public.marketplace_vendor_stats;
-
-create policy "mvs_select_all" on public.marketplace_vendor_stats
-  for select using (true);
-
-create policy "mvs_vendor_insert" on public.marketplace_vendor_stats
-  for insert with check (auth.uid() = vendor_id);

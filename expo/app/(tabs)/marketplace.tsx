@@ -1290,12 +1290,12 @@ export default function MarketplaceScreen(): JSX.Element {
         {(true) && (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabRail}>
             {([
-              { key: "browse", label: "Browse" },
+              { key: "browse", label: "Marketplace" },
               { key: "rankings", label: "Rankings" },
               ...(isPaid ? [
                 { key: "my-listings" as const, label: "My Listings" },
                 { key: "my-syncs" as const, label: "Active Syncs" },
-                { key: "my-purchases" as const, label: "History" },
+                { key: "my-purchases" as const, label: "My Purchases" },
               ] : []),
             ]).map((t) => (
               <Pressable
@@ -1336,7 +1336,7 @@ export default function MarketplaceScreen(): JSX.Element {
           </ScrollView>
         )}
 
-        {/* Filters (only in browse) */}
+        {/* Filters (only in marketplace browse) */}
         {tab === "browse" && (
           <FilterPanel
             filters={filters}

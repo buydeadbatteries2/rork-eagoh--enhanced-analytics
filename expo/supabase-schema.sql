@@ -35,7 +35,9 @@ alter table public.profiles enable row level security;
 drop policy if exists "profiles_self_select" on public.profiles;
 drop policy if exists "profiles_self_insert" on public.profiles;
 drop policy if exists "profiles_self_update" on public.profiles;
+drop policy if exists "profiles_marketplace_select" on public.profiles;
 
+-- Owner can read/write their own profile
 create policy "profiles_self_select"
   on public.profiles for select
   using (auth.uid() = id);
@@ -47,6 +49,15 @@ create policy "profiles_self_insert"
 create policy "profiles_self_update"
   on public.profiles for update
   using (auth.uid() = id);
+
+-- Marketplace: anyone can read basic profile info for users who are active vendors
+create policy "profiles_marketplace_select" on public.profiles
+  for select using (
+    exists (
+      select 1 from public.marketplace_listings ml
+      where ml.vendor_id = profiles.id and ml.active = true
+    )
+  );
 
 -- ---------------------------------------------------------------------------
 -- Trigger: auto-create public.profiles when a new auth.users row is inserted
@@ -134,11 +145,22 @@ drop policy if exists "eagohs_self_select" on public.eagohs;
 drop policy if exists "eagohs_self_insert" on public.eagohs;
 drop policy if exists "eagohs_self_update" on public.eagohs;
 drop policy if exists "eagohs_self_delete" on public.eagohs;
+drop policy if exists "eagohs_marketplace_select" on public.eagohs;
 
+-- Owner can read/write their own EAGOHs
 create policy "eagohs_self_select" on public.eagohs for select using (auth.uid() = user_id);
 create policy "eagohs_self_insert" on public.eagohs for insert with check (auth.uid() = user_id);
 create policy "eagohs_self_update" on public.eagohs for update using (auth.uid() = user_id);
 create policy "eagohs_self_delete" on public.eagohs for delete using (auth.uid() = user_id);
+
+-- Marketplace: anyone can read EAGOHs that have an active listing (public browsing)
+create policy "eagohs_marketplace_select" on public.eagohs
+  for select using (
+    exists (
+      select 1 from public.marketplace_listings ml
+      where ml.eagoh_id = eagohs.id and ml.active = true
+    )
+  );
 
 -- =============================================================================
 -- EAGOH CUSTOMIZATION (appearance map)

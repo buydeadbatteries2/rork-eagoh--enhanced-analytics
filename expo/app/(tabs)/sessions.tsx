@@ -65,7 +65,7 @@ import { useAuth } from "@/providers/AuthProvider";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useEagohs } from "@/providers/EagohProvider";
-import { INTELLIGENCE_DOMAINS, getDomainColor } from "@/services/domains";
+import { INTELLIGENCE_DOMAINS, getDomainColor, normalizeDomainId } from "@/services/domains";
 import { guardDomainRequest } from "@/services/domainGuard";
 import { getQuickCheckCost, runQuickCheck, runQuickAnalytics, runStandardSession, runDeepDive, type AnalystRequestKind, type AnalystErrorCode } from "@/services/analyst";
 import type { EagohRecord } from "@/services/eagohs";
@@ -73,8 +73,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ENTRY_TYPE_EDGE_COST,
   ENTRY_TYPE_LIMITS,
-  OBSERVATION_TAGS,
-  ALL_TAGS,
+  getTagsForDomain,
+  getAllTagsForDomain,
   computeQualityScore,
   influenceLabel,
   listEntriesForEagoh,
@@ -714,8 +714,21 @@ function OpenIntelSession({
 
   const selectedEagoh = useMemo(() => eagohs.find((e) => e.id === selectedEagohId), [eagohs, selectedEagohId]);
   const { effectiveSubscriptionTier: userTier } = useProfile();
-  const domain = useMemo(() => INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh?.domain), [selectedEagoh]);
+  const rawDomain = selectedEagoh?.domain?.trim() || "sports";
+  const currentDomain = normalizeDomainId(rawDomain);
+  const domain = useMemo(() => INTELLIGENCE_DOMAINS.find((d) => d.id === currentDomain), [currentDomain]);
   const domainTone = domain ? toneColor(domain.tone) : palette.cyan;
+
+  // Domain-aware tags — reload when EAGOH domain changes
+  const domainTags = useMemo(() => getTagsForDomain(currentDomain), [currentDomain]);
+  const domainAllTags = useMemo(() => getAllTagsForDomain(currentDomain), [currentDomain]);
+
+  // Reset tag selections when the selected EAGOH changes
+  useEffect(() => {
+    setSelectedTag("");
+    setCustomTag("");
+    setOpenTagCat(null);
+  }, [selectedEagohId]);
 
   const limit = ENTRY_TYPE_LIMITS[entryType];
   const edgeCost = ENTRY_TYPE_EDGE_COST[entryType];
@@ -890,7 +903,7 @@ function OpenIntelSession({
         <View style={styles.oiBlock}>
           <Text style={styles.oiLabel}>TAG</Text>
           <View style={styles.oiTagList}>
-            {OBSERVATION_TAGS.map((cat) => {
+            {domainTags.map((cat) => {
               const isOpen = openTagCat === cat.id;
               return (
                 <View key={cat.id}>
@@ -1083,7 +1096,7 @@ function OpenIntelSession({
             <ActivityIndicator color={palette.cyan} style={styles.oiFeedLoader} />
           ) : feedQuery.data && feedQuery.data.length > 0 ? (
             feedQuery.data.map((entry) => {
-              const tagLabel = ALL_TAGS.find((t) => t.id === entry.tag)?.label ?? entry.tag.replace("custom:", "");
+              const tagLabel = domainAllTags.find((t) => t.id === entry.tag)?.label ?? entry.tag.replace("custom:", "");
               const eInfLabel = influenceLabel(entry.influence_score);
               const eInfColor = eInfLabel === "high" ? palette.success : eInfLabel === "medium" ? palette.gold : palette.muted;
               const eTypeLabel = entry.entry_type === "quick_observation" ? "Quick" : entry.entry_type === "basic_deep_entry" ? "Basic" : "Advanced";

@@ -21,7 +21,7 @@ import { palette } from "@/constants/colors";
 import { useEagohs } from "@/providers/EagohProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useProfile } from "@/providers/ProfileProvider";
-import { INTELLIGENCE_DOMAINS, getDomain } from "@/services/domains";
+import { INTELLIGENCE_DOMAINS, getDomain, normalizeDomainId } from "@/services/domains";
 import type { EagohRecord } from "@/services/eagohs";
 import {
   CONFIDENCE_LEVELS,
@@ -262,10 +262,19 @@ const TagSelector = memo(function TagSelector({
   const tags = useMemo(() => getTagsForDomain(domainId), [domainId]);
   const allTags = useMemo(() => getAllTagsForDomain(domainId), [domainId]);
 
-  // Load recent tags
+  // Reset accordion & search when domain changes
   useEffect(() => {
-    getRecentTags().then(setRecentTags);
-  }, []);
+    setOpenCategories({});
+    setSearchQuery("");
+  }, [domainId]);
+
+  // Load recent tags (filtered to current domain)
+  useEffect(() => {
+    getRecentTags().then((allRecent) => {
+      const allTagIds = new Set(allTags.map((t) => t.id));
+      setRecentTags(allRecent.filter((id) => allTagIds.has(id)));
+    });
+  }, [allTags]);
 
   const toggleCategory = useCallback((id: string): void => {
     setOpenCategories((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -713,8 +722,15 @@ export default function OpenIntelligenceScreen(): JSX.Element {
     }
   }, [eagohs, selectedEagohId]);
 
+  // Reset tag selections when the selected EAGOH changes
+  useEffect(() => {
+    setSelectedSubtags([]);
+    setCustomTags([]);
+  }, [selectedEagohId]);
+
   const selectedEagoh = useMemo(() => eagohs.find((e) => e.id === selectedEagohId), [eagohs, selectedEagohId]);
-  const currentDomain = selectedEagoh?.domain ?? "sports";
+  const rawDomain = selectedEagoh?.domain ?? "sports";
+  const currentDomain = normalizeDomainId(rawDomain);
   const domain = selectedEagoh ? getDomain(selectedEagoh.domain ?? "") : undefined;
   const domainTone = domain ? toneColor(domain.tone) : palette.muted;
 

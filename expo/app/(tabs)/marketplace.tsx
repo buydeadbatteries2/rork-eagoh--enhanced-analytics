@@ -312,9 +312,9 @@ const ListingCard = memo(function ListingCard({
   const imageUrl = eagoh?.image_thumb_url ?? eagoh?.image_url ?? null;
 
   // Fixed card width for horizontal carousel — taller rectangular shape
-  const cardWidth = 300;
-  const imageWidth = cardWidth * 0.48; // 48% for larger EAGOH image
-  const cardHeight = Math.max(210, imageWidth * 1.62);
+  const cardWidth = 320;
+  const imageWidth = cardWidth * 0.40; // 40% for EAGOH image
+  const cardHeight = 260;
 
   const tone: RenderTone = eagohRank === "Syndicate Prime" || eagohRank === "Oracle" ? "gold" : eagohRank === "Diamond" ? "cyan" : "violet";
 
@@ -360,7 +360,7 @@ const ListingCard = memo(function ListingCard({
         </View>
       </View>
 
-      {/* ── Right: Info (52%) ── */}
+      {/* ── Right: Info (60%) ── */}
       <View style={styles.infoSection}>
         {/* Name + rank */}
         <View style={styles.nameRow}>
@@ -425,8 +425,8 @@ const ListingCard = memo(function ListingCard({
           )}
         </View>
 
-        {/* Price + Buy button */}
-        <View style={styles.priceButtonRow}>
+        {/* Price + Buy button — stacked vertically */}
+        <View style={styles.priceButtonCol}>
           <Text style={styles.pricePreview}>
             From {minPrice ?? "—"} EC/day
           </Text>
@@ -438,7 +438,7 @@ const ListingCard = memo(function ListingCard({
               pressed && styles.pressed,
             ]}
           >
-            <Tag color={isPaid ? palette.void : palette.muted} size={12} />
+            <Tag color={isPaid ? palette.void : palette.muted} size={13} />
             <Text style={[styles.buyButtonText, !isPaid && styles.buyButtonTextDisabled]}>
               {isPaid ? "Purchase" : "Browse"}
             </Text>
@@ -1761,7 +1761,7 @@ const styles = StyleSheet.create({
   },
   cardGlow: { position: "absolute", width: 80, height: 80, borderRadius: 40, opacity: 0.10, right: -20, top: -20 },
 
-  // Image Section — left 40%, full card height
+  // Image Section — left 40%, fills full card height
   imageSection: {
     borderRadius: 5,
     overflow: "hidden",
@@ -1769,13 +1769,13 @@ const styles = StyleSheet.create({
     borderColor: palette.line,
     backgroundColor: "#03060B",
   },
-  // ImageWrapper — centers the EAGOH with tight fit for maximum visibility
+  // ImageWrapper — centers the EAGOH, minimal padding so image fills its section
   imageWrapper: {
     flex: 1,
     justifyContent: "center" as const,
     alignItems: "center" as const,
-    paddingHorizontal: 8,
-    paddingVertical: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 18,
     overflow: "hidden" as const,
   },
   // Radial spotlight glow behind the EAGOH character
@@ -1809,7 +1809,7 @@ const styles = StyleSheet.create({
   },
   rankPillSmallText: { fontSize: 8, fontWeight: "900" },
 
-  // Info Section — right 60%, fills remaining card width
+  // Info Section — right 60%, fills remaining card width, content spaced top-to-bottom
   infoSection: {
     flex: 1,
     padding: 12,
@@ -1844,16 +1844,13 @@ const styles = StyleSheet.create({
   },
   vendorText: { color: palette.muted, fontSize: 11, fontWeight: "800" },
 
-  // Price + Buy button row at the bottom of the info section
-  priceButtonRow: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    justifyContent: "space-between" as const,
-    gap: 8,
+  // Price + Buy button — stacked vertically, button under price text
+  priceButtonCol: {
+    gap: 6,
   },
   pricePreview: { color: palette.gold, fontSize: 13, fontWeight: "900" },
   buyButton: {
-    minHeight: 34,
+    minHeight: 40,
     borderRadius: 5,
     backgroundColor: palette.cyan,
     flexDirection: "row",
@@ -1861,6 +1858,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 5,
     paddingHorizontal: 14,
+    alignSelf: "stretch" as const,
   },
   buyButtonDisabled: { backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: palette.line },
   buyButtonText: { color: palette.void, fontSize: 12, fontWeight: "900" },

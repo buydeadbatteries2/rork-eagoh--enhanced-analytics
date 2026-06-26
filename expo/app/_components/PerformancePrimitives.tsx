@@ -91,7 +91,7 @@ const styles = StyleSheet.create({
   compact: { width: 104, minHeight: 128, borderRadius: 5 },
   banner: { width: 116, minHeight: 136, borderRadius: 5 },
   profile: { width: 150, height: 230, borderRadius: 5 },
-  card: { width: "100%", aspectRatio: 1, borderRadius: 5 },
+  card: { width: "100%", aspectRatio: 0.75, borderRadius: 5 },
   ring: { position: "absolute", width: "62%", aspectRatio: 1, borderRadius: 5, borderWidth: 1, opacity: 0.72 },
   label: { position: "absolute", bottom: 12, fontSize: 11, fontWeight: "900", letterSpacing: 1.2 },
 });

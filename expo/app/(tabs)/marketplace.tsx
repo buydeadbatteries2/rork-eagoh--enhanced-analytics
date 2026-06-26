@@ -311,19 +311,18 @@ const ListingCard = memo(function ListingCard({
   const rkColor = rankColor(eagohRank);
   const imageUrl = eagoh?.image_thumb_url ?? eagoh?.image_url ?? null;
 
-  // Dynamic sizing — card fills screen width, image area is 40%
-  const { width: screenWidth } = Dimensions.get("window");
-  const cardWidth = screenWidth - 32;
-  const imageWidth = cardWidth * 0.40;
-  const cardHeight = Math.max(200, imageWidth * 1.55); // taller, rectangular shape
+  // Fixed card width for horizontal carousel — taller rectangular shape
+  const cardWidth = 300;
+  const imageWidth = cardWidth * 0.48; // 48% for larger EAGOH image
+  const cardHeight = Math.max(210, imageWidth * 1.62);
 
   const tone: RenderTone = eagohRank === "Syndicate Prime" || eagohRank === "Oracle" ? "gold" : eagohRank === "Diamond" ? "cyan" : "violet";
 
   return (
-    <View style={[styles.listingCard, { height: cardHeight }]}>
+    <View style={[styles.listingCard, { width: cardWidth, height: cardHeight }]}>
       <View style={[styles.cardGlow, { backgroundColor: rkColor }]} />
 
-      {/* ── Left: EAGOH Image (40%) ── */}
+      {/* ── Left: EAGOH Image (48%) ── */}
       <View style={[styles.imageSection, { width: imageWidth }]}>
         <LinearGradient
           colors={["#03060B", `${rkColor}14`, "#050D18"]}
@@ -333,8 +332,8 @@ const ListingCard = memo(function ListingCard({
           style={[
             styles.radialSpotlight,
             {
-              width: imageWidth * 0.72,
-              height: imageWidth * 0.72,
+              width: imageWidth * 0.85,
+              height: imageWidth * 0.85,
               backgroundColor: `${rkColor}10`,
             },
           ]}
@@ -347,6 +346,7 @@ const ListingCard = memo(function ListingCard({
             imageUrl={imageUrl}
             contentFit="contain"
             size="card"
+            showLabel={false}
           />
         </View>
 
@@ -360,7 +360,7 @@ const ListingCard = memo(function ListingCard({
         </View>
       </View>
 
-      {/* ── Right: Info (60%) ── */}
+      {/* ── Right: Info (52%) ── */}
       <View style={styles.infoSection}>
         {/* Name + rank */}
         <View style={styles.nameRow}>
@@ -1351,6 +1351,17 @@ export default function MarketplaceScreen(): JSX.Element {
     [filters, setFilters, filterMeta, tab, activeSyncs, isPaid],
   );
 
+  // Group listings by domain, sorted by most listings first
+  const domainGroups = useMemo(() => {
+    const groups = new Map<string, EnrichedListing[]>();
+    for (const l of listings) {
+      const dom = l.eagoh?.domain ?? l.eagoh?.sport ?? "other";
+      if (!groups.has(dom)) groups.set(dom, []);
+      groups.get(dom)!.push(l);
+    }
+    return [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+  }, [listings]);
+
   const renderListings = () => {
     if (tab === "browse") {
       if (loading) {
@@ -1375,15 +1386,30 @@ export default function MarketplaceScreen(): JSX.Element {
       }
 
       return (
-        <View style={styles.listingsWrap}>
-          {listings.map((item) => (
-            <ListingCard
-              key={item.id}
-              item={item}
-              isPaid={isPaid}
-              onPurchase={(l) => setPurchaseModal(l)}
-              reputation={repMap.get(item.eagoh_id)}
-            />
+        <View style={styles.domainCarouselsWrap}>
+          {domainGroups.map(([domain, domainListings]) => (
+            <View key={domain} style={styles.carouselSection}>
+              <View style={styles.carouselSectionHeader}>
+                <Text style={styles.carouselSectionTitle}>{domainLabel(domain)}</Text>
+                <Text style={styles.carouselSectionCount}>{domainListings.length}</Text>
+              </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.carouselRail}
+                {...HORIZONTAL_LIST_PERFORMANCE_PROPS}
+              >
+                {domainListings.map((item) => (
+                  <ListingCard
+                    key={item.id}
+                    item={item}
+                    isPaid={isPaid}
+                    onPurchase={(l) => setPurchaseModal(l)}
+                    reputation={repMap.get(item.eagoh_id)}
+                  />
+                ))}
+              </ScrollView>
+            </View>
           ))}
         </View>
       );
@@ -1721,8 +1747,9 @@ const styles = StyleSheet.create({
   },
   createListingText: { color: palette.cyan, fontSize: 12, fontWeight: "900" },
 
-  // Listing Cards — horizontal layout: image left 40%, info right 60%
+  // Listing Cards — horizontal layout: image left 48%, info right 52%
   listingsWrap: { gap: 12 },
+  domainCarouselsWrap: { gap: 22, paddingBottom: 8 },
   listingCard: {
     borderRadius: 5,
     backgroundColor: "rgba(14,24,37,0.84)",
@@ -1730,6 +1757,7 @@ const styles = StyleSheet.create({
     borderColor: palette.line,
     overflow: "hidden",
     flexDirection: "row" as const,
+    flexShrink: 0,
   },
   cardGlow: { position: "absolute", width: 80, height: 80, borderRadius: 40, opacity: 0.10, right: -20, top: -20 },
 
@@ -1741,13 +1769,13 @@ const styles = StyleSheet.create({
     borderColor: palette.line,
     backgroundColor: "#03060B",
   },
-  // ImageWrapper — centers the EAGOH with generous breathing room
+  // ImageWrapper — centers the EAGOH with tight fit for maximum visibility
   imageWrapper: {
     flex: 1,
     justifyContent: "center" as const,
     alignItems: "center" as const,
-    paddingHorizontal: 16,
-    paddingVertical: 20,
+    paddingHorizontal: 8,
+    paddingVertical: 12,
     overflow: "hidden" as const,
   },
   // Radial spotlight glow behind the EAGOH character

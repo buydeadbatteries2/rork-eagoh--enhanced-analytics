@@ -16,6 +16,8 @@ type OptimizedEagohImageProps = {
   imageUrl?: string | null;
   /** Image fit mode — "contain" keeps the full EAGOH visible without clipping. Defaults to "cover". */
   contentFit?: ImageContentFit;
+  /** Show the name label overlay on the image. Defaults to true. */
+  showLabel?: boolean;
 };
 
 export const LIST_PERFORMANCE_PROPS = {
@@ -43,7 +45,7 @@ export function renderToneColor(tone: RenderTone): string {
 }
 
 /** Lightweight image render. Displays the real EAGOH image when imageUrl is provided, otherwise shows a decorative cybernetic placeholder. */
-export const OptimizedEagohImage = memo(function OptimizedEagohImage({ tone, label, size = "compact", highResolution = false, imageUrl, contentFit = "cover" }: OptimizedEagohImageProps): JSX.Element {
+export const OptimizedEagohImage = memo(function OptimizedEagohImage({ tone, label, size = "compact", highResolution = false, imageUrl, contentFit = "cover", showLabel = true }: OptimizedEagohImageProps): JSX.Element {
   const color = renderToneColor(tone);
   const dimensions = size === "profile" ? styles.profile : size === "banner" ? styles.banner : size === "card" ? styles.card : styles.compact;
   const fallbackUri = useMemo<string>(() => {
@@ -74,7 +76,9 @@ export const OptimizedEagohImage = memo(function OptimizedEagohImage({ tone, lab
       {hasRealImage && (
         <>
           <LinearGradient colors={["rgba(3,6,11,0.0)", "rgba(3,6,11,0.15)"]} style={StyleSheet.absoluteFill} />
-          <Text style={[styles.label, { color: "rgba(255,255,255,0.85)" }]}>{label}</Text>
+          {showLabel && (
+            <Text style={[styles.label, { color: "rgba(255,255,255,0.85)" }]}>{label}</Text>
+          )}
         </>
       )}
       <View style={[styles.ring, { borderColor: color, opacity: hasRealImage ? 0.35 : 0.72 }]} />

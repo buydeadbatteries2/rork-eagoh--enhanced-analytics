@@ -748,10 +748,19 @@ const FALLBACK_TAGS: TagCategory[] = [
 
 /**
  * Get observation tag categories for a given intelligence domain.
- * Returns the Sports taxonomy (default) when domain is empty or unknown.
+ * Normalises the domain ID before lookup so that any variant (case,
+ * separators, labels, snake_case) resolves to the correct taxonomy.
+ * Returns the Sports taxonomy only when the domain is genuinely
+ * empty or unrecognised.
  */
 export function getObservationTags(domainId: string): TagCategory[] {
-  return DOMAIN_TAGS[domainId] ?? SPORTS_TAGS;
+  // Guard empty / nullish input
+  const raw = (domainId ?? "").trim();
+  if (!raw) return SPORTS_TAGS;
+
+  // Normalise to canonical form before lookup
+  const canonical = normaliseTagDomain(raw);
+  return DOMAIN_TAGS[canonical] ?? SPORTS_TAGS;
 }
 
 /**
@@ -760,6 +769,51 @@ export function getObservationTags(domainId: string): TagCategory[] {
 export function getAllTagsFlat(domainId: string): { id: string; label: string }[] {
   const cats = getObservationTags(domainId);
   return cats.flatMap((cat) => cat.tags);
+}
+
+// ── Local domain normalisation (self-contained; avoids circular deps) ──
+
+const TAG_CANONICAL_IDS = new Set(Object.keys(DOMAIN_TAGS));
+
+const TAG_NORMALIZE_MAP: Record<string, string> = {
+  "sport": "sports",
+  "film_tv": "film-tv",
+  "film & television": "film-tv",
+  "film and television": "film-tv",
+  "film-television": "film-tv",
+  "filmtv": "film-tv",
+  "filmtelevision": "film-tv",
+  "film_television": "film-tv",
+  "health_fitness": "health-fitness",
+  "health & fitness": "health-fitness",
+  "health and fitness": "health-fitness",
+  "healthfitness": "health-fitness",
+  "health-fit": "health-fitness",
+  "health_fit": "health-fitness",
+};
+
+/**
+ * Normalise a domain ID for tag lookup. Mirrors domains.ts's
+ * normaliseDomainId but is self-contained to avoid circular deps.
+ */
+function normaliseTagDomain(raw: string): string {
+  const trimmed = raw.trim();
+  if (TAG_CANONICAL_IDS.has(trimmed)) return trimmed;
+
+  const lower = trimmed.toLowerCase();
+  if (TAG_NORMALIZE_MAP[lower] !== undefined) return TAG_NORMALIZE_MAP[lower];
+
+  // Collapsed form (strip all non-alphanumeric)
+  const collapsed = lower.replace(/[^a-z0-9]/g, "");
+  if (TAG_NORMALIZE_MAP[collapsed] !== undefined) return TAG_NORMALIZE_MAP[collapsed];
+
+  // Try matching canonical IDs by collapsed form
+  for (const canonical of TAG_CANONICAL_IDS) {
+    if (canonical.replace(/[^a-z0-9]/g, "") === collapsed) return canonical;
+  }
+
+  // Unknown — return the lowercased input (will fallback to SPORTS_TAGS)
+  return lower;
 }
 
 /**

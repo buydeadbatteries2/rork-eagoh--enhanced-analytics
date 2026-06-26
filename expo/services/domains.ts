@@ -55,11 +55,14 @@ const NORMALIZE_MAP: Record<string, string> = {
   "film and television": "film-tv",
   "film-television": "film-tv",
   "filmtv": "film-tv",
+  "filmtelevision": "film-tv",
+  "film_television": "film-tv",
   "health_fitness": "health-fitness",
   "health & fitness": "health-fitness",
   "health and fitness": "health-fitness",
   "healthfitness": "health-fitness",
   "health-fit": "health-fitness",
+  "health_fit": "health-fitness",
 };
 
 /**

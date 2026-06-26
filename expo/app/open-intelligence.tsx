@@ -729,10 +729,24 @@ export default function OpenIntelligenceScreen(): JSX.Element {
   }, [selectedEagohId]);
 
   const selectedEagoh = useMemo(() => eagohs.find((e) => e.id === selectedEagohId), [eagohs, selectedEagohId]);
-  const rawDomain = selectedEagoh?.domain ?? "sports";
+  const rawDomain = selectedEagoh?.domain?.trim() || "sports";
   const currentDomain = normalizeDomainId(rawDomain);
   const domain = selectedEagoh ? getDomain(selectedEagoh.domain ?? "") : undefined;
   const domainTone = domain ? toneColor(domain.tone) : palette.muted;
+
+  // Dev-only logging: trace domain resolution when EAGOH changes
+  if (__DEV__) {
+    useEffect(() => {
+      if (!selectedEagoh) return;
+      console.log("[open-intelligence] EAGOH switched", {
+        eagohId: selectedEagoh.id,
+        eagohName: selectedEagoh.name,
+        eagohDomain: selectedEagoh.domain,
+        rawDomain,
+        normalizedDomain: currentDomain,
+      });
+    }, [selectedEagohId]);
+  }
 
   const limit = ENTRY_TYPE_LIMITS[entryType];
   const edgeCost = ENTRY_TYPE_EDGE_COST[entryType];
@@ -885,6 +899,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
           <View style={styles.block}>
             <SectionTitle eyebrow="OBSERVATION TAGS" title="Classify the signal" />
             <TagSelector
+              key={currentDomain}
               selectedSubtags={selectedSubtags}
               onToggleSubtag={handleToggleSubtag}
               customTags={customTags}

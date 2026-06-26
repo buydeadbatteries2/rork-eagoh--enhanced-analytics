@@ -11,6 +11,7 @@ import {
   Crown,
   Dna,
   Filter,
+  Info,
   PackageOpen,
   Pencil,
   PlusCircle,
@@ -457,25 +458,33 @@ function PurchaseModal({
   onClose,
   onConfirm,
   purchasing,
+  reputation,
 }: {
   visible: boolean;
   listing: EnrichedListing | null;
   onClose: () => void;
   onConfirm: (level: SyncLevel, days: number) => void;
   purchasing: boolean;
+  reputation: ReputationRow | undefined;
 }): JSX.Element {
   const [selectedLevel, setSelectedLevel] = useState<SyncLevel>("25%");
   const [selectedDays, setSelectedDays] = useState<number>(1);
+  const [showDetails, setShowDetails] = useState(false);
 
   useEffect(() => {
     setSelectedLevel("25%");
     setSelectedDays(1);
+    setShowDetails(false);
   }, [listing?.id]);
 
   if (!listing) return <></>;
 
   const eagoh = listing.eagoh;
   const totalCost = computeTotalCost(listing, selectedLevel, selectedDays);
+  const eagohRank: RankTier = (reputation?.rank as RankTier) ?? "Dormant";
+  const rkColor = rankColor(eagohRank);
+  const repScore = reputation?.reputation_score ?? 0;
+  const imageUrl = eagoh?.image_thumb_url ?? eagoh?.image_url ?? null;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -493,14 +502,126 @@ function PurchaseModal({
           {/* EAGOH preview */}
           <View style={styles.modalEagohPreview}>
             <View style={styles.modalEagohImage}>
-              <OptimizedEagohImage tone="cyan" label={eagoh?.name ?? "EAGOH"} size="banner" imageUrl={eagoh?.image_thumb_url ?? eagoh?.image_url ?? null} />
+              <OptimizedEagohImage tone="cyan" label={eagoh?.name ?? "EAGOH"} size="banner" imageUrl={imageUrl} />
             </View>
-            <View>
-              <Text style={styles.modalEagohName}>{eagoh?.name}</Text>
+            <View style={{ flex: 1 }}>
+              <View style={styles.modalEagohNameRow}>
+                <Text style={styles.modalEagohName}>{eagoh?.name}</Text>
+                <Pressable
+                  onPress={() => setShowDetails((v) => !v)}
+                  style={({ pressed }) => [
+                    styles.infoIconBtn,
+                    pressed && styles.pressed,
+                    showDetails && styles.infoIconBtnActive,
+                  ]}
+                >
+                  <Info color={showDetails ? palette.cyan : palette.muted} size={16} />
+                </Pressable>
+              </View>
               <Text style={styles.modalEagohDomain}>{domainLabel(eagoh?.domain ?? eagoh?.sport ?? "")}</Text>
               <Text style={styles.modalVendor}>by {listing.vendor_username ?? "Anonymous"}</Text>
             </View>
           </View>
+
+          {/* EAGOH Details Panel */}
+          {showDetails && (
+            <View style={styles.detailsPanel}>
+              <LinearGradient colors={["rgba(0,20,40,0.60)", "rgba(5,15,30,0.85)"]} style={StyleSheet.absoluteFill} />
+              <View style={styles.detailsPanelInner}>
+                {/* Reputation */}
+                <View style={styles.detailRow}>
+                  <View style={styles.detailIconWrap}>
+                    <Award color={palette.gold} size={14} />
+                  </View>
+                  <Text style={styles.detailLabel}>Reputation</Text>
+                  <Text style={[styles.detailValue, { color: rkColor }]}>
+                    {rankEmoji(eagohRank)} {eagohRank} {repScore > 0 ? `· ${repScore}` : ""}
+                  </Text>
+                </View>
+
+                {/* Sync Success */}
+                <View style={styles.detailRow}>
+                  <View style={styles.detailIconWrap}>
+                    <Signal color={palette.success} size={14} />
+                  </View>
+                  <Text style={styles.detailLabel}>Sync Success</Text>
+                  <Text style={styles.detailValue}>{listing.sync_success_score}</Text>
+                </View>
+
+                {/* Quality Score */}
+                <View style={styles.detailRow}>
+                  <View style={styles.detailIconWrap}>
+                    <Sparkles color={palette.cyan} size={14} />
+                  </View>
+                  <Text style={styles.detailLabel}>Quality Score</Text>
+                  <Text style={styles.detailValue}>{listing.avg_quality_score}</Text>
+                </View>
+
+                {/* Edge Earned */}
+                <View style={styles.detailRow}>
+                  <View style={styles.detailIconWrap}>
+                    <Coins color={palette.gold} size={14} />
+                  </View>
+                  <Text style={styles.detailLabel}>Edge Earned</Text>
+                  <Text style={styles.detailValue}>{listing.edge_earned_this_month} EC/mo</Text>
+                </View>
+
+                {/* Vendor Rank */}
+                <View style={styles.detailRow}>
+                  <View style={styles.detailIconWrap}>
+                    <Crown color={palette.violet} size={14} />
+                  </View>
+                  <Text style={styles.detailLabel}>Vendor Rank</Text>
+                  <Text style={styles.detailValue}>{listing.vendor_rank}</Text>
+                </View>
+
+                {/* Market Trust */}
+                {reputation && (
+                  <View style={styles.detailRow}>
+                    <View style={styles.detailIconWrap}>
+                      <Shield color={rkColor} size={14} />
+                    </View>
+                    <Text style={styles.detailLabel}>Market Trust</Text>
+                    <Text style={[styles.detailValue, { color: rkColor }]}>{reputation.marketplace_trust}</Text>
+                  </View>
+                )}
+
+                {/* DNA Tags */}
+                {(eagoh?.dna ?? []).length > 0 && (
+                  <View style={styles.detailRowCol}>
+                    <View style={styles.detailIconWrap}>
+                      <Dna color={palette.violet} size={14} />
+                    </View>
+                    <Text style={styles.detailLabel}>DNA</Text>
+                    <View style={styles.detailDnaWrap}>
+                      {(eagoh!.dna ?? []).map((d) => (
+                        <View key={d} style={styles.detailDnaTag}>
+                          <Text style={styles.detailDnaTagText}>{d}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                )}
+
+                {/* Team Info */}
+                {(eagoh?.pro_team_focus_name || eagoh?.college_team_focus_name || listing.fanatic_teams.length > 0) && (
+                  <View style={styles.detailRow}>
+                    <View style={styles.detailIconWrap}>
+                      <Star color={palette.gold} size={14} />
+                    </View>
+                    <Text style={styles.detailLabel}>Teams</Text>
+                    <Text style={styles.detailValue} numberOfLines={2}>
+                      {[
+                        eagoh?.pro_team_focus_name,
+                        eagoh?.college_team_focus_name,
+                        ...listing.fanatic_teams.map((id: string) => getTeamById(id)?.display_name ?? id),
+                      ].filter(Boolean).join(" · ")}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          )}
 
           {/* Sync level */}
           <Text style={styles.modalSectionLabel}>Sync Level</Text>
@@ -1004,6 +1125,8 @@ const MyListingCard = memo(function MyListingCard({
   const eagoh = item.eagoh;
   const eagohRank: RankTier = (reputation?.rank as RankTier) ?? "Dormant";
   const rkColor = rankColor(eagohRank);
+  const imageUrl = eagoh?.image_thumb_url ?? eagoh?.image_url ?? null;
+  const tone: RenderTone = eagohRank === "Syndicate Prime" || eagohRank === "Oracle" ? "gold" : eagohRank === "Diamond" ? "cyan" : "violet";
   const minPrice = [item.price_25_per_day, item.price_50_per_day, item.price_75_per_day, item.price_100_per_day]
     .filter((p) => p > 0)
     .sort((a, b) => a - b)[0];
@@ -1011,14 +1134,34 @@ const MyListingCard = memo(function MyListingCard({
   return (
     <View style={[styles.myListingCard, !item.active && styles.myListingCardInactive]}>
       <View style={styles.myListingRow}>
-        {/* EAGOH Image */}
-        <View style={styles.myListingImageWrap}>
-          <OptimizedEagohImage
-            tone={eagohRank === "Syndicate Prime" || eagohRank === "Oracle" ? "gold" : eagohRank === "Diamond" ? "cyan" : "violet"}
-            label={eagoh?.name ?? "Unnamed"}
-            size="banner"
-            imageUrl={eagoh?.image_thumb_url ?? eagoh?.image_url ?? null}
+        {/* EAGOH Image — larger, full-body with dark gradient background */}
+        <View style={styles.myListingImageSection}>
+          <LinearGradient
+            colors={["#03060B", `${rkColor}12`, "#050D18"]}
+            style={StyleSheet.absoluteFill}
           />
+          <View
+            style={[
+              styles.myListingSpotlight,
+              { backgroundColor: `${rkColor}0E`, width: 60, height: 60 },
+            ]}
+          />
+          <View style={styles.myListingImageInner}>
+            <OptimizedEagohImage
+              tone={tone}
+              label={eagoh?.name ?? "Unnamed"}
+              size="card"
+              imageUrl={imageUrl}
+              contentFit="contain"
+              showLabel={false}
+            />
+          </View>
+          {/* Domain badge overlay */}
+          {eagoh?.domain && (
+            <View style={styles.myListingDomainBadge}>
+              <Text style={styles.myListingDomainBadgeText}>{domainLabel(eagoh.domain)}</Text>
+            </View>
+          )}
         </View>
 
         {/* Info */}
@@ -1027,9 +1170,35 @@ const MyListingCard = memo(function MyListingCard({
             <Text style={styles.myListingName} numberOfLines={1}>{eagoh?.name ?? "Unnamed"}</Text>
             <View style={[styles.activeDot, item.active ? styles.activeDotOn : styles.activeDotOff]} />
           </View>
-          {eagoh?.domain && (
-            <Text style={styles.listingDomain}>{domainLabel(eagoh.domain)}</Text>
+          {reputation && (
+            <View style={[styles.myListingRepBadge, { borderColor: rkColor }]}>
+              <Award color={rkColor} size={10} />
+              <Text style={[styles.myListingRepBadgeText, { color: rkColor }]}>
+                {rankEmoji(eagohRank)} {eagohRank} · {reputation.reputation_score}
+              </Text>
+            </View>
           )}
+          {/* DNA tags */}
+          {(eagoh?.dna ?? []).length > 0 && (
+            <View style={styles.listingDna}>
+              {(eagoh!.dna ?? []).slice(0, 3).map((d) => (
+                <View key={d} style={styles.dnaTag}>
+                  <Text style={styles.dnaTagText}>{d}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+          {/* Metrics */}
+          <View style={styles.myListingMetrics}>
+            <View style={styles.metricRow}>
+              <Signal color={palette.success} size={10} />
+              <Text style={styles.metric}>Sync: {item.sync_success_score}</Text>
+            </View>
+            <View style={styles.metricRow}>
+              <Sparkles color={palette.cyan} size={10} />
+              <Text style={styles.metric}>Quality: {item.avg_quality_score}</Text>
+            </View>
+          </View>
           <View style={styles.myListingPrices}>
             {(["25%", "50%", "75%", "100%"] as const).map((level) => {
               const price = level === "25%" ? item.price_25_per_day : level === "50%" ? item.price_50_per_day : level === "75%" ? item.price_75_per_day : item.price_100_per_day;
@@ -1065,14 +1234,6 @@ const MyListingCard = memo(function MyListingCard({
           </Text>
         </Pressable>
       </View>
-      {reputation && (
-        <View style={styles.myListingRepRow}>
-          <Award color={rkColor} size={13} />
-          <Text style={[styles.myListingRepText, { color: rkColor }]}>
-            {eagohRank} · Rep: {reputation.reputation_score}
-          </Text>
-        </View>
-      )}
     </View>
   );
 });
@@ -1580,6 +1741,7 @@ export default function MarketplaceScreen(): JSX.Element {
         onClose={() => setPurchaseModal(null)}
         onConfirm={handlePurchaseConfirm}
         purchasing={purchasing}
+        reputation={repMap.get(purchaseModal?.eagoh_id ?? "")}
       />
       <CreateListingModal
         visible={createModal}
@@ -1874,18 +2036,56 @@ const styles = StyleSheet.create({
   },
   myListingCardInactive: { opacity: 0.55 },
   myListingRow: { flexDirection: "row", gap: 12 },
-  myListingImageWrap: {
-    width: 80,
-    height: 96,
+  // Image section — left side, full EAGOH view with dark gradient background
+  myListingImageSection: {
+    width: 110,
+    minHeight: 150,
     borderRadius: 5,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: palette.line,
-    backgroundColor: palette.void,
-    alignItems: "center",
-    justifyContent: "center",
+    backgroundColor: "#03060B",
     flexShrink: 0,
   },
+  myListingSpotlight: {
+    position: "absolute",
+    borderRadius: 999,
+    alignSelf: "center",
+    top: "50%" as const,
+    transform: [{ translateY: "-50%" as const }],
+  },
+  myListingImageInner: {
+    flex: 1,
+    justifyContent: "center" as const,
+    alignItems: "center" as const,
+    paddingHorizontal: 8,
+    paddingVertical: 14,
+    overflow: "hidden" as const,
+  },
+  myListingDomainBadge: {
+    position: "absolute",
+    top: 4,
+    left: 4,
+    backgroundColor: "rgba(3,6,11,0.82)",
+    borderWidth: 1,
+    borderColor: palette.line,
+    borderRadius: 5,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  myListingDomainBadgeText: { color: palette.cyan, fontSize: 8, fontWeight: "900" },
+  myListingRepBadge: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 3,
+    borderWidth: 1,
+    borderRadius: 5,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    alignSelf: "flex-start" as const,
+  },
+  myListingRepBadgeText: { fontSize: 10, fontWeight: "900" as const },
+  myListingMetrics: { gap: 1 },
   myListingImagePlaceholder: { alignItems: "center", justifyContent: "center", flex: 1 },
   myListingInfo: { flex: 1, gap: 4 },
   myListingTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
@@ -2053,9 +2253,52 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.line,
   },
-  modalEagohName: { color: palette.text, fontSize: 17, fontWeight: "900" },
+  modalEagohNameRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  modalEagohName: { color: palette.text, fontSize: 17, fontWeight: "900", flex: 1 },
+  infoIconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 5,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  infoIconBtnActive: { borderColor: palette.cyan, backgroundColor: palette.cyanSoft },
   modalEagohDomain: { color: palette.cyan, fontSize: 12, fontWeight: "800" },
   modalVendor: { color: palette.muted, fontSize: 12, fontWeight: "700" },
+
+  detailsPanel: {
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "rgba(54,245,255,0.14)",
+    overflow: "hidden",
+    marginBottom: 8,
+  },
+  detailsPanelInner: { padding: 12, gap: 8 },
+  detailRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  detailRowCol: { gap: 6 },
+  detailIconWrap: {
+    width: 26,
+    height: 26,
+    borderRadius: 5,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.05)",
+  },
+  detailLabel: { color: palette.muted, fontSize: 11, fontWeight: "800", width: 90 },
+  detailValue: { color: palette.text, fontSize: 12, fontWeight: "900", flex: 1 },
+  detailDnaWrap: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 2 },
+  detailDnaTag: {
+    backgroundColor: "rgba(138,92,255,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(138,92,255,0.25)",
+    borderRadius: 5,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  detailDnaTagText: { color: palette.violet, fontSize: 9, fontWeight: "900" },
 
   syncLevelGrid: { flexDirection: "row", gap: 8 },
   syncLevelChip: {

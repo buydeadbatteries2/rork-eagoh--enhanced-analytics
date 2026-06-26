@@ -5,6 +5,14 @@
  * only answer questions within that domain — out-of-domain requests are
  * politely rejected with a suggestion to create or select a domain-matching
  * EAGOH.
+ *
+ * Domain guard rules:
+ *   - Normalise domain IDs before every comparison (case, aliases, separators).
+ *   - Score ALL domains against the prompt; only reject when a DIFFERENT domain
+ *     has stronger keyword matches than the EAGOH's own domain.
+ *   - Fail OPEN when no domain keywords are detected (uncertain classification).
+ *   - Do not require keyword matches for valid sessions — a Sports EAGOH should
+ *     accept "Who has the edge?" even without obvious sports keywords.
  */
 
 export type IntelligenceDomain = {
@@ -29,24 +37,163 @@ export const INTELLIGENCE_DOMAINS: IntelligenceDomain[] = [
   { id: "health-fitness", label: "Health & Fitness", description: "Training science, nutrition strategy, biometric analysis, and wellness intelligence.", icon: "Heart", tone: "ember", color: "#F97316" },
 ];
 
-/** Look up a domain by id. Returns undefined for unknown ids. */
+// ── Domain ID normalization ──────────────────────────────────────────
+
+/** Canonical domain IDs (derived from INTELLIGENCE_DOMAINS at load time). */
+const CANONICAL_IDS = new Set(INTELLIGENCE_DOMAINS.map((d) => d.id));
+
+/**
+ * Map non‑canonical domain-id strings to their canonical form.
+ * Handles case, separators, singular/plural, label‑style names, and snake_case.
+ */
+const NORMALIZE_MAP: Record<string, string> = {
+  // Singular → plural
+  "sport": "sports",
+  // Separator variations → canonical hyphen form
+  "film_tv": "film-tv",
+  "film & television": "film-tv",
+  "film and television": "film-tv",
+  "film-television": "film-tv",
+  "filmtv": "film-tv",
+  "health_fitness": "health-fitness",
+  "health & fitness": "health-fitness",
+  "health and fitness": "health-fitness",
+  "healthfitness": "health-fitness",
+  "health-fit": "health-fitness",
+};
+
+/**
+ * Normalise a domain ID string to its canonical form.
+ *
+ * Examples (all → "sports"):
+ *   "Sports", "sports", "SPORTS", "sport"
+ *
+ * Examples (all → "film-tv"):
+ *   "Film & Television", "film_tv", "film-and-television", "Film & TV"
+ */
+export function normalizeDomainId(raw: string): string {
+  const trimmed = raw.trim();
+  // Fast path: already canonical
+  if (CANONICAL_IDS.has(trimmed)) return trimmed;
+
+  // Try the explicit map first
+  const lower = trimmed.toLowerCase();
+  if (NORMALIZE_MAP[lower] !== undefined) return NORMALIZE_MAP[lower];
+
+  // Try stripping separators and re‑matching
+  const collapsed = lower.replace(/[^a-z0-9]/g, "");
+  if (NORMALIZE_MAP[collapsed] !== undefined) return NORMALIZE_MAP[collapsed];
+
+  // Try matching against canonical ids by collapsed form
+  for (const canonical of CANONICAL_IDS) {
+    if (canonical.replace(/[^a-z0-9]/g, "") === collapsed) return canonical;
+  }
+
+  // Try matching against domain labels (e.g. "Film & Television" → "film-tv")
+  const domainByLabel = INTELLIGENCE_DOMAINS.find(
+    (d) => d.label.toLowerCase().replace(/[^a-z0-9]/g, "") === collapsed,
+  );
+  if (domainByLabel) return domainByLabel.id;
+
+  // Fallback: return the lowercased trimmed input as-is
+  return lower;
+}
+
+// ── Domain lookup ────────────────────────────────────────────────────
+
+/** Look up a domain by id (with normalisation). Returns undefined for unknown ids. */
 export function getDomain(domainId: string): IntelligenceDomain | undefined {
-  return INTELLIGENCE_DOMAINS.find((d) => d.id === domainId);
+  const normalized = normalizeDomainId(domainId);
+  return INTELLIGENCE_DOMAINS.find((d) => d.id === normalized);
+}
+
+// ── Keyword‑based domain detection ───────────────────────────────────
+
+/**
+ * Keyword bank for every intelligence domain.
+ * These are lightweight signal words — not exhaustive, but tuned to catch
+ * clearly out‑of‑domain prompts while failing open on ambiguous input.
+ */
+const DOMAIN_KEYWORDS: Record<string, string[]> = {
+  sports: ["game", "match", "player", "team", "score", "win", "loss", "championship", "league", "tournament", "coach", "tactic", "play", "athlete", "stadium", "season", "quarter", "half", "goal", "touchdown", "basket", "defense", "offense", "training", "draft", "trade", "rivalry", "playoff", "final", "sport", "lakers", "cowboys", "yankees", "nuggets", "bullpen", "recruiting", "lineup", "roster", "qb", "pitcher", "nba", "nfl", "mlb", "nhl", "ufc", "boxing"],
+  music: ["song", "album", "artist", "band", "beat", "rhythm", "melody", "genre", "concert", "tour", "lyric", "verse", "chorus", "producer", "instrument", "vocal", "track", "release", "stream", "playlist", "radio", "label", "studio", "recording", "mix", "sound", "bass", "drum", "guitar", "piano", "hook", "rollout"],
+  "film-tv": ["movie", "film", "show", "episode", "actor", "director", "scene", "script", "plot", "character", "cinema", "tv", "series", "season", "premiere", "screen", "camera", "trailer", "cast", "role", "drama", "comedy", "thriller", "documentary", "animation", "netflix", "hbo", "streaming", "oscar", "award", "box office"],
+  fashion: ["style", "fashion", "wear", "outfit", "designer", "brand", "collection", "runway", "trend", "fabric", "textile", "shoe", "dress", "suit", "jacket", "accessory", "luxury", "streetwear", "couture", "vogue", "seasonal", "aesthetic", "look", "model", "fit", "tailor", "garment", "label"],
+  education: ["learn", "teach", "student", "school", "university", "college", "course", "class", "lesson", "curriculum", "degree", "professor", "academic", "study", "exam", "test", "grade", "education", "training", "lecture", "textbook", "research", "knowledge", "skill", "certificate", "diploma", "homework", "tutor", "online course"],
+  gaming: ["game", "gaming", "esports", "player", "level", "boss", "quest", "rpg", "fps", "mmo", "console", "pc", "steam", "xbox", "playstation", "nintendo", "twitch", "stream", "speedrun", "meta", "patch", "update", "dlc", "character", "class", "build", "loot", "raid", "rank", "competitive"],
+  business: ["business", "company", "startup", "revenue", "profit", "market", "strategy", "ceo", "founder", "entrepreneur", "sales", "marketing", "growth", "funding", "investor", "venture", "ipo", "acquisition", "merger", "brand", "product", "customer", "pipeline", "roi", "kpi", "stakeholder", "board", "operational", "scale"],
+  finance: ["stock", "market", "invest", "trade", "crypto", "bitcoin", "portfolio", "dividend", "bond", "fund", "etf", "index", "nasdaq", "sp500", "forex", "option", "futures", "hedge", "risk", "capital", "asset", "liability", "equity", "debt", "interest rate", "inflation", "recession", "bull", "bear", "wallet", "apple stock"],
+  technology: ["code", "software", "hardware", "app", "api", "cloud", "server", "database", "algorithm", "ai", "machine learning", "blockchain", "web", "mobile", "frontend", "backend", "devops", "cybersecurity", "iot", "data", "network", "protocol", "framework", "library", "sdk", "compiler", "debug", "deploy", "scale"],
+  "health-fitness": ["workout", "exercise", "diet", "nutrition", "calorie", "protein", "muscle", "cardio", "yoga", "run", "gym", "fitness", "health", "wellness", "sleep", "recovery", "injury", "weight", "body", "heart rate", "step", "hydration", "supplement", "vitamin", "meditation", "stress", "flexibility", "strength", "endurance"],
+};
+
+/**
+ * Score EVERY domain against a prompt and return the domain ID with the
+ * highest keyword‑match count. Returns null when zero keywords match
+ * across all domains (uncertain → fail open).
+ */
+export function detectPromptDomain(prompt: string): string | null {
+  const lower = prompt.toLowerCase();
+  let bestDomain: string | null = null;
+  let bestScore = 0;
+
+  for (const [domainId, keywords] of Object.entries(DOMAIN_KEYWORDS)) {
+    let score = 0;
+    for (const kw of keywords) {
+      if (lower.includes(kw)) score++;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestDomain = domainId;
+    }
+  }
+
+  return bestScore > 0 ? bestDomain : null;
 }
 
 /**
- * Check whether a user prompt falls within the given domain.
- * Uses keyword-based detection — simple, fast, and no API call needed.
+ * Check whether a user prompt falls within the given EAGOH domain.
+ *
+ * Algorithm:
+ *   1. Normalise the EAGOH domain ID.
+ *   2. Score ALL domains against the prompt.
+ *   3. If NO domain keywords matched → fail OPEN (allow).
+ *   4. If the EAGOH's own domain scored ANY matches → allow.
+ *   5. If a DIFFERENT domain scored stronger → reject.
  */
 export function isPromptInDomain(prompt: string, domainId: string): boolean {
-  const domain = getDomain(domainId);
-  if (!domain) return false;
+  const normalizedId = normalizeDomainId(domainId);
+  const domain = getDomain(normalizedId);
+  if (!domain) return true; // unknown domain → fail open
 
   const lower = prompt.toLowerCase();
-  const keywords = DOMAIN_KEYWORDS[domainId] ?? [];
-  if (keywords.length === 0) return true; // unknown domain → allow
+  const ownKeywords = DOMAIN_KEYWORDS[normalizedId] ?? [];
 
-  return keywords.some((kw) => lower.includes(kw));
+  // Direct match against own domain keywords
+  if (ownKeywords.length > 0 && ownKeywords.some((kw) => lower.includes(kw))) {
+    return true;
+  }
+
+  // Multi‑domain scoring: find the best‑matching domain across ALL domains
+  const detectedId = detectPromptDomain(prompt);
+
+  // No domain keywords matched at all → fail OPEN (allow)
+  if (detectedId === null) return true;
+
+  // The detected domain IS the EAGOH's domain → allow
+  // (This shouldn't happen given the direct check above, but safe to keep)
+  if (detectedId === normalizedId) return true;
+
+  // A DIFFERENT domain matched but EAGOH's own didn't → reject
+  return false;
+}
+
+/**
+ * Return the domain ID that the prompt most strongly matches
+ * (for use in rejection messages). Null when uncertain.
+ */
+export function getDetectedDomainForPrompt(prompt: string): string | null {
+  return detectPromptDomain(prompt);
 }
 
 /** Get the brand-accent hex color for a domain. */
@@ -55,27 +202,26 @@ export function getDomainColor(domainId: string): string {
   return domain?.color ?? "#6B7280";
 }
 
-/** Generate a polite out-of-domain rejection message. */
-export function getDomainRejection(domainId: string): string {
+/**
+ * Generate a polite out-of-domain rejection message.
+ * Format: "This EAGOH is specialized in [Domain]. Please select or forge
+ * an EAGOH for [Detected Domain] to analyze this topic."
+ */
+export function getDomainRejection(domainId: string, detectedDomainId?: string | null): string {
   const domain = getDomain(domainId);
   const domainLabel = domain?.label ?? domainId;
-  const suggestions = INTELLIGENCE_DOMAINS.filter((d) => d.id !== domainId)
+
+  if (detectedDomainId) {
+    const detectedDomain = getDomain(detectedDomainId);
+    const detectedLabel = detectedDomain?.label ?? detectedDomainId;
+    return `This EAGOH is specialized in ${domainLabel}. Please select or forge an EAGOH for ${detectedLabel} to analyze this topic.`;
+  }
+
+  // Fallback when no domain was confidently detected
+  const suggestions = INTELLIGENCE_DOMAINS.filter((d) => d.id !== normalizeDomainId(domainId))
     .slice(0, 3)
     .map((d) => d.label)
     .join(", ");
 
-  return `I'm forged for ${domainLabel} intelligence only. This question falls outside my domain. Try creating or selecting an EAGOH tuned for one of these domains: ${suggestions}.`;
+  return `This EAGOH is specialized in ${domainLabel}. This question may fall outside its domain. Try creating or selecting an EAGOH tuned for one of these domains: ${suggestions}.`;
 }
-
-const DOMAIN_KEYWORDS: Record<string, string[]> = {
-  sports: ["game", "match", "player", "team", "score", "win", "loss", "championship", "league", "tournament", "coach", "tactic", "play", "athlete", "stadium", "season", "quarter", "half", "goal", "touchdown", "basket", "defense", "offense", "training", "draft", "trade", "rivalry", "playoff", "final", "sport"],
-  music: ["song", "album", "artist", "band", "beat", "rhythm", "melody", "genre", "concert", "tour", "lyric", "verse", "chorus", "producer", "instrument", "vocal", "track", "release", "stream", "playlist", "radio", "label", "studio", "recording", "mix", "sound", "bass", "drum", "guitar", "piano"],
-  "film-tv": ["movie", "film", "show", "episode", "actor", "director", "scene", "script", "plot", "character", "cinema", "tv", "series", "season", "premiere", "screen", "camera", "trailer", "cast", "role", "drama", "comedy", "thriller", "documentary", "animation", "netflix", "hbo", "streaming", "oscar", "award"],
-  fashion: ["style", "fashion", "wear", "outfit", "designer", "brand", "collection", "runway", "trend", "fabric", "textile", "shoe", "dress", "suit", "jacket", "accessory", "luxury", "streetwear", "couture", "vogue", "seasonal", "aesthetic", "look", "model", "fit", "tailor", "garment", "label"],
-  education: ["learn", "teach", "student", "school", "university", "college", "course", "class", "lesson", "curriculum", "degree", "professor", "academic", "study", "exam", "test", "grade", "education", "training", "lecture", "textbook", "research", "knowledge", "skill", "certificate", "diploma", "homework", "tutor", "online course"],
-  gaming: ["game", "gaming", "esports", "player", "level", "boss", "quest", "rpg", "fps", "mmo", "console", "pc", "steam", "xbox", "playstation", "nintendo", "twitch", "stream", "speedrun", "meta", "patch", "update", "dlc", "character", "class", "build", "loot", "raid", "rank", "competitive"],
-  business: ["business", "company", "startup", "revenue", "profit", "market", "strategy", "ceo", "founder", "entrepreneur", "sales", "marketing", "growth", "funding", "investor", "venture", "ipo", "acquisition", "merger", "brand", "product", "customer", "pipeline", "roi", "kpi", "stakeholder", "board", "operational", "scale"],
-  finance: ["stock", "market", "invest", "trade", "crypto", "bitcoin", "portfolio", "dividend", "bond", "fund", "etf", "index", "nasdaq", "sp500", "forex", "option", "futures", "hedge", "risk", "capital", "asset", "liability", "equity", "debt", "interest rate", "inflation", "recession", "bull", "bear", "wallet"],
-  technology: ["code", "software", "hardware", "app", "api", "cloud", "server", "database", "algorithm", "ai", "machine learning", "blockchain", "web", "mobile", "frontend", "backend", "devops", "cybersecurity", "iot", "data", "network", "protocol", "framework", "library", "sdk", "compiler", "debug", "deploy", "scale"],
-  "health-fitness": ["workout", "exercise", "diet", "nutrition", "calorie", "protein", "muscle", "cardio", "yoga", "run", "gym", "fitness", "health", "wellness", "sleep", "recovery", "injury", "weight", "body", "heart rate", "step", "hydration", "supplement", "vitamin", "meditation", "stress", "flexibility", "strength", "endurance"],
-};

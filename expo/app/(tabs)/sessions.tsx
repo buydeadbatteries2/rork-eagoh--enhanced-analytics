@@ -381,7 +381,7 @@ function SessionSetup({
   const cost = session.id === "quick-check" && prompt ? getQuickCheckCost(prompt) : session.minCost;
   const { total: edgeTotal } = useEdge();
   const canAfford = edgeTotal >= cost;
-  const domainGuardResult = !prompt || !selectedEagoh?.domain ? null : guardDomainRequest(selectedEagoh.domain, prompt);
+  const domainGuardResult = !prompt || !selectedEagoh?.domain ? null : guardDomainRequest(selectedEagoh.domain, prompt, true, selectedEagoh ? { id: selectedEagoh.id, name: selectedEagoh.name || "Unnamed" } : undefined);
   const isDomainMatch = !domainGuardResult || domainGuardResult.ok;
 
   const handleStart = useCallback((): void => {
@@ -514,7 +514,7 @@ function ActiveChat({
         return;
       }
 
-      const domainCheck = guardDomainRequest(eagoh.domain, prompt);
+      const domainCheck = guardDomainRequest(eagoh.domain, prompt, true, { id: eagoh.id, name: eagoh.name || "Unnamed" });
       if (!domainCheck.ok) {
         setMessages((prev) => [...prev, {
           id: `a-domain-${Date.now()}`,
@@ -557,7 +557,7 @@ function ActiveChat({
 
     // Domain guard check for non-Quick-Check sessions too
     if (eagoh.domain) {
-      const domainCheck = guardDomainRequest(eagoh.domain, prompt);
+      const domainCheck = guardDomainRequest(eagoh.domain, prompt, true, { id: eagoh.id, name: eagoh.name || "Unnamed" });
       if (!domainCheck.ok) {
         setMessages((prev) => [...prev, {
           id: `a-domain-${Date.now()}`,

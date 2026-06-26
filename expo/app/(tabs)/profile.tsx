@@ -11,7 +11,7 @@ import { useWindowDimensions } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useHaptics } from "@/hooks/useHaptics";
 import { useRouter } from "expo-router";
-import { Award, BrainCircuit, Cpu, Crown, Flame, FlaskConical, Layers3, LogOut, Swords, Sparkles, Shield, Trophy, TrendingUp, Wrench, Zap } from "lucide-react-native";
+import { Award, BrainCircuit, Coins, Cpu, Crown, Flame, FlaskConical, Layers3, LogOut, Swords, Sparkles, Shield, Trophy, TrendingUp, Wrench, Zap } from "lucide-react-native";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -419,17 +419,33 @@ export default function ProfileScreen(): JSX.Element {
       );
     }
     if (item.kind === "settings") {
+      const handleEdgeStore = (): void => {
+        h.selection();
+        router.push("/edge-store" as never);
+      };
       return (
-        <Pressable onPress={handleSettingsPress} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
-          <View style={[styles.featureIconWrap, { borderColor: "rgba(120,180,255,0.35)" }]}>
-            <Crown color={palette.text} size={20} />
-          </View>
-          <View style={styles.featureInfo}>
-            <Text style={styles.featureTitle}>Settings</Text>
-            <Text style={styles.featureDesc}>Account, appearance, legal, and subscription management</Text>
-          </View>
-          <Cpu color={palette.muted} size={16} />
-        </Pressable>
+        <View style={{ gap: 10 }}>
+          <Pressable onPress={handleEdgeStore} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
+            <View style={[styles.featureIconWrap, { borderColor: "rgba(255,181,71,0.35)" }]}>
+              <Coins color={palette.gold} size={20} />
+            </View>
+            <View style={styles.featureInfo}>
+              <Text style={styles.featureTitle}>Edge Store</Text>
+              <Text style={styles.featureDesc}>Purchase additional EdgeCoins</Text>
+            </View>
+            <Cpu color={palette.muted} size={16} />
+          </Pressable>
+          <Pressable onPress={handleSettingsPress} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
+            <View style={[styles.featureIconWrap, { borderColor: "rgba(120,180,255,0.35)" }]}>
+              <Crown color={palette.text} size={20} />
+            </View>
+            <View style={styles.featureInfo}>
+              <Text style={styles.featureTitle}>Settings</Text>
+              <Text style={styles.featureDesc}>Account, appearance, legal, and subscription management</Text>
+            </View>
+            <Cpu color={palette.muted} size={16} />
+          </Pressable>
+        </View>
       );
     }
     if (item.kind === "testMode") {

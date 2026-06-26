@@ -78,6 +78,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 
 const GENERIC_EAGOH_URI = "https://pub-e001eb4506b145aa938b5d3badbff6a5.r2.dev/attachments/pl6p26j6a1qg1xdfjloo1.png";
 
@@ -280,12 +281,14 @@ function ConfirmationSheet({
   pending,
   onConfirm,
   onCancel,
+  onGetEdge,
   isGenerating,
   canAfford,
 }: {
   pending: ForgePending;
   onConfirm: () => void;
   onCancel: () => void;
+  onGetEdge: () => void;
   isGenerating: boolean;
   canAfford: boolean;
 }): JSX.Element {
@@ -305,7 +308,14 @@ function ConfirmationSheet({
           <Zap color={palette.gold} size={18} />
           <Text style={styles.confirmEdgeCost}>{pending.edgeCost} Edge</Text>
         </View>
-        {!canAfford ? <Text style={styles.confirmError}>Insufficient Edge balance. Purchase Edge or upgrade your tier.</Text> : null}
+        {!canAfford ? (
+          <View style={{ gap: 8 }}>
+            <Text style={styles.confirmError}>Insufficient Edge balance.</Text>
+            <Pressable onPress={onGetEdge} style={({ pressed }) => [styles.getEdgeBtn, pressed && { opacity: 0.8 }]}>
+              <Text style={styles.getEdgeBtnText}>Get Edge</Text>
+            </Pressable>
+          </View>
+        ) : null}
         <View style={styles.confirmActions}>
           <Pressable onPress={onCancel} disabled={isGenerating} style={({ pressed }) => [styles.confirmCancel, pressed && styles.pressed]}>
             <Text style={styles.confirmCancelText}>Cancel</Text>
@@ -325,6 +335,7 @@ function ConfirmationSheet({
 
 export default function ForgeScreen(): JSX.Element {
   const h = useHaptics();
+  const router = useRouter();
   const { profile } = useProfile();
   const { total: edgeTotal } = useEdge();
   const { pending, prepareForge, confirmForge, cancelForge, isGenerating } = useForge();
@@ -859,6 +870,11 @@ export default function ForgeScreen(): JSX.Element {
   const handleCancel = useCallback((): void => {
     cancelForge();
   }, [cancelForge]);
+
+  const handleGetEdge = useCallback((): void => {
+    h.selection();
+    router.push("/edge-store" as never);
+  }, [h, router]);
 
   // ── Step content renderers ─────────────────────────────────────────
 
@@ -1687,6 +1703,7 @@ export default function ForgeScreen(): JSX.Element {
           pending={pending}
           onConfirm={handleConfirm}
           onCancel={handleCancel}
+          onGetEdge={handleGetEdge}
           isGenerating={isGenerating}
           canAfford={edgeTotal >= pending.edgeCost}
         />
@@ -2261,6 +2278,16 @@ const styles = StyleSheet.create({
   confirmEdgeRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 10, borderTopWidth: 1, borderBottomWidth: 1, borderColor: palette.line },
   confirmEdgeCost: { color: palette.gold, fontSize: 20, fontWeight: "900" },
   confirmError: { color: palette.ember, fontSize: 11, fontWeight: "800" },
+  getEdgeBtn: {
+    alignSelf: "flex-start" as const,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: palette.gold,
+    backgroundColor: "rgba(255,181,71,0.12)",
+  },
+  getEdgeBtnText: { color: palette.gold, fontSize: 13, fontWeight: "800" as const },
   confirmActions: { flexDirection: "row", gap: 10 },
   confirmCancel: {
     flex: 1,

@@ -11,6 +11,7 @@ import {
   BookOpen,
   Brush,
   ChevronRight,
+  Coins,
   Cpu,
   Crown,
   FileText,
@@ -1145,6 +1146,12 @@ export default function SettingsScreen(): JSX.Element {
                 },
               ]
             : []),
+          {
+            kind: "link",
+            label: "Edge Store",
+            icon: <Coins color={pal.gold} size={18} />,
+            onPress: navigateTo("/edge-store"),
+          },
           {
             kind: "button",
             label: "Manage Subscription",

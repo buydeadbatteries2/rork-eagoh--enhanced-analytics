@@ -227,7 +227,8 @@ const SponsoredBanner = React.memo(function SponsoredBanner({ item, userId, repu
   );
 });
 
-const HeroSection = React.memo(function HeroSection(): JSX.Element {
+const HeroSection = React.memo(function HeroSection({ onEdgePress }: { onEdgePress: () => void }): JSX.Element {
+  const { balances } = useEdge();
   return (
     <View style={styles.heroShell}>
       <LinearGradient colors={["rgba(54,245,255,0.20)", "rgba(124,92,255,0.12)", "rgba(255,184,77,0.08)"]} style={StyleSheet.absoluteFill} />
@@ -236,7 +237,12 @@ const HeroSection = React.memo(function HeroSection(): JSX.Element {
       <Text style={styles.screenTitle}>Command your edge.</Text>
       <Text style={styles.heroHomeBody}>Featured banners, faction movement, sponsored discovery, and Quick Check tools are running in mock mode.</Text>
       <View style={styles.statRow}>{stats.map((stat) => <View key={stat.label} style={styles.stat}><Text style={styles.statValue}>{stat.value}</Text><Text style={styles.statLabel}>{stat.label}</Text></View>)}</View>
-      <View style={styles.edgeBalance}><WalletCards color={palette.gold} size={20} /><Text style={styles.edgeText}>Edge Balance</Text><Text style={styles.edgeAmount}>12,480 EC</Text></View>
+      <Pressable onPress={onEdgePress} style={({ pressed }) => [styles.edgeBalance, pressed && { opacity: 0.8 }]}>
+        <WalletCards color={palette.gold} size={20} />
+        <Text style={styles.edgeText}>Edge Balance</Text>
+        <Text style={styles.edgeAmount}>{balances.total.toLocaleString()} EC</Text>
+        <ChevronRight color={palette.gold} size={14} style={{ opacity: 0.6 }} />
+      </Pressable>
     </View>
   );
 });
@@ -675,8 +681,13 @@ function HomeDomainsSection(): JSX.Element {
 
 function HomeApp({ userId, onPromote }: { userId: string | null; onPromote: () => void }): JSX.Element {
   const h = useHaptics();
+  const router = useRouter();
+  const handleEdgeStore = useCallback((): void => {
+    h.selection();
+    router.push("/edge-store" as never);
+  }, [h, router]);
   const renderSection = useCallback(({ item }: { item: HomeSection }) => {
-    if (item.kind === "hero") return <HeroSection />;
+    if (item.kind === "hero") return <HeroSection onEdgePress={handleEdgeStore} />;
     if (item.kind === "sponsored") return <SponsoredSection userId={userId} />;
     if (item.kind === "domains") return <HomeDomainsSection />;
     if (item.kind === "leaderboards") return <View><SectionHeader eyebrow="RANKINGS" title="EAGOH Leaderboards" action="View all" /><LeaderboardsFeatureCard /></View>;

@@ -104,88 +104,106 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
     { role: "user", content: safePrompt },
   ];
 
-  // ── Call OpenAI ────────────────────────────────────────────────────────
-  try {
-    const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages,
-        temperature: sessionType === "quick-check" ? 0.55 : 0.72,
-        max_tokens: sessionType === "quick-check" ? 180 : 420,
-      }),
-    });
+  // ── Call OpenAI with retry ─────────────────────────────────────────────
+  const MAX_RETRIES = 3;
+  let lastError: { status: number; errorCode: string; error: string } | null = null;
 
-    if (!openaiRes.ok) {
-      const status = openaiRes.status;
-      console.warn("[analyst] OpenAI non-ok response", { status });
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages,
+          temperature: sessionType === "quick-check" ? 0.55 : 0.72,
+          max_tokens: sessionType === "quick-check" ? 180 : 420,
+        }),
+      });
 
-      // Distinguish rate limits from other OpenAI errors
-      if (status === 429) {
+      if (!openaiRes.ok) {
+        const status = openaiRes.status;
+        console.warn("[analyst] OpenAI non-ok response", { status, attempt });
+
+        // Distinguish rate limits from other OpenAI errors
+        if (status === 429) {
+          lastError = { status, errorCode: "openai_rate_limit", error: "OpenAI rate limit exceeded." };
+          if (attempt < MAX_RETRIES) {
+            const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+            console.log("[analyst] rate limited, retrying in", { delayMs: delay, attempt });
+            await new Promise((r) => setTimeout(r, delay));
+            continue;
+          }
+          return jsonResponse(
+            { ok: false, errorCode: "openai_rate_limit", error: "OpenAI rate limit exceeded." },
+            429,
+          );
+        }
+
+        // Try to extract OpenAI error detail
+        let openaiDetail = "";
+        try {
+          const errBody = await openaiRes.json<{ error?: { message?: string } }>();
+          openaiDetail = errBody.error?.message ?? "";
+        } catch {
+          // ignore parse errors
+        }
+        console.warn("[analyst] OpenAI error detail", { detail: openaiDetail || "none" });
+
         return jsonResponse(
-          { ok: false, errorCode: "openai_rate_limit", error: "OpenAI rate limit exceeded." },
-          429,
+          { ok: false, errorCode: "openai_error", error: "OpenAI request failed." },
+          502,
         );
       }
 
-      // Try to extract OpenAI error detail
-      let openaiDetail = "";
-      try {
-        const errBody = await openaiRes.json<{ error?: { message?: string } }>();
-        openaiDetail = errBody.error?.message ?? "";
-      } catch {
-        // ignore parse errors
+      const data = await openaiRes.json<{ choices?: Array<{ message?: { content?: string } }> }>();
+      const reply = data.choices?.[0]?.message?.content?.trim();
+
+      if (!reply) {
+        console.warn("[analyst] OpenAI returned empty response");
+        return jsonResponse(
+          { ok: false, errorCode: "openai_empty_response", error: "Analyst returned an empty response." },
+          502,
+        );
       }
-      console.warn("[analyst] OpenAI error detail", { detail: openaiDetail || "none" });
 
-      return jsonResponse(
-        { ok: false, errorCode: "openai_error", error: "OpenAI request failed." },
-        502,
-      );
-    }
+      console.log("[analyst] success", { replyLen: reply.length, attempt });
+      return jsonResponse({
+        ok: true,
+        reply,
+        model: "gpt-4o-mini",
+        sessionType,
+        personality,
+        kind,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      console.error("[analyst] fetch/parse failure", { message, attempt });
 
-    const data = await openaiRes.json<{ choices?: Array<{ message?: { content?: string } }> }>();
-    const reply = data.choices?.[0]?.message?.content?.trim();
+      const isTimeout =
+        message.toLowerCase().includes("timeout") ||
+        message.toLowerCase().includes("abort");
 
-    if (!reply) {
-      console.warn("[analyst] OpenAI returned empty response");
-      return jsonResponse(
-        { ok: false, errorCode: "openai_empty_response", error: "Analyst returned an empty response." },
-        502,
-      );
-    }
-
-    console.log("[analyst] success", { replyLen: reply.length });
-    return jsonResponse({
-      ok: true,
-      reply,
-      model: "gpt-4o-mini",
-      sessionType,
-      personality,
-      kind,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    console.error("[analyst] fetch/parse failure", message);
-
-    // Differentiate timeouts from other network failures
-    const isTimeout =
-      message.toLowerCase().includes("timeout") ||
-      message.toLowerCase().includes("abort");
-
-    return jsonResponse(
-      {
-        ok: false,
-        errorCode: isTimeout ? "openai_error" : "openai_error",
+      lastError = {
+        status: 500,
+        errorCode: "openai_error",
         error: isTimeout ? "Request timed out." : "Analyst service failed safely.",
-      },
-      500,
-    );
+      };
+
+      if (attempt < MAX_RETRIES && (isTimeout || message.toLowerCase().includes("network"))) {
+        const delay = Math.pow(2, attempt) * 1000;
+        console.log("[analyst] network error, retrying in", { delayMs: delay, attempt });
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+    }
   }
+
+  // All retries exhausted
+  return jsonResponse(lastError!, lastError!.status);
 }
 
 export default {

@@ -354,7 +354,7 @@ async function callAnalyst(
     model: data.model ?? "unknown",
   });
 
-  // Handle non-ok responses
+  // Handle non-ok responses — check for rate limits and retry
   if (!response.ok || !data.ok || !data.reply) {
     const code = classifyWorkerError(
       response.status,
@@ -367,6 +367,7 @@ async function callAnalyst(
       httpStatus: response.status,
       workerError: data.error ?? "none",
     });
+
     return {
       ok: false,
       errorCode: code,

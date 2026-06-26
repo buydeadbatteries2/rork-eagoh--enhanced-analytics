@@ -12,6 +12,8 @@
  * and selects the model. We only describe intent + personality from here.
  */
 
+import { normalizeDomainId } from "./domains";
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export type AnalystSessionType =
@@ -218,6 +220,25 @@ function devLog(
 // ── Core call ──────────────────────────────────────────────────────────────
 
 /**
+ * Lightweight service availability check — pings the functions endpoint.
+ * Returns true if the analyst backend is reachable.
+ */
+export async function verifyAnalystService(): Promise<{ ok: boolean; error?: string }> {
+  if (!FUNCTIONS_BASE_URL) {
+    return { ok: false, error: "Analyst service URL not configured." };
+  }
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE_URL}/ping`, { method: "GET" });
+    const data = (await res.json()) as { ok?: boolean };
+    if (res.ok && data.ok) return { ok: true };
+    return { ok: false, error: `Service returned status ${res.status}` };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return { ok: false, error: `Unable to reach analyst service: ${message}` };
+  }
+}
+
+/**
  * Core analyst call. All session types route through this — only the prompt
  * shaping, personality, and budget change.
  *
@@ -237,11 +258,15 @@ async function callAnalyst(
     };
   }
 
+  // Normalise domain for logging
+  const normalizedDomain = eagohMeta?.domain ? normalizeDomainId(eagohMeta.domain) : "none";
+
   // Log request
   devLog("request", {
     eagohId: eagohMeta?.id ?? "none",
     eagohName: eagohMeta?.name ?? "none",
     eagohDomain: eagohMeta?.domain ?? "none",
+    normalizedDomain,
     sessionType: input.sessionType,
     personality: input.personality ?? "tactical",
     kind: input.kind ?? "general",

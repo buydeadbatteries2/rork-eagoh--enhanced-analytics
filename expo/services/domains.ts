@@ -164,28 +164,33 @@ export function detectPromptDomain(prompt: string): string | null {
 export function isPromptInDomain(prompt: string, domainId: string): boolean {
   const normalizedId = normalizeDomainId(domainId);
   const domain = getDomain(normalizedId);
-  if (!domain) return true; // unknown domain → fail open
+  if (!domain) return true;
 
   const lower = prompt.toLowerCase();
   const ownKeywords = DOMAIN_KEYWORDS[normalizedId] ?? [];
 
-  // Direct match against own domain keywords
-  if (ownKeywords.length > 0 && ownKeywords.some((kw) => lower.includes(kw))) {
-    return true;
+  // Direct match against own domain keywords → allow immediately
+  const ownScore = ownKeywords.filter((kw) => lower.includes(kw)).length;
+  if (ownScore > 0) return true;
+
+  // Score ALL other domains — find the strongest competitor
+  let bestOtherScore = 0;
+  for (const otherId of Object.keys(DOMAIN_KEYWORDS)) {
+    if (otherId === normalizedId) continue;
+    const otherKeywords = DOMAIN_KEYWORDS[otherId] ?? [];
+    const otherScore = otherKeywords.filter((kw) => lower.includes(kw)).length;
+    if (otherScore > bestOtherScore) bestOtherScore = otherScore;
   }
 
-  // Multi‑domain scoring: find the best‑matching domain across ALL domains
-  const detectedId = detectPromptDomain(prompt);
+  // No keywords matched anywhere → fail OPEN
+  if (bestOtherScore === 0) return true;
 
-  // No domain keywords matched at all → fail OPEN (allow)
-  if (detectedId === null) return true;
+  // Only reject when another domain CLEARLY scores higher (>= 2 matches while own has 0).
+  // Single-keyword matches are too noisy — they cause false rejections on short prompts.
+  if (bestOtherScore >= 2 && ownScore < 2) return false;
 
-  // The detected domain IS the EAGOH's domain → allow
-  // (This shouldn't happen given the direct check above, but safe to keep)
-  if (detectedId === normalizedId) return true;
-
-  // A DIFFERENT domain matched but EAGOH's own didn't → reject
-  return false;
+  // Uncertain → fail open
+  return true;
 }
 
 /**

@@ -46,6 +46,7 @@ import {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Keyboard,
   KeyboardAvoidingView,
@@ -506,6 +507,18 @@ function ActiveChat({
   const runSession = useCallback(async (): Promise<void> => {
     if (started.current) return;
     started.current = true;
+
+    // Guard: inactive session types show "Coming soon" immediately
+    if (!session.active && session.id !== "open-intelligence" && session.id !== "faction-network" && session.id !== "my-rankings") {
+      setMessages((prev) => [...prev, {
+        id: `a-coming-${Date.now()}`,
+        sender: "analyst",
+        text: "This analyst session is coming online soon.",
+        confidence: 0,
+      }]);
+      setIsTyping(false);
+      return;
+    }
 
     const eagohMeta = { id: eagoh.id, name: eagoh.name || "Unnamed", domain: eagoh.domain ?? "unknown" };
 
@@ -1563,7 +1576,15 @@ export default function SessionsScreen(): JSX.Element {
 
   const handleSessionPress = useCallback((session: SessionType): void => {
     h.selection();
-    if (eagohs.length === 0) return;
+    if (eagohs.length === 0) {
+      Alert.alert("No EAGOH", "Forge an EAGOH first to run sessions.");
+      return;
+    }
+    // Block inactive session types — only Quick Check is connected
+    if (!session.active && session.id !== "open-intelligence" && session.id !== "faction-network" && session.id !== "my-rankings") {
+      Alert.alert("Coming Soon", "This analyst session is coming online soon.");
+      return;
+    }
     setActiveSession(session);
   }, [eagohs.length, h]);
 

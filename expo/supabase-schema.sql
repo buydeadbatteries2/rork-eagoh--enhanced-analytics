@@ -843,6 +843,57 @@ create policy "eb_owner_insert" on public.eagoh_badges
   for insert with check (auth.uid() = user_id);
 
 -- =============================================================================
+-- USER KNOWLEDGE CREDENTIALS (public domain expertise for source credibility)
+-- =============================================================================
+create table if not exists public.user_knowledge_credentials (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  public_title text,
+  domain_expertise text,
+  experience_summary text,
+  accolades text,
+  relevant_background text,
+  years_experience int,
+  credibility_tags jsonb default '[]'::jsonb,
+  is_public boolean default true,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique(user_id)
+);
+
+create index if not exists ukc_user_id_idx on public.user_knowledge_credentials(user_id);
+
+alter table public.user_knowledge_credentials enable row level security;
+
+drop policy if exists "ukc_self_select" on public.user_knowledge_credentials;
+drop policy if exists "ukc_self_insert" on public.user_knowledge_credentials;
+drop policy if exists "ukc_self_update" on public.user_knowledge_credentials;
+drop policy if exists "ukc_self_delete" on public.user_knowledge_credentials;
+drop policy if exists "ukc_marketplace_select" on public.user_knowledge_credentials;
+
+-- Owner can read/write their own credentials
+create policy "ukc_self_select" on public.user_knowledge_credentials
+  for select using (auth.uid() = user_id);
+
+create policy "ukc_self_insert" on public.user_knowledge_credentials
+  for insert with check (auth.uid() = user_id);
+
+create policy "ukc_self_update" on public.user_knowledge_credentials
+  for update using (auth.uid() = user_id);
+
+create policy "ukc_self_delete" on public.user_knowledge_credentials
+  for delete using (auth.uid() = user_id);
+
+-- Marketplace: anyone can read credentials for active vendors
+create policy "ukc_marketplace_select" on public.user_knowledge_credentials
+  for select using (
+    exists (
+      select 1 from public.marketplace_listings ml
+      where ml.vendor_id = user_knowledge_credentials.user_id and ml.active = true
+    )
+  );
+
+-- =============================================================================
 -- STORAGE BUCKET: eagoh-renders (public read, owner write)
 -- =============================================================================
 insert into storage.buckets (id, name, public)

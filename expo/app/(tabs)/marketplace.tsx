@@ -6,6 +6,7 @@ import { useHaptics } from "@/hooks/useHaptics";
 import {
   ArrowRightLeft,
   Award,
+  BookOpen,
   Clock,
   Coins,
   Crown,
@@ -16,6 +17,7 @@ import {
   Pencil,
   PlusCircle,
   Power,
+  ScrollText,
   Search,
   Shield,
   Signal,
@@ -77,6 +79,10 @@ import {
   recordBannerTapHold,
   type EnrichedBanner,
 } from "@/services/sponsoredBanners";
+import {
+  getKnowledgeCredentials,
+  type KnowledgeCredentialsRow,
+} from "@/services/knowledgeCredentials";
 import { getBulkReputations, rankColor as repRankColor, RANK_TIERS, type RankTier } from "@/services/reputation";
 import type { ReputationRow } from "@/services/reputation";
 import { getLeaderboard } from "@/services/leaderboards";
@@ -426,6 +432,14 @@ const ListingCard = memo(function ListingCard({
           )}
         </View>
 
+        {/* Source Credentials label */}
+        {item.has_credentials && (
+          <View style={styles.credentialsLabel}>
+            <BookOpen color={palette.cyan} size={10} />
+            <Text style={styles.credentialsLabelText}>Source Credentials Available</Text>
+          </View>
+        )}
+
         {/* Price + Buy button — stacked vertically */}
         <View style={styles.priceButtonCol}>
           <Text style={styles.pricePreview}>
@@ -470,12 +484,28 @@ function PurchaseModal({
   const [selectedLevel, setSelectedLevel] = useState<SyncLevel>("25%");
   const [selectedDays, setSelectedDays] = useState<number>(1);
   const [showDetails, setShowDetails] = useState(false);
+  const [credentials, setCredentials] = useState<KnowledgeCredentialsRow | null>(null);
+  const [loadingCredentials, setLoadingCredentials] = useState(false);
 
   useEffect(() => {
     setSelectedLevel("25%");
     setSelectedDays(1);
     setShowDetails(false);
+    setCredentials(null);
+    setLoadingCredentials(false);
   }, [listing?.id]);
+
+  const handleToggleDetails = useCallback(() => {
+    const next = !showDetails;
+    setShowDetails(next);
+    // Fetch vendor credentials when opening details
+    if (next && listing?.vendor_id && !credentials) {
+      setLoadingCredentials(true);
+      getKnowledgeCredentials(listing.vendor_id)
+        .then((row) => { setCredentials(row); setLoadingCredentials(false); })
+        .catch(() => setLoadingCredentials(false));
+    }
+  }, [showDetails, listing?.vendor_id, credentials]);
 
   if (!listing) return <></>;
 
@@ -508,7 +538,7 @@ function PurchaseModal({
               <View style={styles.modalEagohNameRow}>
                 <Text style={styles.modalEagohName}>{eagoh?.name}</Text>
                 <Pressable
-                  onPress={() => setShowDetails((v) => !v)}
+                  onPress={handleToggleDetails}
                   style={({ pressed }) => [
                     styles.infoIconBtn,
                     pressed && styles.pressed,
@@ -617,6 +647,109 @@ function PurchaseModal({
                         ...listing.fanatic_teams.map((id: string) => getTeamById(id)?.display_name ?? id),
                       ].filter(Boolean).join(" · ")}
                     </Text>
+                  </View>
+                )}
+
+                {/* Source Credentials */}
+                {(credentials || listing.has_credentials || loadingCredentials) && (
+                  <View style={styles.sourceCredentialsSection}>
+                    <View style={styles.sourceCredentialsHeader}>
+                      <BookOpen color={palette.cyan} size={13} />
+                      <Text style={styles.sourceCredentialsTitle}>Source Credentials</Text>
+                    </View>
+                    <LinearGradient colors={["rgba(0,20,40,0.55)", "rgba(5,15,30,0.70)"]} style={StyleSheet.absoluteFill} />
+                    {loadingCredentials ? (
+                      <View style={{ padding: 12, alignItems: "center" }}>
+                        <ActivityIndicator color={palette.cyan} size="small" />
+                      </View>
+                    ) : credentials ? (
+                      <View style={styles.sourceCredentialsBody}>
+                        {/* Vendor username */}
+                        <View style={styles.sourceCredRow}>
+                          <View style={styles.detailIconWrap}>
+                            <UserCheck color={palette.muted} size={12} />
+                          </View>
+                          <Text style={styles.detailLabel}>Vendor</Text>
+                          <Text style={styles.detailValue}>{listing.vendor_username ?? "Anonymous"}</Text>
+                        </View>
+                        {/* Public display title */}
+                        {credentials.public_title ? (
+                          <View style={styles.sourceCredRow}>
+                            <View style={styles.detailIconWrap}>
+                              <Award color={palette.cyan} size={12} />
+                            </View>
+                            <Text style={styles.detailLabel}>Title</Text>
+                            <Text style={styles.detailValue}>{credentials.public_title}</Text>
+                          </View>
+                        ) : null}
+                        {/* Domain expertise */}
+                        {credentials.domain_expertise ? (
+                          <View style={styles.sourceCredRow}>
+                            <View style={styles.detailIconWrap}>
+                              <ScrollText color={palette.cyan} size={12} />
+                            </View>
+                            <Text style={styles.detailLabel}>Expertise</Text>
+                            <Text style={styles.detailValue}>{credentials.domain_expertise}</Text>
+                          </View>
+                        ) : null}
+                        {/* Experience summary */}
+                        {credentials.experience_summary ? (
+                          <View style={styles.sourceCredRowCol}>
+                            <View style={styles.detailIconWrap}>
+                              <BookOpen color={palette.cyan} size={12} />
+                            </View>
+                            <Text style={styles.detailLabel}>Experience</Text>
+                            <Text style={styles.sourceCredBodyText} numberOfLines={4}>
+                              {credentials.experience_summary}
+                            </Text>
+                          </View>
+                        ) : null}
+                        {/* Accolades */}
+                        {credentials.accolades ? (
+                          <View style={styles.sourceCredRowCol}>
+                            <View style={styles.detailIconWrap}>
+                              <Star color={palette.gold} size={12} />
+                            </View>
+                            <Text style={styles.detailLabel}>Achievements</Text>
+                            <Text style={styles.sourceCredBodyText} numberOfLines={3}>
+                              {credentials.accolades}
+                            </Text>
+                          </View>
+                        ) : null}
+                        {/* Years experience */}
+                        {credentials.years_experience ? (
+                          <View style={styles.sourceCredRow}>
+                            <View style={styles.detailIconWrap}>
+                              <Clock color={palette.muted} size={12} />
+                            </View>
+                            <Text style={styles.detailLabel}>Years</Text>
+                            <Text style={styles.detailValue}>{credentials.years_experience} years</Text>
+                          </View>
+                        ) : null}
+                        {/* Credibility tags */}
+                        {credentials.credibility_tags && credentials.credibility_tags.length > 0 ? (
+                          <View style={styles.sourceCredRowCol}>
+                            <View style={styles.detailIconWrap}>
+                              <Tag color={palette.cyan} size={12} />
+                            </View>
+                            <Text style={styles.detailLabel}>Tags</Text>
+                            <View style={styles.detailDnaWrap}>
+                              {credentials.credibility_tags.map((tag: string) => (
+                                <View key={tag} style={styles.detailDnaTag}>
+                                  <Text style={styles.detailDnaTagText}>{tag}</Text>
+                                </View>
+                              ))}
+                            </View>
+                          </View>
+                        ) : null}
+                      </View>
+                    ) : listing.has_credentials ? (
+                      <View style={styles.sourceCredentialsBody}>
+                        <Text style={styles.sourceCredPlaceholder}>
+                          This vendor has set up knowledge credentials. Tap to view their verified expertise.
+                        </Text>
+                      </View>
+                    ) : null}
                   </View>
                 )}
               </View>
@@ -2455,6 +2588,41 @@ const styles = StyleSheet.create({
   repScoreText: { fontSize: 10, fontWeight: "900" as const },
   vendorDivider: { width: 1, height: 12, backgroundColor: palette.line },
   vendorRepText: { fontSize: 11, fontWeight: "800" as const },
+  // Source Credentials label (on listing cards)
+  credentialsLabel: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 4,
+    marginTop: 4,
+    paddingTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(54,245,255,0.12)",
+  },
+  credentialsLabelText: { color: palette.cyan, fontSize: 9, fontWeight: "800" as const },
+  // Source Credentials section (in purchase modal)
+  sourceCredentialsSection: {
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "rgba(54,245,255,0.16)",
+    overflow: "hidden" as const,
+    marginTop: 4,
+  },
+  sourceCredentialsHeader: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "rgba(54,245,255,0.08)",
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(54,245,255,0.10)",
+  },
+  sourceCredentialsTitle: { color: palette.cyan, fontSize: 12, fontWeight: "900" as const },
+  sourceCredentialsBody: { padding: 12, gap: 8 },
+  sourceCredRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
+  sourceCredRowCol: { gap: 4 },
+  sourceCredBodyText: { color: palette.text, fontSize: 11, fontWeight: "700" as const, lineHeight: 16, marginTop: 2 },
+  sourceCredPlaceholder: { color: palette.muted, fontSize: 11, fontWeight: "700" as const, lineHeight: 16, fontStyle: "italic" as const },
   myListingRepRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6, marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: palette.line },
   myListingRepText: { fontSize: 11, fontWeight: "800" as const },
   pressed: { opacity: 0.72, transform: [{ scale: 0.99 }] },

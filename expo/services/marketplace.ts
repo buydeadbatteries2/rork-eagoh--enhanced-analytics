@@ -3,6 +3,7 @@ import { spendEdge, addSubscriptionEdge } from "@/services/edge";
 import type { UserProfile, SubscriptionTier } from "@/services/profile";
 import type { EagohRecord } from "@/services/eagohs";
 import { getTeamById } from "@/data/teams";
+import { getBulkHasCredentials } from "@/services/knowledgeCredentials";
 
 /** Looks up a domain specialization value from an EAGOH's dna array. */
 function getDomainDnaValue(dna: string[] | undefined | null, columnName: string): string | null {
@@ -105,6 +106,7 @@ export type EnrichedListing = MarketplaceListingRow & {
   sync_success_score: number;
   avg_quality_score: number;
   edge_earned_this_month: number;
+  has_credentials: boolean;
 };
 
 export type EnrichedPurchase = SyncPurchaseRow & {
@@ -397,37 +399,47 @@ export async function listActiveListings(
   if (rows.length === 0) return [];
 
   // Enrich with fanatic teams and vendor stats in parallel
-  const enriched: EnrichedListing[] = await Promise.all(
-    rows.map(async (row) => {
-      // Fanatic teams
-      const { data: teams } = await supabase
-        .from("eagoh_fanatic_teams")
-        .select("team_id")
-        .eq("eagoh_id", row.eagoh_id);
-      const fanaticTeams = (teams ?? []).map((t: any) => t.team_id);
+  // Also bulk-check which vendors have knowledge credentials
+  const vendorIds = [...new Set(rows.map((r) => r.vendor_id))];
+  const [enrichedCore, credentialsSet] = await Promise.all([
+    Promise.all(
+      rows.map(async (row) => {
+        // Fanatic teams
+        const { data: teams } = await supabase
+          .from("eagoh_fanatic_teams")
+          .select("team_id")
+          .eq("eagoh_id", row.eagoh_id);
+        const fanaticTeams = (teams ?? []).map((t: any) => t.team_id);
 
-      // Vendor profile username
-      const { data: profileData } = await supabase
-        .from("profiles")
-        .select("username")
-        .eq("id", row.vendor_id)
-        .maybeSingle();
-      const vendorUsername = (profileData as { username: string | null } | null)?.username ?? null;
+        // Vendor profile username
+        const { data: profileData } = await supabase
+          .from("profiles")
+          .select("username")
+          .eq("id", row.vendor_id)
+          .maybeSingle();
+        const vendorUsername = (profileData as { username: string | null } | null)?.username ?? null;
 
-      // Vendor stats
-      const stats = await getVendorStats(row.vendor_id);
+        // Vendor stats
+        const stats = await getVendorStats(row.vendor_id);
 
-      return {
-        ...row,
-        fanatic_teams: fanaticTeams,
-        vendor_username: vendorUsername,
-        vendor_rank: stats?.rank ?? "UNRANKED",
-        sync_success_score: stats?.sync_success_score ?? 0,
-        avg_quality_score: stats?.avg_quality_score ?? 0,
-        edge_earned_this_month: stats?.edge_earned_this_month ?? 0,
-      };
-    }),
-  );
+        return {
+          ...row,
+          fanatic_teams: fanaticTeams,
+          vendor_username: vendorUsername,
+          vendor_rank: stats?.rank ?? "UNRANKED",
+          sync_success_score: stats?.sync_success_score ?? 0,
+          avg_quality_score: stats?.avg_quality_score ?? 0,
+          edge_earned_this_month: stats?.edge_earned_this_month ?? 0,
+        };
+      }),
+    ),
+    getBulkHasCredentials(vendorIds),
+  ]);
+
+  const enriched: EnrichedListing[] = enrichedCore.map((item) => ({
+    ...item,
+    has_credentials: credentialsSet.has(item.vendor_id),
+  }));
 
   // Apply client-side filters that cross tables
   let result = enriched;
@@ -569,24 +581,33 @@ export async function getMyListings(vendorId: string): Promise<EnrichedListing[]
   if (error) throw error;
   const rows: (MarketplaceListingRow & { eagoh: EagohRecord | null })[] = (data ?? []) as any;
 
-  return Promise.all(
-    rows.map(async (row) => {
-      const { data: teams } = await supabase
-        .from("eagoh_fanatic_teams")
-        .select("team_id")
-        .eq("eagoh_id", row.eagoh_id);
-      const stats = await getVendorStats(row.vendor_id);
-      return {
-        ...row,
-        fanatic_teams: (teams ?? []).map((t: any) => t.team_id),
-        vendor_username: null,
-        vendor_rank: stats?.rank ?? "UNRANKED",
-        sync_success_score: stats?.sync_success_score ?? 0,
-        avg_quality_score: stats?.avg_quality_score ?? 0,
-        edge_earned_this_month: stats?.edge_earned_this_month ?? 0,
-      };
-    }),
-  );
+  const vendorIds = [...new Set(rows.map((r) => r.vendor_id))];
+  const [enrichedCore, credentialsSet] = await Promise.all([
+    Promise.all(
+      rows.map(async (row) => {
+        const { data: teams } = await supabase
+          .from("eagoh_fanatic_teams")
+          .select("team_id")
+          .eq("eagoh_id", row.eagoh_id);
+        const stats = await getVendorStats(row.vendor_id);
+        return {
+          ...row,
+          fanatic_teams: (teams ?? []).map((t: any) => t.team_id),
+          vendor_username: null,
+          vendor_rank: stats?.rank ?? "UNRANKED",
+          sync_success_score: stats?.sync_success_score ?? 0,
+          avg_quality_score: stats?.avg_quality_score ?? 0,
+          edge_earned_this_month: stats?.edge_earned_this_month ?? 0,
+        };
+      }),
+    ),
+    getBulkHasCredentials(vendorIds),
+  ]);
+
+  return enrichedCore.map((item) => ({
+    ...item,
+    has_credentials: credentialsSet.has(item.vendor_id),
+  }));
 }
 
 export type CreateListingInput = {
@@ -918,6 +939,7 @@ export async function getListingById(listingId: string): Promise<EnrichedListing
     .maybeSingle();
 
   const stats = await getVendorStats(row.vendor_id);
+  const credentialsSet = await getBulkHasCredentials([row.vendor_id]);
 
   return {
     ...row,
@@ -927,6 +949,7 @@ export async function getListingById(listingId: string): Promise<EnrichedListing
     sync_success_score: stats?.sync_success_score ?? 0,
     avg_quality_score: stats?.avg_quality_score ?? 0,
     edge_earned_this_month: stats?.edge_earned_this_month ?? 0,
+    has_credentials: credentialsSet.has(row.vendor_id),
   };
 }
 

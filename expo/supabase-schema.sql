@@ -299,6 +299,9 @@ create table if not exists public.open_intelligence (
   quality_score int not null default 0,
   validation_status text not null default 'pending_review',
   influence_score int not null default 0,
+  selected_category text,
+  selected_subtags jsonb default '[]'::jsonb,
+  custom_tags jsonb default '[]'::jsonb,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
@@ -317,6 +320,17 @@ create policy "oi_self_select" on public.open_intelligence
 
 create policy "oi_self_insert" on public.open_intelligence
   for insert with check (auth.uid() = user_id);
+
+-- Backfill: add columns if table already exists in production
+select 1 from pg_catalog.pg_tables where schemaname = 'public' and tablename = 'open_intelligence';
+
+do $$
+begin
+  alter table public.open_intelligence add column if not exists selected_category text;
+  alter table public.open_intelligence add column if not exists selected_subtags jsonb default '[]'::jsonb;
+  alter table public.open_intelligence add column if not exists custom_tags jsonb default '[]'::jsonb;
+exception when others then null;
+end $$;
 
 -- =============================================================================
 -- FACTIONS (intelligence alliances)

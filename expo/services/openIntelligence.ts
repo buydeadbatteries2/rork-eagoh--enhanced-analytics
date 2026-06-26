@@ -1,8 +1,9 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "@/lib/supabase";
 import { spendEdge } from "@/services/edge";
 import type { UserProfile } from "@/services/profile";
 import type { EdgeReason } from "@/services/edge";
-import { getObservationTags, getAllTagsFlat } from "@/data/observationTags";
+import { getObservationTags, getAllTagsFlat, searchTags } from "@/data/observationTags";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -61,9 +62,53 @@ export function getAllTagsForDomain(domainId: string): { id: string; label: stri
   return getAllTagsFlat(domainId);
 }
 
-export function lookupTagLabel(tagId: string, domainId?: string): string {
+/**
+ * Search tags within a domain by a query string.
+ */
+export function searchTagsForDomain(domainId: string, query: string): { id: string; label: string }[] {
+  return searchTags(domainId, query);
+}
+
+/**
+ * Look up a tag label by ID within a domain.
+ */
+export function lookupTagLabelForDomain(tagId: string, domainId?: string): string {
   const tags = domainId ? getAllTagsFlat(domainId) : ALL_TAGS;
   return tags.find((t) => t.id === tagId)?.label ?? tagId;
+}
+
+/** Backward-compat alias — re-export from observationTags */
+export { lookupTagLabel } from "@/data/observationTags";
+
+// ── Recently Used Tags (AsyncStorage) ──────────────────────────────────
+
+const RECENT_TAGS_KEY = "eagoh_recent_tags";
+
+/**
+ * Record that a set of tags was used. Stores up to 20 most recent unique tag IDs
+ * per user, ordered by most recent first.
+ */
+export async function recordRecentTags(tagIds: string[]): Promise<void> {
+  try {
+    const stored = await AsyncStorage.getItem(RECENT_TAGS_KEY);
+    const existing: string[] = stored ? JSON.parse(stored) : [];
+    const updated = [...new Set([...tagIds, ...existing])].slice(0, 20);
+    await AsyncStorage.setItem(RECENT_TAGS_KEY, JSON.stringify(updated));
+  } catch {
+    // AsyncStorage is best-effort
+  }
+}
+
+/**
+ * Get recently used tag IDs, most recent first.
+ */
+export async function getRecentTags(): Promise<string[]> {
+  try {
+    const stored = await AsyncStorage.getItem(RECENT_TAGS_KEY);
+    return stored ? JSON.parse(stored) as string[] : [];
+  } catch {
+    return [];
+  }
 }
 
 // ── DB Row ─────────────────────────────────────────────────────────────
@@ -74,13 +119,16 @@ export type OpenIntelligenceRow = {
   eagoh_id: string;
   intelligence_domain: string;
   entry_type: EntryType;
-  tag: string; // stored tag id (or custom text)
+  tag: string; // stored tag id (or custom text) — backward compat
   content: string;
   character_count_no_spaces: number;
   confidence_level: ConfidenceLevel;
   quality_score: number;
   validation_status: ValidationStatus;
   influence_score: number; // stored as 0-100, mapped to low/medium/high on read
+  selected_category?: string | null;
+  selected_subtags?: string[] | null;
+  custom_tags?: string[] | null;
   created_at: string;
   updated_at: string;
 };
@@ -158,6 +206,16 @@ function influenceLabel(score: number): InfluenceScore {
   return "low";
 }
 
+// ── Tag formatting helpers ─────────────────────────────────────────────
+
+/**
+ * Format subtags array into a display string for the legacy `tag` column.
+ */
+function formatTagField(subtags: string[], customTags?: string[]): string {
+  const all = [...subtags, ...(customTags ?? []).map((t) => `custom:${t}`)];
+  return all.join(", ") || "general";
+}
+
 // ── CRUD ────────────────────────────────────────────────────────────────
 
 export interface SubmitEntryInput {
@@ -169,6 +227,9 @@ export interface SubmitEntryInput {
   tag: string;
   content: string;
   confidenceLevel: ConfidenceLevel;
+  selectedCategory?: string;
+  selectedSubtags?: string[];
+  customTags?: string[];
 }
 
 export interface SubmitEntryResult {
@@ -187,6 +248,7 @@ export interface SubmitEntryResult {
  *   3. Compute quality score
  *   4. Deduct Edge (subscription first, purchased second)
  *   5. Persist to Supabase
+ *   6. Record recently used tags
  */
 export async function submitEntry(input: SubmitEntryInput): Promise<SubmitEntryResult> {
   const cleanContent = input.content.trim();
@@ -233,18 +295,25 @@ export async function submitEntry(input: SubmitEntryInput): Promise<SubmitEntryR
     tag: input.tag,
   });
 
+  const subtags = input.selectedSubtags ?? [];
+  const customTags = input.customTags ?? [];
+  const formattedTag = formatTagField(subtags, customTags);
+
   const row: Omit<OpenIntelligenceRow, "id" | "created_at" | "updated_at"> = {
     user_id: input.userId,
     eagoh_id: input.eagohId,
     intelligence_domain: input.intelligenceDomain,
     entry_type: input.entryType,
-    tag: input.tag,
+    tag: formattedTag,
     content: cleanContent,
     character_count_no_spaces: charCountNoSpaces,
     confidence_level: input.confidenceLevel,
     quality_score: score.qualityScore,
     validation_status: "pending_review",
     influence_score: score.influenceScore,
+    selected_category: input.selectedCategory ?? null,
+    selected_subtags: subtags.length > 0 ? subtags : null,
+    custom_tags: customTags.length > 0 ? customTags : null,
   };
 
   const { data, error } = await supabase
@@ -256,6 +325,13 @@ export async function submitEntry(input: SubmitEntryInput): Promise<SubmitEntryR
   if (error) {
     console.warn("[open-intelligence] insert failed", error.message);
     return { ok: false, error: "Failed to save entry. Edge was deducted. Please contact support." };
+  }
+
+  // Record recently used tags
+  try {
+    await recordRecentTags([...subtags, ...customTags.map((t) => `custom:${t}`)]);
+  } catch {
+    // best-effort
   }
 
   return { ok: true, entry: data as OpenIntelligenceRow, edgeCost };

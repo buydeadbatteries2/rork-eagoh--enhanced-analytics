@@ -4,7 +4,11 @@
  * Features:
  *   - Select EAGOH (domain-locked)
  *   - Entry type picker (Quick / Basic / Advanced) with character limits
- *   - Observation tag selection from 6 categories + custom tag
+ *   - Domain-aware hierarchical taxonomy with category → subtag accordion
+ *   - Multi-select subtags with chip display
+ *   - Tag search within domain
+ *   - Recently Used tags section
+ *   - Custom tags (multiple, max 30 chars each)
  *   - Character counter (excluding spaces)
  *   - Confidence level picker
  *   - Local quality score preview before submit
@@ -25,8 +29,11 @@ import {
   ENTRY_TYPE_LIMITS,
   getTagsForDomain,
   getAllTagsForDomain,
+  searchTagsForDomain,
+  lookupTagLabelForDomain,
   computeQualityScore,
   influenceLabel,
+  getRecentTags,
   listEntriesForEagoh,
   submitEntry,
   type ConfidenceLevel,
@@ -37,14 +44,12 @@ import { useHaptics } from "@/hooks/useHaptics";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   Activity,
-  ArrowLeft,
   BarChart3,
   BrainCircuit,
   Check,
   ChevronDown,
   ChevronRight,
   Clock,
-  Cpu,
   Eye,
   FlaskConical,
   Hash,
@@ -208,145 +213,286 @@ const EntryTypeRow = memo(function EntryTypeRow({
   );
 });
 
-// ── Tag Selector ──────────────────────────────────────────────────────
+// ── Selected Subtags Chips ────────────────────────────────────────────
 
-const TagChip = memo(function TagChip({
+const SelectedSubtagChip = memo(function SelectedSubtagChip({
   tagId,
-  selectedId,
-  onPress,
-  allTags,
+  label,
+  onRemove,
 }: {
   tagId: string;
-  selectedId: string;
-  onPress: (id: string) => void;
-  allTags: { id: string; label: string }[];
+  label: string;
+  onRemove: (id: string) => void;
 }): JSX.Element {
-  const isSelected = selectedId === tagId;
-  const label = allTags.find((t) => t.id === tagId)?.label ?? tagId;
   return (
     <Pressable
-      onPress={() => onPress(tagId)}
-      style={({ pressed }) => [
-        styles.tagChip,
-        isSelected && { borderColor: palette.cyan, backgroundColor: "rgba(108,230,255,0.12)" },
-        pressed && styles.pressed,
-      ]}
+      onPress={() => onRemove(tagId)}
+      style={({ pressed }) => [styles.selectedChip, pressed && styles.pressed]}
     >
-      <Hash color={isSelected ? palette.cyan : palette.muted} size={11} />
-      <Text style={[styles.tagChipText, isSelected && { color: palette.cyan }]}>{label}</Text>
+      <Check color={palette.cyan} size={10} />
+      <Text style={styles.selectedChipText}>{label}</Text>
+      <X color={palette.muted} size={12} />
     </Pressable>
   );
 });
 
+// ── Tag Selector (multi-select, search, recently used) ─────────────────
+
 const TagSelector = memo(function TagSelector({
-  selectedTag,
-  onSelect,
-  customTag,
-  setCustomTag,
+  selectedSubtags,
+  onToggleSubtag,
+  customTags,
+  onAddCustomTag,
+  onRemoveCustomTag,
   domainId,
 }: {
-  selectedTag: string;
-  onSelect: (id: string) => void;
-  customTag: string;
-  setCustomTag: (v: string) => void;
+  selectedSubtags: string[];
+  onToggleSubtag: (id: string) => void;
+  customTags: string[];
+  onAddCustomTag: (tag: string) => void;
+  onRemoveCustomTag: (tag: string) => void;
   domainId: string;
 }): JSX.Element {
   const h = useHaptics();
   const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({});
-  const [showCustom, setShowCustom] = useState<boolean>(false);
-  const isCustom = selectedTag.startsWith("custom:");
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [customInput, setCustomInput] = useState<string>("");
+  const [recentTags, setRecentTags] = useState<string[]>([]);
+
   const tags = useMemo(() => getTagsForDomain(domainId), [domainId]);
   const allTags = useMemo(() => getAllTagsForDomain(domainId), [domainId]);
+
+  // Load recent tags
+  useEffect(() => {
+    getRecentTags().then(setRecentTags);
+  }, []);
 
   const toggleCategory = useCallback((id: string): void => {
     setOpenCategories((prev) => ({ ...prev, [id]: !prev[id] }));
   }, []);
 
-  const handleSelectTag = useCallback((tagId: string): void => {
+  const handleToggle = useCallback((tagId: string): void => {
     h.selection();
-    onSelect(tagId);
-    setShowCustom(false);
-  }, [onSelect, h]);
+    onToggleSubtag(tagId);
+  }, [onToggleSubtag, h]);
 
-  const handleCustomPress = useCallback((): void => {
-    setShowCustom(!showCustom);
-    if (!showCustom && customTag.trim()) {
-      onSelect(`custom:${customTag.trim().slice(0, 30)}`);
+  const handleAddCustom = useCallback((): void => {
+    const trimmed = customInput.trim().slice(0, 30);
+    if (trimmed && !customTags.includes(trimmed)) {
+      onAddCustomTag(trimmed);
+      setCustomInput("");
     }
-  }, [showCustom, customTag, onSelect]);
+  }, [customInput, customTags, onAddCustomTag]);
 
-  const handleCustomChange = useCallback((text: string): void => {
-    const trimmed = text.slice(0, 30);
-    setCustomTag(trimmed);
-    if (trimmed.trim()) {
-      onSelect(`custom:${trimmed.trim()}`);
-    }
-  }, [setCustomTag, onSelect]);
+  const handleRemoveSelected = useCallback((tagId: string): void => {
+    h.selection();
+    onToggleSubtag(tagId);
+  }, [onToggleSubtag, h]);
+
+  // Filtered search results
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return null;
+    return searchTagsForDomain(domainId, searchQuery);
+  }, [searchQuery, domainId]);
+
+  // Recently used tags with labels
+  const recentTagsWithLabels = useMemo(() => {
+    return recentTags
+      .filter((id) => !selectedSubtags.includes(id))
+      .slice(0, 8)
+      .map((id) => {
+        const label = allTags.find((t) => t.id === id)?.label ?? id.replace("custom:", "");
+        return { id, label };
+      });
+  }, [recentTags, selectedSubtags, allTags]);
+
+  const hasAnySelection = selectedSubtags.length > 0 || customTags.length > 0;
 
   return (
     <View style={styles.tagSection}>
-      {tags.map((cat) => {
-        const isOpen = openCategories[cat.id] ?? false;
-        return (
-          <View key={cat.id} style={styles.tagCategory}>
-            <Pressable
-              onPress={() => toggleCategory(cat.id)}
-              style={({ pressed }) => [styles.tagCategoryHeader, pressed && styles.pressed]}
-            >
-              <Text style={styles.tagCategoryLabel}>{cat.label}</Text>
-              {isOpen ? <ChevronDown color={palette.muted} size={14} /> : <ChevronRight color={palette.muted} size={14} />}
-            </Pressable>
-            {isOpen ? (
-              <View style={styles.tagGrid}>
-                {cat.tags.map((tag) => (
-                  <TagChip
-                    key={tag.id}
-                    tagId={tag.id}
-                    selectedId={selectedTag}
-                    onPress={handleSelectTag}
-                    allTags={allTags}
-                  />
-                ))}
-              </View>
-            ) : null}
-          </View>
-        );
-      })}
-
-      {/* Custom tag */}
-      <View style={styles.tagCategory}>
-        <Pressable
-          onPress={handleCustomPress}
-          style={({ pressed }) => [styles.tagCategoryHeader, pressed && styles.pressed]}
-        >
-          <Text style={[styles.tagCategoryLabel, { color: palette.gold }]}>Custom Tag</Text>
-          <Plus color={palette.gold} size={14} />
-        </Pressable>
-        {showCustom ? (
-          <View style={styles.customTagWrap}>
-            <TextInput
-              value={customTag}
-              onChangeText={handleCustomChange}
-              placeholder="Enter custom tag (max 30 chars)"
-              placeholderTextColor={palette.muted}
-              maxLength={30}
-              style={styles.customTagInput}
+      {/* Selected subtags chips */}
+      {selectedSubtags.length > 0 ? (
+        <View style={styles.selectedTagsRow}>
+          {selectedSubtags.map((tagId) => (
+            <SelectedSubtagChip
+              key={tagId}
+              tagId={tagId}
+              label={lookupTagLabelForDomain(tagId, domainId)}
+              onRemove={handleRemoveSelected}
             />
-            {customTag.trim() ? (
-              <Text style={styles.customTagCount}>{customTag.length}/30</Text>
-            ) : null}
-          </View>
-        ) : null}
-        {isCustom ? (
-          <View style={styles.customTagActive}>
-            <Tag color={palette.gold} size={12} />
-            <Text style={styles.customTagActiveText}>{selectedTag.replace("custom:", "")}</Text>
-            <Pressable onPress={() => onSelect("")}>
-              <X color={palette.muted} size={14} />
-            </Pressable>
-          </View>
+          ))}
+        </View>
+      ) : null}
+
+      {/* Custom tags chips */}
+      {customTags.length > 0 ? (
+        <View style={styles.selectedTagsRow}>
+          {customTags.map((ct) => (
+            <SelectedSubtagChip
+              key={`custom-${ct}`}
+              tagId={`custom:${ct}`}
+              label={ct}
+              onRemove={() => onRemoveCustomTag(ct)}
+            />
+          ))}
+        </View>
+      ) : null}
+
+      {/* Search bar */}
+      <View style={styles.searchWrap}>
+        <Search color={palette.muted} size={14} />
+        <TextInput
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          placeholder="Search tags…"
+          placeholderTextColor={palette.muted}
+          style={styles.searchInput}
+        />
+        {searchQuery.length > 0 ? (
+          <Pressable onPress={() => setSearchQuery("")}>
+            <X color={palette.muted} size={14} />
+          </Pressable>
         ) : null}
       </View>
+
+      {/* Search results */}
+      {searchResults !== null ? (
+        searchResults.length > 0 ? (
+          <View style={styles.searchResults}>
+            {searchResults.map((tag) => {
+              const isSelected = selectedSubtags.includes(tag.id);
+              return (
+                <Pressable
+                  key={tag.id}
+                  onPress={() => handleToggle(tag.id)}
+                  style={({ pressed }) => [
+                    styles.tagChip,
+                    isSelected && { borderColor: palette.cyan, backgroundColor: "rgba(108,230,255,0.12)" },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  {isSelected ? <Check color={palette.cyan} size={11} /> : <Hash color={palette.muted} size={11} />}
+                  <Text style={[styles.tagChipText, isSelected && { color: palette.cyan }]}>{tag.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : (
+          <Text style={styles.searchEmpty}>No tags match "{searchQuery}"</Text>
+        )
+      ) : null}
+
+      {/* Recently Used — only show when not searching */}
+      {!searchQuery && recentTagsWithLabels.length > 0 ? (
+        <View style={styles.tagCategory}>
+          <View style={styles.tagCategoryHeader}>
+            <Clock color={palette.gold} size={12} />
+            <Text style={[styles.tagCategoryLabel, { color: palette.gold }]}>Recently Used</Text>
+          </View>
+          <View style={styles.tagGrid}>
+            {recentTagsWithLabels.map((tag) => (
+              <Pressable
+                key={tag.id}
+                onPress={() => handleToggle(tag.id)}
+                style={({ pressed }) => [
+                  styles.tagChip,
+                  { borderColor: "rgba(255,181,71,0.25)" },
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Hash color={palette.gold} size={11} />
+                <Text style={[styles.tagChipText, { color: palette.gold }]}>{tag.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      ) : null}
+
+      {/* Category accordions — hidden while searching */}
+      {!searchQuery ? (
+        tags.map((cat) => {
+          const isOpen = openCategories[cat.id] ?? false;
+          const selectedInCat = cat.tags.filter((t) => selectedSubtags.includes(t.id)).length;
+          return (
+            <View key={cat.id} style={styles.tagCategory}>
+              <Pressable
+                onPress={() => toggleCategory(cat.id)}
+                style={({ pressed }) => [styles.tagCategoryHeader, pressed && styles.pressed]}
+              >
+                <Text style={styles.tagCategoryLabel}>
+                  {cat.label}
+                  {selectedInCat > 0 ? (
+                    <Text style={styles.categoryCount}> ({selectedInCat})</Text>
+                  ) : null}
+                </Text>
+                {isOpen ? <ChevronDown color={palette.muted} size={14} /> : <ChevronRight color={palette.muted} size={14} />}
+              </Pressable>
+              {isOpen ? (
+                <View style={styles.tagGrid}>
+                  {cat.tags.map((tag) => {
+                    const isSelected = selectedSubtags.includes(tag.id);
+                    return (
+                      <Pressable
+                        key={tag.id}
+                        onPress={() => handleToggle(tag.id)}
+                        style={({ pressed }) => [
+                          styles.tagChip,
+                          isSelected && { borderColor: palette.cyan, backgroundColor: "rgba(108,230,255,0.12)" },
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        {isSelected ? <Check color={palette.cyan} size={11} /> : <Hash color={palette.muted} size={11} />}
+                        <Text style={[styles.tagChipText, isSelected && { color: palette.cyan }]}>{tag.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : null}
+            </View>
+          );
+        })
+      ) : null}
+
+      {/* Custom Tags */}
+      <View style={styles.tagCategory}>
+        <View style={styles.tagCategoryHeader}>
+          <Plus color={palette.gold} size={12} />
+          <Text style={[styles.tagCategoryLabel, { color: palette.gold }]}>Custom Tags</Text>
+        </View>
+        <View style={styles.customTagWrap}>
+          <TextInput
+            value={customInput}
+            onChangeText={(t) => setCustomInput(t.slice(0, 30))}
+            placeholder="Enter custom tag (max 30 chars)"
+            placeholderTextColor={palette.muted}
+            maxLength={30}
+            style={styles.customTagInput}
+            onSubmitEditing={handleAddCustom}
+            returnKeyType="done"
+          />
+          <Pressable
+            onPress={handleAddCustom}
+            disabled={!customInput.trim()}
+            style={({ pressed }) => [
+              styles.customAddBtn,
+              !customInput.trim() && { opacity: 0.4 },
+              pressed && styles.pressed,
+            ]}
+          >
+            <Plus color={palette.void} size={14} />
+          </Pressable>
+        </View>
+        {customInput.length > 0 ? (
+          <Text style={styles.customTagCount}>{customInput.length}/30</Text>
+        ) : null}
+      </View>
+
+      {/* Empty state */}
+      {!hasAnySelection && !searchQuery ? (
+        <Text style={styles.tagEmptyState}>
+          Select tags that best describe what your EAGOH is learning.
+        </Text>
+      ) : null}
     </View>
   );
 });
@@ -453,7 +599,18 @@ const LearningEntry = memo(function LearningEntry({
   domainId: string;
 }): JSX.Element {
   const domainTags = useMemo(() => getAllTagsForDomain(domainId), [domainId]);
-  const tagLabel = domainTags.find((t) => t.id === entry.tag)?.label ?? entry.tag.replace("custom:", "");
+
+  // Build display tags from selected_subtags, custom_tags, or fallback to legacy tag field
+  const displayTags: string[] = useMemo(() => {
+    if (entry.selected_subtags && entry.selected_subtags.length > 0) {
+      return entry.selected_subtags.map((id) => domainTags.find((t) => t.id === id)?.label ?? id);
+    }
+    if (entry.custom_tags && entry.custom_tags.length > 0) {
+      return entry.custom_tags;
+    }
+    return [entry.tag === "general" ? "General" : entry.tag.replace("custom:", "")];
+  }, [entry, domainTags]);
+
   const infLabel = influenceLabel(entry.influence_score);
   const infColor = infLabel === "high" ? palette.success : infLabel === "medium" ? palette.gold : palette.muted;
 
@@ -464,9 +621,16 @@ const LearningEntry = memo(function LearningEntry({
   return (
     <View style={styles.learningCard}>
       <View style={styles.learningTop}>
-        <View style={styles.learningBadge}>
-          <Hash color={palette.cyan} size={10} />
-          <Text style={styles.learningBadgeText}>{tagLabel}</Text>
+        <View style={styles.learningBadgeRow}>
+          {displayTags.slice(0, 3).map((label, idx) => (
+            <View key={idx} style={styles.learningBadge}>
+              <Hash color={palette.cyan} size={10} />
+              <Text style={styles.learningBadgeText}>{label}</Text>
+            </View>
+          ))}
+          {displayTags.length > 3 ? (
+            <Text style={styles.learningBadgeMore}>+{displayTags.length - 3}</Text>
+          ) : null}
         </View>
         <View style={styles.learningMeta}>
           <Text style={styles.learningType}>{entryLabel}</Text>
@@ -510,8 +674,8 @@ export default function OpenIntelligenceScreen(): JSX.Element {
   const [selectedEagohId, setSelectedEagohId] = useState<string>("");
   const [entryType, setEntryType] = useState<EntryType>("quick_observation");
   const [content, setContent] = useState<string>("");
-  const [selectedTag, setSelectedTag] = useState<string>("");
-  const [customTag, setCustomTag] = useState<string>("");
+  const [selectedSubtags, setSelectedSubtags] = useState<string[]>([]);
+  const [customTags, setCustomTags] = useState<string[]>([]);
   const [confidenceLevel, setConfidenceLevel] = useState<ConfidenceLevel>("moderate_confidence");
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -566,6 +730,25 @@ export default function OpenIntelligenceScreen(): JSX.Element {
     queryFn: () => listEntriesForEagoh(selectedEagohId, 20),
   });
 
+  const handleToggleSubtag = useCallback((tagId: string): void => {
+    setSelectedSubtags((prev) =>
+      prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]
+    );
+  }, []);
+
+  const handleAddCustomTag = useCallback((tag: string): void => {
+    setCustomTags((prev) => (prev.includes(tag) ? prev : [...prev, tag]));
+  }, []);
+
+  const handleRemoveCustomTag = useCallback((tag: string): void => {
+    setCustomTags((prev) => prev.filter((t) => t !== tag));
+  }, []);
+
+  const legacyTag = useMemo(() => {
+    const all = [...selectedSubtags, ...customTags.map((t) => `custom:${t}`)];
+    return all.join(", ") || "general";
+  }, [selectedSubtags, customTags]);
+
   const handleSubmit = useCallback(async (): Promise<void> => {
     if (!selectedEagohId || !profile || !content.trim()) return;
     h.success();
@@ -579,22 +762,24 @@ export default function OpenIntelligenceScreen(): JSX.Element {
       eagohId: selectedEagohId,
       intelligenceDomain: selectedEagoh?.domain ?? "unknown",
       entryType,
-      tag: selectedTag || "general",
+      tag: legacyTag,
       content: content.trim(),
       confidenceLevel,
+      selectedSubtags,
+      customTags,
     });
 
     if (result.ok) {
       setContent("");
-      setSelectedTag("");
-      setCustomTag("");
+      setSelectedSubtags([]);
+      setCustomTags([]);
       setSubmitSuccess(`Entry saved. ${result.edgeCost} Edge deducted.`);
       queryClient.invalidateQueries({ queryKey: ["oi", "feed", selectedEagohId] });
     } else {
       setSubmitError(result.error ?? "Submit failed.");
     }
     setIsSubmitting(false);
-  }, [selectedEagohId, profile, content, selectedEagoh, entryType, selectedTag, confidenceLevel, queryClient]);
+  }, [selectedEagohId, profile, content, selectedEagoh, entryType, legacyTag, confidenceLevel, selectedSubtags, customTags, queryClient]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -682,12 +867,13 @@ export default function OpenIntelligenceScreen(): JSX.Element {
 
           {/* Tag Selection */}
           <View style={styles.block}>
-            <SectionTitle eyebrow="OBSERVATION TAG" title="Classify the signal" />
+            <SectionTitle eyebrow="OBSERVATION TAGS" title="Classify the signal" />
             <TagSelector
-              selectedTag={selectedTag}
-              onSelect={setSelectedTag}
-              customTag={customTag}
-              setCustomTag={setCustomTag}
+              selectedSubtags={selectedSubtags}
+              onToggleSubtag={handleToggleSubtag}
+              customTags={customTags}
+              onAddCustomTag={handleAddCustomTag}
+              onRemoveCustomTag={handleRemoveCustomTag}
               domainId={currentDomain}
             />
           </View>
@@ -705,7 +891,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
               content={content}
               entryType={entryType}
               confidenceLevel={confidenceLevel}
-              tag={selectedTag}
+              tag={legacyTag}
               domainId={currentDomain}
             />
           </View>
@@ -918,6 +1104,61 @@ const styles = StyleSheet.create({
   charHint: { color: palette.muted, fontSize: 10, fontWeight: "700" },
   charCount: { fontSize: 11, fontWeight: "900", color: palette.text },
 
+  // Tags — selected chips
+  selectedTagsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 5,
+    marginBottom: 6,
+  },
+  selectedChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "rgba(108,230,255,0.35)",
+    backgroundColor: "rgba(108,230,255,0.12)",
+  },
+  selectedChipText: { color: palette.cyan, fontSize: 11, fontWeight: "800" },
+
+  // Search
+  searchWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 10,
+    minHeight: 38,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(255,255,255,0.03)",
+    marginBottom: 6,
+  },
+  searchInput: {
+    flex: 1,
+    color: palette.text,
+    fontSize: 12,
+    fontWeight: "700",
+    paddingVertical: 4,
+  },
+  searchResults: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 5,
+    marginBottom: 8,
+  },
+  searchEmpty: {
+    color: palette.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    textAlign: "center",
+    paddingVertical: 10,
+    marginBottom: 8,
+  },
+
   // Tags
   tagSection: { gap: 4 },
   tagCategory: { marginBottom: 4 },
@@ -929,6 +1170,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   tagCategoryLabel: { color: palette.text, fontSize: 12, fontWeight: "900", flex: 1 },
+  categoryCount: { color: palette.cyan, fontSize: 11, fontWeight: "700" },
   tagGrid: { flexDirection: "row", flexWrap: "wrap", gap: 5, paddingLeft: 4 },
   tagChip: {
     flexDirection: "row",
@@ -942,11 +1184,23 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.03)",
   },
   tagChipText: { color: palette.muted, fontSize: 11, fontWeight: "800" },
+  tagEmptyState: {
+    color: palette.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    textAlign: "center",
+    paddingVertical: 14,
+    fontStyle: "italic",
+  },
   customTagWrap: {
-    paddingHorizontal: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingLeft: 4,
     marginTop: 4,
   },
   customTagInput: {
+    flex: 1,
     color: palette.text,
     fontSize: 13,
     fontWeight: "700",
@@ -957,28 +1211,22 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255, 181, 71, 0.3)",
     backgroundColor: "rgba(255,181,71,0.06)",
   },
+  customAddBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 5,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: palette.gold,
+  },
   customTagCount: {
     color: palette.gold,
     fontSize: 10,
     fontWeight: "800",
     textAlign: "right",
     marginTop: 4,
+    paddingRight: 4,
   },
-  customTagActive: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 5,
-    borderWidth: 1,
-    borderColor: "rgba(255,181,71,0.30)",
-    backgroundColor: "rgba(255,181,71,0.08)",
-    marginLeft: 4,
-    marginTop: 4,
-    alignSelf: "flex-start",
-  },
-  customTagActiveText: { color: palette.gold, fontSize: 12, fontWeight: "800" },
 
   // Confidence
   confidenceRow: { flexDirection: "row", flexWrap: "wrap", gap: 5 },
@@ -1072,7 +1320,8 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(10,18,30,0.45)",
     gap: 6,
   },
-  learningTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  learningTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 4 },
+  learningBadgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, flex: 1 },
   learningBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -1085,6 +1334,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(108,230,255,0.20)",
   },
   learningBadgeText: { color: palette.cyan, fontSize: 9, fontWeight: "900" },
+  learningBadgeMore: { color: palette.muted, fontSize: 9, fontWeight: "700", alignSelf: "center" },
   learningMeta: { flexDirection: "row", alignItems: "center", gap: 4 },
   learningType: { color: palette.muted, fontSize: 10, fontWeight: "700" },
   learningDot: { color: palette.muted, fontSize: 8 },

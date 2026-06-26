@@ -33,7 +33,7 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "
 import { Animated, DimensionValue, Easing, FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useEdge } from "@/providers/EdgeProvider";
-import { getQuickCheckCost, runQuickCheck, type AnalystRequestKind } from "@/services/analyst";
+import { getQuickCheckCost, runQuickCheck, runQuickAnalytics, runStandardSession, runDeepDive, type AnalystRequestKind, type AnalystCallError } from "@/services/analyst";
 
 type LabMode = "forge" | "intelligence" | "analyst";
 type ForgeStep = "Identity" | "DNA" | "Teams" | "Body" | "Pose" | "Preview";
@@ -430,79 +430,76 @@ export default function LabsScreen(): JSX.Element {
     h.selection();
     setAnalystError(null);
 
-    // ---- Quick Check path: live OpenAI via secure server + Edge deduction ----
+    // ---- Quick Check path: live OpenAI via secure server — Edge deducted ONLY on success ----
     if (selectedSession === "quick-check") {
       const cost = getQuickCheckCost(prompt);
       if (edgeTotal < cost) {
-        setAnalystError(`Insufficient Edge. Quick Check needs ${cost} Edge.`);
+        setAnalystError(`Insufficient Edge. Quick Check needs ${cost} Edge (have ${edgeTotal}).`);
         return;
       }
       const kind = detectQuickCheckKind(prompt);
       setDraftPrompt("");
       setMessages((current) => [...current, { id: `u-${Date.now()}`, sender: "user", text: prompt }]);
       setIsAnalystTyping(true);
-      try {
-        await deductQuickCheck(prompt, `Quick Check (${kind}) · ${cost} Edge`);
-      } catch (error) {
-        console.warn("Edge deduction failed", error instanceof Error ? error.message : error);
-        setAnalystError("Edge deduction failed. Try again in a moment.");
+
+      // Call analyst FIRST — do NOT deduct Edge until we know the call succeeded
+      const result = await runQuickCheck({
+        prompt,
+        kind,
+        personality: "tactical",
+        context: memoryCards.map((item) => `${item.title}: ${item.detail}`),
+      });
+
+      if (!result.ok) {
+        // Analyst failed — do NOT deduct Edge
+        setAnalystError(result.error);
+        setMessages((current) => [...current, { id: `a-${Date.now()}`, sender: "analyst", text: result.fallback, confidence: 72 }]);
         setIsAnalystTyping(false);
         return;
       }
+
+      // Analyst succeeded — now deduct Edge
       try {
-        const result = await runQuickCheck({
-          prompt,
-          kind,
-          personality: "tactical",
-          context: memoryCards.map((item) => `${item.title}: ${item.detail}`),
-        });
-        if (result.ok) {
-          setConnectedModel(result.model);
-          setMessages((current) => [...current, { id: `a-${Date.now()}`, sender: "analyst", text: result.reply, confidence: result.confidence, cost }]);
-        } else {
-          setAnalystError(result.error);
-          setMessages((current) => [...current, { id: `a-${Date.now()}`, sender: "analyst", text: result.fallback, confidence: 72, cost }]);
-        }
-      } finally {
+        await deductQuickCheck(prompt, `Quick Check (${kind}) · ${cost} Edge`);
+      } catch (deductionErr) {
+        console.warn("Edge deduction failed after successful analyst call", deductionErr instanceof Error ? deductionErr.message : deductionErr);
+        // Still show the reply — Edge deduction is a secondary concern
+        setConnectedModel(result.model);
+        setMessages((current) => [...current, { id: `a-${Date.now()}`, sender: "analyst", text: result.reply, confidence: result.confidence }]);
+        setAnalystError("Edge deduction failed, but here's your analysis.");
         setIsAnalystTyping(false);
+        return;
       }
+
+      setConnectedModel(result.model);
+      setMessages((current) => [...current, { id: `a-${Date.now()}`, sender: "analyst", text: result.reply, confidence: result.confidence, cost }]);
+      setIsAnalystTyping(false);
       return;
     }
 
-    // ---- Other session types: existing mock/server flow (no Edge deduction yet) ----
+    // ---- Other session types: use error-aware analyst wrappers ----
     setDraftPrompt("");
     setMessages((current) => [...current, { id: `u-${Date.now()}`, sender: "user", text: prompt }]);
-
-    if (!functionsBaseUrl) {
-      setAnalystError("Analyst link is not configured yet. Showing local fallback only.");
-      setMessages((current) => [...current, { id: `a-${Date.now()}`, sender: "analyst", text: "Fallback read: the tactical signal is worth watching, but I’d wait for one more validation point before treating it as a true edge.", confidence: 76 }]);
-      return;
-    }
-
     setIsAnalystTyping(true);
-    try {
-      const response = await fetch(`${functionsBaseUrl}/analyst/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          sessionType: selectedSession,
-          context: memoryCards.map((item) => `${item.title}: ${item.detail}`),
-        }),
-      });
-      const data = (await response.json()) as AnalystResponse;
-      if (!response.ok || !data.ok || !data.reply) {
-        throw new Error(data.error ?? "Analyst unavailable");
-      }
-      setConnectedModel(data.model ?? "gpt-4o-mini");
-      setMessages((current) => [...current, { id: `a-${Date.now()}`, sender: "analyst", text: data.reply ?? "No response generated.", confidence: selectedSession === "oracle" ? 93 : 89 }]);
-    } catch (error) {
-      console.warn("Analyst request failed safely", error instanceof Error ? error.message : "Unknown error");
-      setAnalystError("Live analyst is temporarily unavailable. Local fallback response shown.");
-      setMessages((current) => [...current, { id: `a-${Date.now()}`, sender: "analyst", text: "Fallback read: I’m seeing a conditional edge, not a lock. Watch fatigue, lineup chemistry, and crowd pressure before committing Edge confidence.", confidence: 74 }]);
-    } finally {
-      setIsAnalystTyping(false);
+
+    const context = memoryCards.map((item) => `${item.title}: ${item.detail}`);
+    let result: Awaited<ReturnType<typeof runQuickCheck>>;
+    if (selectedSession === "quick-analysis") {
+      result = await runQuickAnalytics({ prompt, kind: "general", personality: "calm", context });
+    } else if (selectedSession === "oracle") {
+      result = await runDeepDive({ prompt, kind: "general", personality: "oracle", context });
+    } else {
+      result = await runStandardSession({ prompt, kind: "general", personality: "calm", context });
     }
+
+    if (result.ok) {
+      setConnectedModel(result.model);
+      setMessages((current) => [...current, { id: `a-${Date.now()}`, sender: "analyst", text: result.reply, confidence: result.confidence }]);
+    } else {
+      setAnalystError(result.error);
+      setMessages((current) => [...current, { id: `a-${Date.now()}`, sender: "analyst", text: result.fallback, confidence: 74 }]);
+    }
+    setIsAnalystTyping(false);
   }, [draftPrompt, isAnalystTyping, isEdgeMutating, selectedSession, edgeTotal, deductQuickCheck]);
 
   const renderStep = (): JSX.Element => {

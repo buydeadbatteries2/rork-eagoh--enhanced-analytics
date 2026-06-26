@@ -48,20 +48,33 @@ function getKindInstruction(kind: string): string {
 }
 
 async function handleAnalystChat(request: Request, env: Env): Promise<Response> {
+  // ── API key check ──────────────────────────────────────────────────────
   if (!env.OPENAI_API_KEY) {
-    return jsonResponse({ ok: false, error: "OpenAI key is not configured yet." }, 503);
+    console.warn("[analyst] missing OPENAI_API_KEY — returning 503");
+    return jsonResponse(
+      { ok: false, errorCode: "missing_api_key", error: "OpenAI API key is not configured." },
+      503,
+    );
   }
 
+  // ── Parse request ──────────────────────────────────────────────────────
   let payload: AnalystRequest;
   try {
     payload = (await request.json()) as AnalystRequest;
   } catch {
-    return jsonResponse({ ok: false, error: "Invalid request payload." }, 400);
+    console.warn("[analyst] invalid JSON payload");
+    return jsonResponse(
+      { ok: false, errorCode: "invalid_request", error: "Invalid request payload." },
+      400,
+    );
   }
 
   const prompt = payload.prompt?.trim();
   if (!prompt) {
-    return jsonResponse({ ok: false, error: "Prompt is required." }, 400);
+    return jsonResponse(
+      { ok: false, errorCode: "invalid_request", error: "Prompt is required." },
+      400,
+    );
   }
 
   const safePrompt = prompt.slice(0, 1200);
@@ -69,6 +82,15 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
   const personality = payload.personality ?? "tactical";
   const kind = payload.kind ?? "general";
   const context = payload.context?.slice(0, 6).map((item) => item.slice(0, 240)) ?? [];
+
+  console.log("[analyst] request", {
+    sessionType,
+    personality,
+    kind,
+    promptLen: safePrompt.length,
+    contextCount: context.length,
+  });
+
   const systemContent = [
     "You are the EAGOH Analyst: intelligent, emotionally aware, tactical, premium, and futuristic.",
     "Do not claim certainty. Do not mention internal implementation or tools.",
@@ -82,8 +104,9 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
     { role: "user", content: safePrompt },
   ];
 
+  // ── Call OpenAI ────────────────────────────────────────────────────────
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${env.OPENAI_API_KEY}`,
@@ -97,22 +120,71 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
       }),
     });
 
-    if (!response.ok) {
-      const status = response.status;
-      console.warn("OpenAI request failed", { status });
-      return jsonResponse({ ok: false, error: "Analyst service is temporarily unavailable." }, 502);
+    if (!openaiRes.ok) {
+      const status = openaiRes.status;
+      console.warn("[analyst] OpenAI non-ok response", { status });
+
+      // Distinguish rate limits from other OpenAI errors
+      if (status === 429) {
+        return jsonResponse(
+          { ok: false, errorCode: "openai_rate_limit", error: "OpenAI rate limit exceeded." },
+          429,
+        );
+      }
+
+      // Try to extract OpenAI error detail
+      let openaiDetail = "";
+      try {
+        const errBody = await openaiRes.json<{ error?: { message?: string } }>();
+        openaiDetail = errBody.error?.message ?? "";
+      } catch {
+        // ignore parse errors
+      }
+      console.warn("[analyst] OpenAI error detail", { detail: openaiDetail || "none" });
+
+      return jsonResponse(
+        { ok: false, errorCode: "openai_error", error: "OpenAI request failed." },
+        502,
+      );
     }
 
-    const data = await response.json<{ choices?: Array<{ message?: { content?: string } }> }>();
+    const data = await openaiRes.json<{ choices?: Array<{ message?: { content?: string } }> }>();
     const reply = data.choices?.[0]?.message?.content?.trim();
+
     if (!reply) {
-      return jsonResponse({ ok: false, error: "Analyst returned an empty response." }, 502);
+      console.warn("[analyst] OpenAI returned empty response");
+      return jsonResponse(
+        { ok: false, errorCode: "openai_empty_response", error: "Analyst returned an empty response." },
+        502,
+      );
     }
 
-    return jsonResponse({ ok: true, reply, model: "gpt-4o-mini", sessionType, personality, kind });
+    console.log("[analyst] success", { replyLen: reply.length });
+    return jsonResponse({
+      ok: true,
+      reply,
+      model: "gpt-4o-mini",
+      sessionType,
+      personality,
+      kind,
+    });
   } catch (error) {
-    console.error("Analyst chat failure", error instanceof Error ? error.message : "Unknown error");
-    return jsonResponse({ ok: false, error: "Analyst service failed safely." }, 500);
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("[analyst] fetch/parse failure", message);
+
+    // Differentiate timeouts from other network failures
+    const isTimeout =
+      message.toLowerCase().includes("timeout") ||
+      message.toLowerCase().includes("abort");
+
+    return jsonResponse(
+      {
+        ok: false,
+        errorCode: isTimeout ? "openai_error" : "openai_error",
+        error: isTimeout ? "Request timed out." : "Analyst service failed safely.",
+      },
+      500,
+    );
   }
 }
 

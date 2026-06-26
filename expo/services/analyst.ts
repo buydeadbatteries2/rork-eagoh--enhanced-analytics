@@ -3,7 +3,7 @@
  *
  * Modular, lightweight wrapper around the secure `/analyst/chat` server route.
  * Designed to scale across multiple session tiers:
- *   - Quick Check (cheap, concise, tactical)
+ *   - Quick Check (cheap, concise, tactical) — ACTIVE
  *   - Quick Analytics (placeholder — wired later)
  *   - Standard Session (placeholder — wired later)
  *   - Deep Dive / Oracle (placeholder — wired later)
@@ -11,6 +11,8 @@
  * No OpenAI key ever lives on the client. The Workers function holds the key
  * and selects the model. We only describe intent + personality from here.
  */
+
+// ── Types ──────────────────────────────────────────────────────────────────
 
 export type AnalystSessionType =
   | "quick-check"
@@ -47,13 +49,31 @@ export type AnalystCallResult = {
   confidence: number;
 };
 
+/** Specific error codes returned by the Cloudflare worker. */
+export type AnalystErrorCode =
+  | "missing_api_key"
+  | "invalid_request"
+  | "openai_error"
+  | "openai_rate_limit"
+  | "openai_empty_response"
+  | "network_error"
+  | "timeout"
+  | "not_implemented"
+  | "unknown";
+
 export type AnalystCallError = {
   ok: false;
+  /** Machine-readable error code. */
+  errorCode: AnalystErrorCode;
+  /** User-facing message. */
   error: string;
+  /** Safe fallback reply shown when the real analyst can't respond. */
   fallback: string;
 };
 
 export type AnalystResponse = AnalystCallResult | AnalystCallError;
+
+// ── Constants ──────────────────────────────────────────────────────────────
 
 const FUNCTIONS_BASE_URL = process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL;
 
@@ -106,6 +126,22 @@ const SESSION_BUDGETS: Record<AnalystSessionType, { sentences: number; baseConfi
   oracle: { sentences: 10, baseConfidence: 93 },
 };
 
+// ── User-facing error messages per error code ──────────────────────────────
+
+const ERROR_MESSAGES: Record<AnalystErrorCode, string> = {
+  missing_api_key: "OpenAI API key not configured.",
+  invalid_request: "Invalid session request.",
+  openai_error: "Analyst service encountered an error.",
+  openai_rate_limit: "Analyst service is temporarily busy. Please try again.",
+  openai_empty_response: "Analyst returned an empty response.",
+  network_error: "Unable to connect to analyst service.",
+  timeout: "Analyst request timed out. Please try again.",
+  not_implemented: "This analyst session is coming online soon.",
+  unknown: "Analyst service is temporarily unavailable.",
+};
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
 function buildSystemHints(input: AnalystCallInput): string {
   const personality = PERSONALITY_PRESETS[input.personality ?? "tactical"];
   const frame = KIND_FRAMES[input.kind ?? "general"];
@@ -125,18 +161,102 @@ function localFallback(input: AnalystCallInput): string {
 }
 
 /**
+ * Sanitise a prompt for logging — truncate and strip line breaks so logs stay
+ * readable and never contain secrets.
+ */
+function sanitizeForLog(text: string): string {
+  return text.slice(0, 120).replace(/\n/g, " ");
+}
+
+/**
+ * Parse the worker error response into a specific AnalystErrorCode.
+ * The worker returns `{ ok: false, errorCode?: string, error: string }`.
+ */
+function classifyWorkerError(
+  httpStatus: number,
+  errorCode?: string,
+  errorMessage?: string,
+): AnalystErrorCode {
+  // Worker returns specific errorCode strings
+  if (errorCode === "missing_api_key") return "missing_api_key";
+  if (errorCode === "invalid_request") return "invalid_request";
+  if (errorCode === "openai_rate_limit") return "openai_rate_limit";
+  if (errorCode === "openai_empty_response") return "openai_empty_response";
+  if (errorCode === "openai_error") return "openai_error";
+
+  // Fall back to HTTP status heuristics
+  if (httpStatus === 503) return "missing_api_key";
+  if (httpStatus === 429) return "openai_rate_limit";
+  if (httpStatus === 502 || httpStatus === 500) return "openai_error";
+  if (httpStatus === 400) return "invalid_request";
+
+  // Check message content
+  if (errorMessage?.toLowerCase().includes("rate")) return "openai_rate_limit";
+  if (errorMessage?.toLowerCase().includes("empty")) return "openai_empty_response";
+
+  return "unknown";
+}
+
+// ── Diagnostic logger (development only) ───────────────────────────────────
+
+let devLogId = 0;
+
+function devLog(
+  event: "request" | "response" | "error",
+  details: Record<string, unknown>,
+): void {
+  if (process.env.NODE_ENV === "production") return;
+  const id = ++devLogId;
+  const prefix = `[analyst:#${id}]`;
+  // eslint-disable-next-line no-console
+  console.log(
+    `${prefix} ${event}`,
+    JSON.stringify(details, null, 0),
+  );
+}
+
+// ── Core call ──────────────────────────────────────────────────────────────
+
+/**
  * Core analyst call. All session types route through this — only the prompt
  * shaping, personality, and budget change.
+ *
+ * @param eagohMeta — optional EAGOH metadata for diagnostic logging (never sent to API).
  */
-async function callAnalyst(input: AnalystCallInput): Promise<AnalystResponse> {
+async function callAnalyst(
+  input: AnalystCallInput,
+  eagohMeta?: { id: string; name: string; domain: string },
+): Promise<AnalystResponse> {
   const prompt = input.prompt.trim();
   if (!prompt) {
-    return { ok: false, error: "Prompt is empty.", fallback: localFallback(input) };
-  }
-  if (!FUNCTIONS_BASE_URL) {
     return {
       ok: false,
-      error: "Analyst link is not configured yet.",
+      errorCode: "invalid_request",
+      error: "Prompt is empty.",
+      fallback: localFallback(input),
+    };
+  }
+
+  // Log request
+  devLog("request", {
+    eagohId: eagohMeta?.id ?? "none",
+    eagohName: eagohMeta?.name ?? "none",
+    eagohDomain: eagohMeta?.domain ?? "none",
+    sessionType: input.sessionType,
+    personality: input.personality ?? "tactical",
+    kind: input.kind ?? "general",
+    promptPreview: sanitizeForLog(prompt),
+    promptLength: prompt.length,
+    contextCount: input.context?.length ?? 0,
+    functionsBaseUrl: FUNCTIONS_BASE_URL ? "configured" : "missing",
+  });
+
+  if (!FUNCTIONS_BASE_URL) {
+    devLog("error", { reason: "missing_functions_url" });
+    return {
+      ok: false,
+      errorCode: "network_error",
+      error: ERROR_MESSAGES.network_error,
       fallback: localFallback(input),
     };
   }
@@ -144,45 +264,103 @@ async function callAnalyst(input: AnalystCallInput): Promise<AnalystResponse> {
   const systemHints = buildSystemHints(input);
   const fullPrompt = `${systemHints}\n\nUser question: ${prompt}`;
 
+  const payload = {
+    prompt: fullPrompt,
+    sessionType: input.sessionType,
+    personality: input.personality ?? "tactical",
+    kind: input.kind ?? "general",
+    context: input.context ?? [],
+  };
+
+  let response: Response;
   try {
-    const response = await fetch(`${FUNCTIONS_BASE_URL}/analyst/chat`, {
+    response = await fetch(`${FUNCTIONS_BASE_URL}/analyst/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt: fullPrompt,
-        sessionType: input.sessionType,
-        personality: input.personality ?? "tactical",
-        kind: input.kind ?? "general",
-        context: input.context ?? [],
-      }),
+      body: JSON.stringify(payload),
     });
-    const data = (await response.json()) as {
-      ok?: boolean;
-      reply?: string;
-      model?: string;
-      error?: string;
-    };
-    if (!response.ok || !data.ok || !data.reply) {
-      throw new Error(data.error ?? `HTTP ${response.status}`);
-    }
-    const budget = SESSION_BUDGETS[input.sessionType];
-    return {
-      ok: true,
-      reply: data.reply.trim(),
-      model: data.model ?? "gpt-4o-mini",
-      sessionType: input.sessionType,
-      confidence: budget.baseConfidence,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    console.warn("[analyst] call failed safely", message);
+  } catch (fetchError) {
+    const message = fetchError instanceof Error ? fetchError.message : "Unknown fetch error";
+    devLog("error", {
+      reason: "network_error",
+      fetchMessage: message,
+      isTimeout: message.toLowerCase().includes("timeout") || message.toLowerCase().includes("abort"),
+    });
+    const isTimeout = message.toLowerCase().includes("timeout") || message.toLowerCase().includes("abort");
     return {
       ok: false,
-      error: "Analyst service is temporarily unavailable.",
+      errorCode: isTimeout ? "timeout" : "network_error",
+      error: isTimeout ? ERROR_MESSAGES.timeout : ERROR_MESSAGES.network_error,
       fallback: localFallback(input),
     };
   }
+
+  // Parse response body
+  let data: {
+    ok?: boolean;
+    reply?: string;
+    model?: string;
+    error?: string;
+    errorCode?: string;
+    status?: number;
+  };
+  try {
+    data = (await response.json()) as typeof data;
+  } catch {
+    devLog("error", {
+      reason: "invalid_json_response",
+      httpStatus: response.status,
+    });
+    return {
+      ok: false,
+      errorCode: "openai_error",
+      error: ERROR_MESSAGES.openai_error,
+      fallback: localFallback(input),
+    };
+  }
+
+  // Log response
+  devLog("response", {
+    httpStatus: response.status,
+    ok: data.ok ?? false,
+    errorCode: data.errorCode ?? "none",
+    error: data.error ? sanitizeForLog(data.error) : "none",
+    hasReply: !!data.reply,
+    model: data.model ?? "unknown",
+  });
+
+  // Handle non-ok responses
+  if (!response.ok || !data.ok || !data.reply) {
+    const code = classifyWorkerError(
+      response.status,
+      data.errorCode,
+      data.error,
+    );
+    devLog("error", {
+      reason: "worker_error",
+      errorCode: code,
+      httpStatus: response.status,
+      workerError: data.error ?? "none",
+    });
+    return {
+      ok: false,
+      errorCode: code,
+      error: ERROR_MESSAGES[code],
+      fallback: localFallback(input),
+    };
+  }
+
+  const budget = SESSION_BUDGETS[input.sessionType];
+  return {
+    ok: true,
+    reply: data.reply.trim(),
+    model: data.model ?? "gpt-4o-mini",
+    sessionType: input.sessionType,
+    confidence: budget.baseConfidence,
+  };
 }
+
+// ── Session type wrappers ──────────────────────────────────────────────────
 
 /** Quick Check — fast, concise, tactical. ACTIVE. */
 export function runQuickCheck(args: {
@@ -190,14 +368,18 @@ export function runQuickCheck(args: {
   kind?: AnalystRequestKind;
   personality?: AnalystPersonality;
   context?: string[];
+  eagohMeta?: { id: string; name: string; domain: string };
 }): Promise<AnalystResponse> {
-  return callAnalyst({
-    prompt: args.prompt,
-    sessionType: "quick-check",
-    kind: args.kind ?? "general",
-    personality: args.personality ?? "tactical",
-    context: args.context,
-  });
+  return callAnalyst(
+    {
+      prompt: args.prompt,
+      sessionType: "quick-check",
+      kind: args.kind ?? "general",
+      personality: args.personality ?? "tactical",
+      context: args.context,
+    },
+    args.eagohMeta,
+  );
 }
 
 /** Quick Analytics — short-form analytics tier. Reserved for future activation. */
@@ -206,14 +388,18 @@ export function runQuickAnalytics(args: {
   kind?: AnalystRequestKind;
   personality?: AnalystPersonality;
   context?: string[];
+  eagohMeta?: { id: string; name: string; domain: string };
 }): Promise<AnalystResponse> {
-  return callAnalyst({
-    prompt: args.prompt,
-    sessionType: "quick-analytics",
-    kind: args.kind,
-    personality: args.personality ?? "calm",
-    context: args.context,
-  });
+  return callAnalyst(
+    {
+      prompt: args.prompt,
+      sessionType: "quick-analytics",
+      kind: args.kind,
+      personality: args.personality ?? "calm",
+      context: args.context,
+    },
+    args.eagohMeta,
+  );
 }
 
 /** Standard Session — reserved for future activation. */
@@ -222,14 +408,18 @@ export function runStandardSession(args: {
   kind?: AnalystRequestKind;
   personality?: AnalystPersonality;
   context?: string[];
+  eagohMeta?: { id: string; name: string; domain: string };
 }): Promise<AnalystResponse> {
-  return callAnalyst({
-    prompt: args.prompt,
-    sessionType: "standard",
-    kind: args.kind,
-    personality: args.personality ?? "calm",
-    context: args.context,
-  });
+  return callAnalyst(
+    {
+      prompt: args.prompt,
+      sessionType: "standard",
+      kind: args.kind,
+      personality: args.personality ?? "calm",
+      context: args.context,
+    },
+    args.eagohMeta,
+  );
 }
 
 /** Deep Dive / Oracle — reserved for future activation. */
@@ -238,14 +428,18 @@ export function runDeepDive(args: {
   kind?: AnalystRequestKind;
   personality?: AnalystPersonality;
   context?: string[];
+  eagohMeta?: { id: string; name: string; domain: string };
 }): Promise<AnalystResponse> {
-  return callAnalyst({
-    prompt: args.prompt,
-    sessionType: "oracle",
-    kind: args.kind,
-    personality: args.personality ?? "oracle",
-    context: args.context,
-  });
+  return callAnalyst(
+    {
+      prompt: args.prompt,
+      sessionType: "oracle",
+      kind: args.kind,
+      personality: args.personality ?? "oracle",
+      context: args.context,
+    },
+    args.eagohMeta,
+  );
 }
 
 export type { AnalystCallInput as AnalystInput };

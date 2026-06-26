@@ -66,7 +66,7 @@ import { useEdge } from "@/providers/EdgeProvider";
 import { useEagohs } from "@/providers/EagohProvider";
 import { INTELLIGENCE_DOMAINS, getDomainColor } from "@/services/domains";
 import { guardDomainRequest } from "@/services/domainGuard";
-import { getQuickCheckCost, runQuickCheck, type AnalystRequestKind } from "@/services/analyst";
+import { getQuickCheckCost, runQuickCheck, runQuickAnalytics, runStandardSession, runDeepDive, type AnalystRequestKind, type AnalystErrorCode } from "@/services/analyst";
 import type { EagohRecord } from "@/services/eagohs";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -501,19 +501,18 @@ function ActiveChat({
   const [error, setError] = useState<string | null>(null);
   const { deductQuickCheck, total: edgeTotal } = useEdge();
   const started = useRef(false);
+  const edgeDeducted = useRef(false);
 
   const runSession = useCallback(async (): Promise<void> => {
     if (started.current) return;
     started.current = true;
 
+    const eagohMeta = { id: eagoh.id, name: eagoh.name || "Unnamed", domain: eagoh.domain ?? "unknown" };
+
     if (session.id === "quick-check") {
       const cost = getQuickCheckCost(prompt);
-      if (edgeTotal < cost) {
-        setError(`Insufficient Edge. Need ${cost} Edge.`);
-        setIsTyping(false);
-        return;
-      }
 
+      // 1. Domain guard
       const domainCheck = guardDomainRequest(eagoh.domain, prompt, true, { id: eagoh.id, name: eagoh.name || "Unnamed" });
       if (!domainCheck.ok) {
         setMessages((prev) => [...prev, {
@@ -526,36 +525,55 @@ function ActiveChat({
         return;
       }
 
-      try {
-        await deductQuickCheck(prompt, `Quick Check · ${cost} Edge`);
-      } catch (err) {
-        setError("Edge deduction failed.");
+      // 2. Check Edge balance (don't spend yet)
+      if (edgeTotal < cost) {
+        setError(`Insufficient Edge. Need ${cost} Edge (have ${edgeTotal}).`);
         setIsTyping(false);
         return;
       }
 
+      // 3. Call analyst FIRST — only deduct Edge on success
       const kind = detectQuickCheckKind(prompt);
-      try {
-        const result = await runQuickCheck({ prompt, kind, personality: "tactical", context: [] });
-        if (result.ok) {
-          setMessages((prev) => [...prev, {
-            id: `a-${Date.now()}`,
-            sender: "analyst",
-            text: result.reply,
-            confidence: result.confidence,
-            cost,
-          }]);
-        } else {
-          setError(result.error);
-        }
-      } catch (err) {
-        setError("Analyst is temporarily unavailable.");
+      const result = await runQuickCheck({ prompt, kind, personality: "tactical", context: [], eagohMeta });
+
+      if (!result.ok) {
+        // Analyst failed — do NOT deduct Edge
+        setError(result.error);
+        setIsTyping(false);
+        return;
       }
+
+      // 4. Analyst succeeded — now deduct Edge
+      try {
+        await deductQuickCheck(prompt, `Quick Check · ${cost} Edge`);
+        edgeDeducted.current = true;
+      } catch (err) {
+        // Edge deduction failed even though analyst responded — show reply but warn
+        setMessages((prev) => [...prev, {
+          id: `a-${Date.now()}`,
+          sender: "analyst",
+          text: result.reply,
+          confidence: result.confidence,
+          cost,
+        }]);
+        setError("Edge deduction failed, but here's your analysis.");
+        setIsTyping(false);
+        return;
+      }
+
+      setMessages((prev) => [...prev, {
+        id: `a-${Date.now()}`,
+        sender: "analyst",
+        text: result.reply,
+        confidence: result.confidence,
+        cost,
+      }]);
       setIsTyping(false);
       return;
     }
 
-    // Domain guard check for non-Quick-Check sessions too
+    // All other session types: domain guard, then attempt analyst call.
+    // If the backend hasn't wired these yet, it will return a specific error.
     if (eagoh.domain) {
       const domainCheck = guardDomainRequest(eagoh.domain, prompt, true, { id: eagoh.id, name: eagoh.name || "Unnamed" });
       if (!domainCheck.ok) {
@@ -570,12 +588,27 @@ function ActiveChat({
       }
     }
 
-    setMessages((prev) => [...prev, {
-      id: `a-fallback-${Date.now()}`,
-      sender: "analyst",
-      text: `${session.name} is UI-ready but not yet activated. Quick Check is live. Forge more EAGOHs across different domains.`,
-      confidence: 85,
-    }]);
+    // Attempt the analyst call — the backend will respond with a specific
+    // error if the session type is not yet implemented.
+    let result;
+    if (session.id === "quick-analysis") {
+      result = await runQuickAnalytics({ prompt, kind: "general", personality: "calm", context: [], eagohMeta });
+    } else if (session.id === "oracle") {
+      result = await runDeepDive({ prompt, kind: "general", personality: "oracle", context: [], eagohMeta });
+    } else {
+      result = await runStandardSession({ prompt, kind: "general", personality: "calm", context: [], eagohMeta });
+    }
+
+    if (result.ok) {
+      setMessages((prev) => [...prev, {
+        id: `a-${Date.now()}`,
+        sender: "analyst",
+        text: result.reply,
+        confidence: result.confidence,
+      }]);
+    } else {
+      setError(result.error);
+    }
     setIsTyping(false);
   }, []);
 

@@ -734,6 +734,12 @@ export default function OpenIntelligenceScreen(): JSX.Element {
   const domain = selectedEagoh ? getDomain(selectedEagoh.domain ?? "") : undefined;
   const domainTone = domain ? toneColor(domain.tone) : palette.muted;
 
+  // Dev-only: resolve loaded taxonomy categories for debug display
+  const loadedCategoryLabels = useMemo(() => {
+    const cats = getTagsForDomain(currentDomain);
+    return cats.map((c) => c.label);
+  }, [currentDomain]);
+
   // Dev-only logging: trace domain resolution when EAGOH changes
   if (__DEV__) {
     useEffect(() => {
@@ -744,8 +750,9 @@ export default function OpenIntelligenceScreen(): JSX.Element {
         eagohDomain: selectedEagoh.domain,
         rawDomain,
         normalizedDomain: currentDomain,
+        loadedCategories: loadedCategoryLabels,
       });
-    }, [selectedEagohId]);
+    }, [selectedEagohId, selectedEagoh?.id, selectedEagoh?.name, selectedEagoh?.domain, rawDomain, currentDomain, loadedCategoryLabels]);
   }
 
   const limit = ENTRY_TYPE_LIMITS[entryType];
@@ -853,6 +860,14 @@ export default function OpenIntelligenceScreen(): JSX.Element {
                 <Text style={[styles.domainBannerTitle, { color: domainTone }]}>{domain.label}</Text>
                 <Text style={styles.domainBannerDesc}>Entries are locked to this EAGOH's intelligence domain.</Text>
               </View>
+            </View>
+          ) : null}
+
+          {/* Dev-only debug: current domain & loaded category labels */}
+          {__DEV__ && selectedEagoh ? (
+            <View style={styles.debugBanner}>
+              <Text style={styles.debugLabel}>Current Domain: <Text style={styles.debugValue}>{currentDomain}</Text></Text>
+              <Text style={styles.debugLabel}>Loaded Categories: <Text style={styles.debugValue}>{loadedCategoryLabels.join(", ") || "(none)"}</Text></Text>
             </View>
           ) : null}
 
@@ -1095,6 +1110,19 @@ const styles = StyleSheet.create({
   },
   domainBannerTitle: { fontSize: 12, fontWeight: "900" },
   domainBannerDesc: { color: palette.muted, fontSize: 10, lineHeight: 15, marginTop: 2 },
+
+  // Debug banner (dev-only)
+  debugBanner: {
+    padding: 8,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "rgba(255,181,71,0.35)",
+    backgroundColor: "rgba(255,181,71,0.06)",
+    marginBottom: 4,
+    gap: 2,
+  },
+  debugLabel: { color: palette.gold, fontSize: 10, fontWeight: "700" },
+  debugValue: { color: palette.text, fontSize: 10, fontWeight: "900" },
 
   // Entry type
   entryTypeList: { gap: 4 },

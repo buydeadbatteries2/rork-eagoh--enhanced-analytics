@@ -311,77 +311,69 @@ const ListingCard = memo(function ListingCard({
   const rkColor = rankColor(eagohRank);
   const imageUrl = eagoh?.image_thumb_url ?? eagoh?.image_url ?? null;
 
-  // Dynamic sizing based on card width — image area occupies ~62% of card width
+  // Dynamic sizing — card fills screen width, image area is 40%
   const { width: screenWidth } = Dimensions.get("window");
-  const cardWidth = screenWidth - 32; // 16px horizontal padding on each side of the list
-  const imageAreaHeight = Math.min(cardWidth * 0.62, 260);
-  const imageWrapperPadding = 24;
-  const imageInnerSize = imageAreaHeight - imageWrapperPadding * 2;
+  const cardWidth = screenWidth - 32;
+  const imageWidth = cardWidth * 0.40;
+  const cardHeight = Math.max(200, imageWidth * 1.55); // taller, rectangular shape
 
   const tone: RenderTone = eagohRank === "Syndicate Prime" || eagohRank === "Oracle" ? "gold" : eagohRank === "Diamond" ? "cyan" : "violet";
 
   return (
-    <View style={styles.listingCard}>
+    <View style={[styles.listingCard, { height: cardHeight }]}>
       <View style={[styles.cardGlow, { backgroundColor: rkColor }]} />
 
-      {/* Image Section — premium collectible card layout */}
-      <View style={[styles.imageSection, { height: imageAreaHeight }]}>
-        {/* Background gradient with faint cyber glow behind the character */}
+      {/* ── Left: EAGOH Image (40%) ── */}
+      <View style={[styles.imageSection, { width: imageWidth }]}>
         <LinearGradient
           colors={["#03060B", `${rkColor}14`, "#050D18"]}
           style={StyleSheet.absoluteFill}
         />
-        {/* Radial spotlight behind character for depth */}
         <View
           style={[
             styles.radialSpotlight,
             {
-              width: imageInnerSize * 0.78,
-              height: imageInnerSize * 0.78,
+              width: imageWidth * 0.72,
+              height: imageWidth * 0.72,
               backgroundColor: `${rkColor}10`,
             },
           ]}
         />
 
-        {/* ImageWrapper — centers the EAGOH with internal padding */}
         <View style={styles.imageWrapper}>
-          <View
-            style={{
-              width: imageInnerSize,
-              height: imageInnerSize,
-              paddingBottom: 4,
-            }}
-          >
-            <OptimizedEagohImage
-              tone={tone}
-              label={eagoh?.name ?? "EAGOH"}
-              imageUrl={imageUrl}
-              contentFit="contain"
-            />
-          </View>
+          <OptimizedEagohImage
+            tone={tone}
+            label={eagoh?.name ?? "EAGOH"}
+            imageUrl={imageUrl}
+            contentFit="contain"
+            size="card"
+          />
         </View>
 
+        {/* Domain badge — top left overlay */}
+        <View style={styles.listingImageDomainBadge}>
+          <Text style={styles.listingImageDomainBadgeText}>{domainLabel(domain)}</Text>
+        </View>
         {/* Rank pill — bottom left overlay */}
         <View style={[styles.rankPillSmall, { backgroundColor: `${rkColor}1F`, borderColor: `${rkColor}44` }]}>
           <Text style={[styles.rankPillSmallText, { color: rkColor }]}>{rankEmoji(eagohRank)} {eagohRank}</Text>
         </View>
-        {/* Domain badge — top right overlay */}
-        <View style={styles.listingImageDomainBadge}>
-          <Text style={styles.listingImageDomainBadgeText}>{domainLabel(domain)}</Text>
-        </View>
       </View>
 
-      {/* Info below image */}
-      <View style={styles.listingInfo}>
+      {/* ── Right: Info (60%) ── */}
+      <View style={styles.infoSection}>
+        {/* Name + rank */}
         <View style={styles.nameRow}>
           <Text style={styles.listingName} numberOfLines={1}>{eagoh?.name ?? "Unnamed"}</Text>
           {repScore > 0 && (
             <View style={[styles.repScoreBadge, { borderColor: rkColor }]}>
-              <Star color={rkColor} size={11} />
+              <Star color={rkColor} size={10} />
               <Text style={[styles.repScoreText, { color: rkColor }]}>{repScore}</Text>
             </View>
           )}
         </View>
+
+        {/* DNA tags */}
         <View style={styles.listingDna}>
           {(eagoh?.dna ?? []).slice(0, 3).map((d) => (
             <View key={d} style={styles.dnaTag}>
@@ -389,6 +381,8 @@ const ListingCard = memo(function ListingCard({
             </View>
           ))}
         </View>
+
+        {/* Team info */}
         {(item.eagoh?.pro_team_focus_name || item.eagoh?.college_team_focus_name || item.fanatic_teams.length > 0) && (
           <Text style={styles.teamText} numberOfLines={1}>
             {[
@@ -398,48 +392,59 @@ const ListingCard = memo(function ListingCard({
             ].filter(Boolean).join(" · ")}
           </Text>
         )}
+
+        {/* Metrics */}
         <View style={styles.metricGrid}>
           <View style={styles.metricRow}>
-            <Signal color={palette.success} size={12} />
+            <Signal color={palette.success} size={11} />
             <Text style={styles.metric}>Sync: {item.sync_success_score}</Text>
           </View>
           <View style={styles.metricRow}>
-            <Sparkles color={palette.cyan} size={12} />
+            <Sparkles color={palette.cyan} size={11} />
             <Text style={styles.metric}>Quality: {item.avg_quality_score}</Text>
           </View>
           <View style={styles.metricRow}>
-            <Coins color={palette.gold} size={12} />
+            <Coins color={palette.gold} size={11} />
             <Text style={styles.metric}>Earned: {item.edge_earned_this_month} EC/mo</Text>
           </View>
         </View>
+
+        {/* Spacer pushes vendor/price/button to bottom */}
+        <View style={{ flex: 1 }} />
+
+        {/* Vendor strip */}
+        <View style={styles.vendorStrip}>
+          <UserCheck color={palette.muted} size={12} />
+          <Text style={styles.vendorText}>{item.vendor_username ?? "Anonymous"}</Text>
+          {reputation && (
+            <>
+              <View style={styles.vendorDivider} />
+              <Shield color={rkColor} size={11} />
+              <Text style={[styles.vendorRepText, { color: rkColor }]}>Trust: {reputation.marketplace_trust}</Text>
+            </>
+          )}
+        </View>
+
+        {/* Price + Buy button */}
+        <View style={styles.priceButtonRow}>
+          <Text style={styles.pricePreview}>
+            From {minPrice ?? "—"} EC/day
+          </Text>
+          <Pressable
+            onPress={() => isPaid && onPurchase(item)}
+            style={({ pressed }) => [
+              styles.buyButton,
+              !isPaid && styles.buyButtonDisabled,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Tag color={isPaid ? palette.void : palette.muted} size={12} />
+            <Text style={[styles.buyButtonText, !isPaid && styles.buyButtonTextDisabled]}>
+              {isPaid ? "Purchase" : "Browse"}
+            </Text>
+          </Pressable>
+        </View>
       </View>
-      <View style={styles.vendorStrip}>
-        <UserCheck color={palette.muted} size={14} />
-        <Text style={styles.vendorText}>{item.vendor_username ?? "Anonymous"}</Text>
-        {reputation && (
-          <>
-            <View style={styles.vendorDivider} />
-            <Shield color={rkColor} size={12} />
-            <Text style={[styles.vendorRepText, { color: rkColor }]}>Trust: {reputation.marketplace_trust}</Text>
-          </>
-        )}
-      </View>
-      <Text style={styles.pricePreview}>
-        From {minPrice ?? "—"} EC/day
-      </Text>
-      <Pressable
-        onPress={() => isPaid && onPurchase(item)}
-        style={({ pressed }) => [
-          styles.buyButton,
-          !isPaid && styles.buyButtonDisabled,
-          pressed && styles.pressed,
-        ]}
-      >
-        <Tag color={isPaid ? palette.void : palette.muted} size={15} />
-        <Text style={[styles.buyButtonText, !isPaid && styles.buyButtonTextDisabled]}>
-          {isPaid ? "View & Purchase" : "Browse Only"}
-        </Text>
-      </Pressable>
     </View>
   );
 });
@@ -1369,25 +1374,15 @@ export default function MarketplaceScreen(): JSX.Element {
         );
       }
 
-      // Group listings by domain for Netflix-style carousels
-      const domainGroups = new Map<string, EnrichedListing[]>();
-      for (const l of listings) {
-        const domain = l.eagoh?.domain ?? "unknown";
-        if (!domainGroups.has(domain)) domainGroups.set(domain, []);
-        domainGroups.get(domain)!.push(l);
-      }
-      // Sort domains alphabetically
-      const sortedDomains = [...domainGroups.keys()].sort();
-
       return (
-        <View style={styles.carouselsWrap}>
-          {sortedDomains.map((domain) => (
-            <DomainCarouselSection
-              key={domain}
-              domain={domain}
-              listings={domainGroups.get(domain) ?? []}
+        <View style={styles.listingsWrap}>
+          {listings.map((item) => (
+            <ListingCard
+              key={item.id}
+              item={item}
               isPaid={isPaid}
               onPurchase={(l) => setPurchaseModal(l)}
+              reputation={repMap.get(item.eagoh_id)}
             />
           ))}
         </View>
@@ -1726,35 +1721,33 @@ const styles = StyleSheet.create({
   },
   createListingText: { color: palette.cyan, fontSize: 12, fontWeight: "900" },
 
-  // Listing Cards
+  // Listing Cards — horizontal layout: image left 40%, info right 60%
   listingsWrap: { gap: 12 },
   listingCard: {
     borderRadius: 5,
-    padding: 13,
     backgroundColor: "rgba(14,24,37,0.84)",
     borderWidth: 1,
     borderColor: palette.line,
     overflow: "hidden",
+    flexDirection: "row" as const,
   },
-  cardGlow: { position: "absolute", width: 100, height: 100, borderRadius: 50, opacity: 0.10, right: -28, top: -30 },
+  cardGlow: { position: "absolute", width: 80, height: 80, borderRadius: 40, opacity: 0.10, right: -20, top: -20 },
 
-  // Image Section — premium collectible card image area
+  // Image Section — left 40%, full card height
   imageSection: {
-    width: "100%",
     borderRadius: 5,
     overflow: "hidden",
-    borderWidth: 1,
+    borderRightWidth: 1,
     borderColor: palette.line,
     backgroundColor: "#03060B",
-    marginBottom: 10,
   },
-  // ImageWrapper — centers the EAGOH with internal breathing room
+  // ImageWrapper — centers the EAGOH with generous breathing room
   imageWrapper: {
     flex: 1,
     justifyContent: "center" as const,
     alignItems: "center" as const,
-    paddingHorizontal: 24,
-    paddingVertical: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 20,
     overflow: "hidden" as const,
   },
   // Radial spotlight glow behind the EAGOH character
@@ -1767,16 +1760,16 @@ const styles = StyleSheet.create({
   },
   listingImageDomainBadge: {
     position: "absolute",
-    top: 8,
-    right: 8,
+    top: 6,
+    left: 6,
     backgroundColor: "rgba(3,6,11,0.82)",
     borderWidth: 1,
     borderColor: palette.line,
     borderRadius: 5,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
   },
-  listingImageDomainBadgeText: { color: palette.cyan, fontSize: 10, fontWeight: "900" },
+  listingImageDomainBadgeText: { color: palette.cyan, fontSize: 9, fontWeight: "900" },
   rankPillSmall: {
     position: "absolute",
     bottom: 6,
@@ -1787,47 +1780,62 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   rankPillSmallText: { fontSize: 8, fontWeight: "900" },
+
+  // Info Section — right 60%, fills remaining card width
+  infoSection: {
+    flex: 1,
+    padding: 12,
+    gap: 4,
+    justifyContent: "space-between" as const,
+  },
   listingInfo: { gap: 4 },
   nameRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  listingName: { color: palette.text, fontSize: 17, fontWeight: "900", flex: 1 },
+  listingName: { color: palette.text, fontSize: 16, fontWeight: "900", flex: 1 },
   listingDomain: { color: palette.cyan, fontSize: 12, fontWeight: "800" },
-  listingDna: { flexDirection: "row", flexWrap: "wrap", gap: 4 },
+  listingDna: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 2 },
   dnaTag: {
     backgroundColor: "rgba(138,92,255,0.12)",
     borderWidth: 1,
     borderColor: "rgba(138,92,255,0.25)",
     borderRadius: 5,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
   },
-  dnaTagText: { color: palette.violet, fontSize: 10, fontWeight: "900" },
-  teamText: { color: palette.gold, fontSize: 11, fontWeight: "900" },
-  metricGrid: { gap: 2, marginTop: 2 },
+  dnaTagText: { color: palette.violet, fontSize: 9, fontWeight: "900" },
+  teamText: { color: palette.gold, fontSize: 10, fontWeight: "900", marginTop: 2 },
+  metricGrid: { gap: 1, marginTop: 4 },
   metricRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-  metric: { color: palette.text, fontSize: 11, fontWeight: "800" },
+  metric: { color: palette.text, fontSize: 10, fontWeight: "800" },
   vendorStrip: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    marginTop: 10,
-    paddingTop: 10,
+    gap: 4,
+    paddingTop: 8,
     borderTopWidth: 1,
     borderColor: palette.line,
   },
-  vendorText: { color: palette.muted, fontSize: 12, fontWeight: "800" },
-  pricePreview: { color: palette.gold, fontSize: 13, fontWeight: "900", marginTop: 6 },
+  vendorText: { color: palette.muted, fontSize: 11, fontWeight: "800" },
+
+  // Price + Buy button row at the bottom of the info section
+  priceButtonRow: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    justifyContent: "space-between" as const,
+    gap: 8,
+  },
+  pricePreview: { color: palette.gold, fontSize: 13, fontWeight: "900" },
   buyButton: {
-    marginTop: 10,
-    minHeight: 40,
+    minHeight: 34,
     borderRadius: 5,
     backgroundColor: palette.cyan,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 7,
+    gap: 5,
+    paddingHorizontal: 14,
   },
   buyButtonDisabled: { backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: palette.line },
-  buyButtonText: { color: palette.void, fontSize: 13, fontWeight: "900" },
+  buyButtonText: { color: palette.void, fontSize: 12, fontWeight: "900" },
   buyButtonTextDisabled: { color: palette.muted },
 
   // My Listing Card

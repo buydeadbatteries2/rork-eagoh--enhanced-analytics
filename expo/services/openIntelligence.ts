@@ -2,6 +2,7 @@ import { supabase } from "@/lib/supabase";
 import { spendEdge } from "@/services/edge";
 import type { UserProfile } from "@/services/profile";
 import type { EdgeReason } from "@/services/edge";
+import { getObservationTags, getAllTagsFlat } from "@/data/observationTags";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -40,84 +41,29 @@ export type TagCategory = {
   tags: { id: string; label: string }[];
 };
 
-export const OBSERVATION_TAGS: TagCategory[] = [
-  {
-    id: "physical-performance",
-    label: "Physical / Performance",
-    tags: [
-      { id: "injury", label: "Injury" },
-      { id: "fatigue", label: "Fatigue" },
-      { id: "conditioning", label: "Conditioning" },
-      { id: "recovery", label: "Recovery" },
-      { id: "mobility", label: "Mobility" },
-      { id: "stamina", label: "Stamina" },
-    ],
-  },
-  {
-    id: "emotional-mental",
-    label: "Emotional / Mental",
-    tags: [
-      { id: "frustration", label: "Frustration" },
-      { id: "confidence", label: "Confidence" },
-      { id: "pressure", label: "Pressure" },
-      { id: "rivalry", label: "Rivalry" },
-      { id: "motivation", label: "Motivation" },
-      { id: "tilt", label: "Tilt" },
-    ],
-  },
-  {
-    id: "strategic",
-    label: "Strategic",
-    tags: [
-      { id: "coaching", label: "Coaching" },
-      { id: "rotation", label: "Rotation" },
-      { id: "pace", label: "Pace" },
-      { id: "matchup", label: "Matchup" },
-      { id: "ball_dominance", label: "Ball Dominance" },
-      { id: "defensive_scheme", label: "Defensive Scheme" },
-    ],
-  },
-  {
-    id: "environment",
-    label: "Environment",
-    tags: [
-      { id: "crowd", label: "Crowd" },
-      { id: "travel", label: "Travel" },
-      { id: "weather", label: "Weather" },
-      { id: "arena_energy", label: "Arena Energy" },
-      { id: "national_tv", label: "National TV" },
-      { id: "referees", label: "Referees" },
-    ],
-  },
-  {
-    id: "narrative",
-    label: "Narrative",
-    tags: [
-      { id: "revenge_game", label: "Revenge Game" },
-      { id: "media_pressure", label: "Media Pressure" },
-      { id: "contract_year", label: "Contract Year" },
-      { id: "team_drama", label: "Team Drama" },
-      { id: "trade_rumors", label: "Trade Rumors" },
-    ],
-  },
-  {
-    id: "statistical",
-    label: "Statistical",
-    tags: [
-      { id: "shooting", label: "Shooting" },
-      { id: "fouls", label: "Fouls" },
-      { id: "turnovers", label: "Turnovers" },
-      { id: "clutch", label: "Clutch" },
-      { id: "rebounding", label: "Rebounding" },
-      { id: "defensive_impact", label: "Defensive Impact" },
-    ],
-  },
-];
+/** Sports defaults — kept for backward compatibility with sessions.tsx */
+export const OBSERVATION_TAGS: TagCategory[] = getObservationTags("sports");
 
 export const ALL_TAGS = OBSERVATION_TAGS.flatMap((cat) => cat.tags);
 
-export function lookupTagLabel(tagId: string): string {
-  return ALL_TAGS.find((t) => t.id === tagId)?.label ?? tagId;
+/**
+ * Get observation tag categories for a given intelligence domain.
+ * Falls back to Sports taxonomy when domain is empty or unknown.
+ */
+export function getTagsForDomain(domainId: string): TagCategory[] {
+  return getObservationTags(domainId);
+}
+
+/**
+ * Get a flat array of all tag {id, label} pairs for a given domain.
+ */
+export function getAllTagsForDomain(domainId: string): { id: string; label: string }[] {
+  return getAllTagsFlat(domainId);
+}
+
+export function lookupTagLabel(tagId: string, domainId?: string): string {
+  const tags = domainId ? getAllTagsFlat(domainId) : ALL_TAGS;
+  return tags.find((t) => t.id === tagId)?.label ?? tagId;
 }
 
 // ── DB Row ─────────────────────────────────────────────────────────────
@@ -162,7 +108,7 @@ export interface QualityScoreResult {
  *   - confidence level multiplier
  *   - tag selection signal
  */
-function computeQualityScore(input: ScoringInput): QualityScoreResult {
+export function computeQualityScore(input: ScoringInput, domainId?: string): QualityScoreResult {
   const text = input.content.trim();
   const charCount = text.replace(/\s/g, "").length;
   const limit = ENTRY_TYPE_LIMITS[input.entryType];
@@ -185,7 +131,8 @@ function computeQualityScore(input: ScoringInput): QualityScoreResult {
   const confidenceBase = Math.round(20 * confidenceMultiplier[input.confidenceLevel]);
 
   // Tag signal (custom tags get a small bonus for specificity)
-  const isCustomTag = !ALL_TAGS.some((t) => t.id === input.tag);
+  const domainTags = domainId ? getAllTagsFlat(domainId) : ALL_TAGS;
+  const isCustomTag = !domainTags.some((t) => t.id === input.tag);
   const tagScore = isCustomTag ? 12 : 8;
 
   // Bonus: entry type depth
@@ -363,4 +310,4 @@ export async function countEntriesForEagoh(eagohId: string): Promise<number> {
 }
 
 /** Re-export helpers */
-export { computeQualityScore, influenceLabel };
+export { influenceLabel };

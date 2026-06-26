@@ -23,8 +23,8 @@ import {
   CONFIDENCE_LEVELS,
   ENTRY_TYPE_EDGE_COST,
   ENTRY_TYPE_LIMITS,
-  OBSERVATION_TAGS,
-  ALL_TAGS,
+  getTagsForDomain,
+  getAllTagsForDomain,
   computeQualityScore,
   influenceLabel,
   listEntriesForEagoh,
@@ -214,13 +214,15 @@ const TagChip = memo(function TagChip({
   tagId,
   selectedId,
   onPress,
+  allTags,
 }: {
   tagId: string;
   selectedId: string;
   onPress: (id: string) => void;
+  allTags: { id: string; label: string }[];
 }): JSX.Element {
   const isSelected = selectedId === tagId;
-  const label = ALL_TAGS.find((t) => t.id === tagId)?.label ?? tagId;
+  const label = allTags.find((t) => t.id === tagId)?.label ?? tagId;
   return (
     <Pressable
       onPress={() => onPress(tagId)}
@@ -241,16 +243,20 @@ const TagSelector = memo(function TagSelector({
   onSelect,
   customTag,
   setCustomTag,
+  domainId,
 }: {
   selectedTag: string;
   onSelect: (id: string) => void;
   customTag: string;
   setCustomTag: (v: string) => void;
+  domainId: string;
 }): JSX.Element {
   const h = useHaptics();
   const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({});
   const [showCustom, setShowCustom] = useState<boolean>(false);
   const isCustom = selectedTag.startsWith("custom:");
+  const tags = useMemo(() => getTagsForDomain(domainId), [domainId]);
+  const allTags = useMemo(() => getAllTagsForDomain(domainId), [domainId]);
 
   const toggleCategory = useCallback((id: string): void => {
     setOpenCategories((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -279,7 +285,7 @@ const TagSelector = memo(function TagSelector({
 
   return (
     <View style={styles.tagSection}>
-      {OBSERVATION_TAGS.map((cat) => {
+      {tags.map((cat) => {
         const isOpen = openCategories[cat.id] ?? false;
         return (
           <View key={cat.id} style={styles.tagCategory}>
@@ -298,6 +304,7 @@ const TagSelector = memo(function TagSelector({
                     tagId={tag.id}
                     selectedId={selectedTag}
                     onPress={handleSelectTag}
+                    allTags={allTags}
                   />
                 ))}
               </View>
@@ -385,16 +392,18 @@ const ScorePreview = memo(function ScorePreview({
   entryType,
   confidenceLevel,
   tag,
+  domainId,
 }: {
   content: string;
   entryType: EntryType;
   confidenceLevel: ConfidenceLevel;
   tag: string;
+  domainId: string;
 }): JSX.Element {
   const score = useMemo(() => {
     if (!content.trim()) return null;
-    return computeQualityScore({ content, entryType, confidenceLevel, tag });
-  }, [content, entryType, confidenceLevel, tag]);
+    return computeQualityScore({ content, entryType, confidenceLevel, tag }, domainId);
+  }, [content, entryType, confidenceLevel, tag, domainId]);
 
   if (!score) {
     return (
@@ -438,10 +447,13 @@ const ScorePreview = memo(function ScorePreview({
 
 const LearningEntry = memo(function LearningEntry({
   entry,
+  domainId,
 }: {
   entry: OpenIntelligenceRow;
+  domainId: string;
 }): JSX.Element {
-  const tagLabel = ALL_TAGS.find((t) => t.id === entry.tag)?.label ?? entry.tag.replace("custom:", "");
+  const domainTags = useMemo(() => getAllTagsForDomain(domainId), [domainId]);
+  const tagLabel = domainTags.find((t) => t.id === entry.tag)?.label ?? entry.tag.replace("custom:", "");
   const infLabel = influenceLabel(entry.influence_score);
   const infColor = infLabel === "high" ? palette.success : infLabel === "medium" ? palette.gold : palette.muted;
 
@@ -538,6 +550,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
   }, [eagohs, selectedEagohId]);
 
   const selectedEagoh = useMemo(() => eagohs.find((e) => e.id === selectedEagohId), [eagohs, selectedEagohId]);
+  const currentDomain = selectedEagoh?.domain ?? "sports";
   const domain = selectedEagoh ? getDomain(selectedEagoh.domain ?? "") : undefined;
   const domainTone = domain ? toneColor(domain.tone) : palette.muted;
 
@@ -675,6 +688,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
               onSelect={setSelectedTag}
               customTag={customTag}
               setCustomTag={setCustomTag}
+              domainId={currentDomain}
             />
           </View>
 
@@ -692,6 +706,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
               entryType={entryType}
               confidenceLevel={confidenceLevel}
               tag={selectedTag}
+              domainId={currentDomain}
             />
           </View>
 
@@ -752,7 +767,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
               <ActivityIndicator color={palette.cyan} style={styles.feedLoader} />
             ) : feedQuery.data && feedQuery.data.length > 0 ? (
               feedQuery.data.map((entry) => (
-                <LearningEntry key={entry.id} entry={entry} />
+                <LearningEntry key={entry.id} entry={entry} domainId={currentDomain} />
               ))
             ) : (
               <Text style={styles.feedEmpty}>

@@ -1859,7 +1859,7 @@ export default function MarketplaceScreen(): JSX.Element {
   }, [tab, user?.id]);
 
   return (
-    <LinearGradient colors={[pal.void, pal.obsidian, pal.graphite]} style={styles.root}>
+    <View style={[styles.root, { backgroundColor: pal.void }]}>
       <SafeAreaView edges={["top"]} style={styles.safe}>
         <FlatList
           data={[] as any[]}
@@ -1904,7 +1904,7 @@ export default function MarketplaceScreen(): JSX.Element {
         onUpdated={loadData}
         updating={updating}
       />
-    </LinearGradient>
+    </View>
   );
 }
 

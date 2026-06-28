@@ -498,11 +498,11 @@ export default function ProfileScreen(): JSX.Element {
   }, [handleSignOut, reputationStats, reputation, currentTier, handleSetTestTier, handleSettingsPress, isAdminOverrideActive, eagohs, displayAlias, aggregatedDna, aggregatedTeams, aggregatedDomains, userRankings, signOutState]);
 
   return (
-    <LinearGradient colors={[pal.void, pal.obsidian, pal.void]} style={styles.root}>
+    <View style={[styles.root, { backgroundColor: pal.void }]}>
       <SafeAreaView edges={["top"]} style={styles.safe}>
         <FlatList data={sections} keyExtractor={(item) => item.id} renderItem={renderSection} contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} {...LIST_PERFORMANCE_PROPS} />
       </SafeAreaView>
-    </LinearGradient>
+    </View>
   );
 }
 

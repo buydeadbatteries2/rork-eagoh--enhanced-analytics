@@ -18,6 +18,7 @@
  */
 
 import { palette } from "@/constants/colors";
+import { useAppTheme } from "@/providers/ThemeProvider";
 import { useEagohs } from "@/providers/EagohProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useProfile } from "@/providers/ProfileProvider";
@@ -678,6 +679,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
   const { eagohs } = useEagohs();
   const { profile } = useProfile();
   const { balances } = useEdge();
+  const { palette: pal } = useAppTheme();
   const queryClient = useQueryClient();
 
   const [selectedEagohId, setSelectedEagohId] = useState<string>("");
@@ -819,7 +821,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
   }, [selectedEagohId, profile, content, selectedEagoh, entryType, legacyTag, confidenceLevel, selectedSubtags, customTags, queryClient]);
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: pal.void }]} edges={["top"]}>
       {/* Header — fixed outside KAV */}
       <View style={styles.header}>
           <View>
@@ -1017,7 +1019,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
 // ── Styles ─────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: palette.void },
+  safe: { flex: 1 },
   kav: { flex: 1 },
   header: {
     flexDirection: "row",

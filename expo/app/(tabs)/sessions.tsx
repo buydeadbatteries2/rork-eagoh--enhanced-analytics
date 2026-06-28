@@ -11,6 +11,7 @@
  */
 
 import { palette } from "@/constants/colors";
+import { useAppTheme } from "@/providers/ThemeProvider";
 import { useHaptics } from "@/hooks/useHaptics";
 import {
   Activity,
@@ -1858,6 +1859,7 @@ export default function SessionsScreen(): JSX.Element {
   const { eagohs } = useEagohs();
   const { profile } = useProfile();
   const { effectiveSubscriptionTier: userTier } = useProfile();
+  const { palette: pal } = useAppTheme();
   const queryClient = useQueryClient();
   const [selectedEagohId, setSelectedEagohId] = useState<string>(eagohs[0]?.id ?? "");
   const [showPicker, setShowPicker] = useState<boolean>(false);
@@ -2052,8 +2054,8 @@ export default function SessionsScreen(): JSX.Element {
 
   // Main listing
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
-      <View style={styles.root}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: pal.void }]} edges={["top"]}>
+      <View style={[styles.root, { backgroundColor: pal.void }]}>
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           {/* Header */}
           <EagohPageHeader kicker="INTELLIGENCE SESSIONS" title="Run your EAGOH">

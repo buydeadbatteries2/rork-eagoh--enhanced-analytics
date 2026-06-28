@@ -1,4 +1,5 @@
 // template
+import { palette } from "@/constants/colors";
 import { router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { Modal, Platform, Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native";
@@ -28,7 +29,7 @@ export default function ModalScreen() {
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    backgroundColor: palette.overlay,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -48,7 +49,7 @@ const styles = StyleSheet.create({
   description: {
     textAlign: "center",
     marginBottom: 24,
-    color: "#666",
+    color: palette.textSecondary,
     lineHeight: 20,
   },
   closeButton: {

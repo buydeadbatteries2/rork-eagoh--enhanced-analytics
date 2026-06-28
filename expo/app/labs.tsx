@@ -1,4 +1,5 @@
 import { palette } from "@/constants/colors";
+import { useAppTheme } from "@/providers/ThemeProvider";
 import { HORIZONTAL_LIST_PERFORMANCE_PROPS, LIST_PERFORMANCE_PROPS } from "@/app/_components/PerformancePrimitives";
 import { LinearGradient } from "expo-linear-gradient";
 import { useHaptics } from "@/hooks/useHaptics";
@@ -399,6 +400,7 @@ function BottomStat({ label, value, tint }: { label: string; value: string; tint
 }
 
 export default function LabsScreen(): JSX.Element {
+  const { palette: pal } = useAppTheme();
   const h = useHaptics();
   const [mode, setMode] = useState<LabMode>("analyst");
   const [activeStep, setActiveStep] = useState<ForgeStep>("Identity");
@@ -559,7 +561,7 @@ export default function LabsScreen(): JSX.Element {
     </>
   ), [activeStep, completion, forgeState, goBack, goNext, mode, renderAnalystChat, renderOpenIntelligence, renderStep, stepIndex]);
 
-  return <LinearGradient colors={["#03060B", "#07151E", "#03060B"]} style={styles.root}><SafeAreaView edges={["top"]} style={styles.safe}><KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}><ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">{renderLabContent()}</ScrollView></KeyboardAvoidingView></SafeAreaView></LinearGradient>;
+  return <LinearGradient colors={[pal.void, pal.obsidian, pal.void]} style={styles.root}><SafeAreaView edges={["top"]} style={[styles.safe, { backgroundColor: pal.void }]}><KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}><ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">{renderLabContent()}</ScrollView></KeyboardAvoidingView></SafeAreaView></LinearGradient>;
 }
 
 const styles = StyleSheet.create({

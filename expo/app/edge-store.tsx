@@ -7,6 +7,7 @@
  */
 
 import { palette } from "@/constants/colors";
+import { useAppTheme } from "@/providers/ThemeProvider";
 import { useHaptics } from "@/hooks/useHaptics";
 import { useAuth } from "@/providers/AuthProvider";
 import { useEdge } from "@/providers/EdgeProvider";
@@ -358,6 +359,7 @@ function PackCard({
 // ── Main Screen ─────────────────────────────────────────────────────────────
 
 export default function EdgeStoreScreen(): JSX.Element {
+  const { palette: pal } = useAppTheme();
   const h = useHaptics();
   const router = useRouter();
   const { user } = useAuth();
@@ -412,7 +414,7 @@ export default function EdgeStoreScreen(): JSX.Element {
   const disabled = isMutating || purchasing;
 
   return (
-    <SafeAreaView edges={["top"]} style={styles.safe}>
+    <SafeAreaView edges={["top"]} style={[styles.safe, { backgroundColor: pal.void }]}>
       {/* Header */}
       <View style={styles.header}>
         <Pressable onPress={handleBack} style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.7 }]}>

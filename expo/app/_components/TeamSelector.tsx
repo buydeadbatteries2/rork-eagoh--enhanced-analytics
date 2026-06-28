@@ -256,14 +256,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.line,
     borderRadius: 5,
-    backgroundColor: "rgba(3,6,11,0.35)",
+    backgroundColor: palette.panel,
     paddingHorizontal: 8,
     minHeight: 44,
     gap: 6,
   },
   searchBarFocused: {
     borderColor: `${palette.cyan}66`,
-    backgroundColor: "rgba(3,6,11,0.50)",
+    backgroundColor: palette.obsidian,
   },
   searchIcon: { marginLeft: 2 },
   searchInput: {

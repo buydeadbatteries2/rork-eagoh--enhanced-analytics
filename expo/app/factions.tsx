@@ -1,4 +1,5 @@
 import { palette, glow } from "@/constants/colors";
+import { useAppTheme } from "@/providers/ThemeProvider";
 import { LIST_PERFORMANCE_PROPS } from "@/app/_components/PerformancePrimitives";
 import { useAuth } from "@/providers/AuthProvider";
 import { useProfile } from "@/providers/ProfileProvider";
@@ -168,7 +169,7 @@ function CreateFactionModal({
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <LinearGradient colors={["#03060B", "#07101B", "#101420"]} style={styles.modalRoot}>
+      <LinearGradient colors={[palette.void, palette.obsidian, palette.graphite]} style={styles.modalRoot}>
         <SafeAreaView edges={["top"]} style={styles.modalSafe}>
           <View style={styles.modalHeader}>
             <Pressable onPress={onClose} hitSlop={12}><X color={palette.muted} size={22} /></Pressable>
@@ -782,6 +783,7 @@ function ScoreDetail({ label, value, color }: { label: string; value: string; co
 // ── Main Screen ────────────────────────────────────────────────────────
 
 export default function FactionsScreen(): JSX.Element {
+  const { palette: pal } = useAppTheme();
   const h = useHaptics();
   const { user } = useAuth();
   const { profile } = useProfile();
@@ -1194,7 +1196,7 @@ export default function FactionsScreen(): JSX.Element {
     userFactionsQuery.isLoading || allFactionsQuery.isLoading || invitesQuery.isLoading;
 
   return (
-    <LinearGradient colors={["#03060B", "#07101B", "#101420"]} style={styles.root}>
+    <LinearGradient colors={[pal.void, pal.obsidian, pal.graphite]} style={styles.root}>
       <SafeAreaView edges={["top"]} style={styles.safe}>
         {isLoading ? (
           <View style={styles.loadingWrap}>

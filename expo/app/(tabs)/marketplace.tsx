@@ -1,4 +1,5 @@
 import { palette } from "@/constants/colors";
+import { useAppTheme } from "@/providers/ThemeProvider";
 import { getTeamById } from "@/data/teams";
 import { HORIZONTAL_LIST_PERFORMANCE_PROPS, LIST_PERFORMANCE_PROPS, OptimizedEagohImage, type RenderTone } from "@/app/_components/PerformancePrimitives";
 import { Image } from "expo-image";
@@ -1487,6 +1488,7 @@ export default function MarketplaceScreen(): JSX.Element {
   const { user } = useAuth();
   const { profile } = useProfile();
   const { balances } = useEdge();
+  const { palette: pal } = useAppTheme();
 
   const [filters, setFilters] = useState<ListingFilters>({});
   const [listings, setListings] = useState<EnrichedListing[]>([]);
@@ -1857,7 +1859,7 @@ export default function MarketplaceScreen(): JSX.Element {
   }, [tab, user?.id]);
 
   return (
-    <LinearGradient colors={["#03060B", "#08111C", "#0B141F"]} style={styles.root}>
+    <LinearGradient colors={[pal.void, pal.obsidian, pal.graphite]} style={styles.root}>
       <SafeAreaView edges={["top"]} style={styles.safe}>
         <FlatList
           data={[] as any[]}

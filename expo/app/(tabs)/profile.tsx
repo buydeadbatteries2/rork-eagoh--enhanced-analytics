@@ -5,6 +5,7 @@
  */
 
 import { palette } from "@/constants/colors";
+import { useAppTheme } from "@/providers/ThemeProvider";
 import { LIST_PERFORMANCE_PROPS } from "@/app/_components/PerformancePrimitives";
 import { Image } from "expo-image";
 import { useWindowDimensions } from "react-native";
@@ -160,6 +161,7 @@ export default function ProfileScreen(): JSX.Element {
   const { user, signOut, signOutState } = useAuth();
   const { eagohs } = useEagohs();
   const { profile, setTestTier, effectiveSubscriptionTier, isAdminOverrideActive } = useProfile();
+  const { palette: pal } = useAppTheme();
   const router = useRouter();
   const handleSignOut = useCallback((): void => {
     h.selection();
@@ -496,7 +498,7 @@ export default function ProfileScreen(): JSX.Element {
   }, [handleSignOut, reputationStats, reputation, currentTier, handleSetTestTier, handleSettingsPress, isAdminOverrideActive, eagohs, displayAlias, aggregatedDna, aggregatedTeams, aggregatedDomains, userRankings, signOutState]);
 
   return (
-    <LinearGradient colors={["#020409", "#07111D", "#03060B"]} style={styles.root}>
+    <LinearGradient colors={[pal.void, pal.obsidian, pal.void]} style={styles.root}>
       <SafeAreaView edges={["top"]} style={styles.safe}>
         <FlatList data={sections} keyExtractor={(item) => item.id} renderItem={renderSection} contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} {...LIST_PERFORMANCE_PROPS} />
       </SafeAreaView>

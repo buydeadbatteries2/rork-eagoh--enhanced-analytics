@@ -30,6 +30,7 @@ import { ActivityIndicator, Alert, Animated, Dimensions, FlatList, KeyboardAvoid
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { palette } from "@/constants/colors";
+import { useAppTheme } from "@/providers/ThemeProvider";
 import { HORIZONTAL_LIST_PERFORMANCE_PROPS, LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/_components/PerformancePrimitives";
 import { useAuth } from "@/providers/AuthProvider";
 import { useEdge } from "@/providers/EdgeProvider";
@@ -456,7 +457,7 @@ function LoadingScreen({ onDone }: { onDone: () => void }): JSX.Element {
   }, [onDone, pulse]);
   const scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1.08] });
   return (
-    <LinearGradient colors={["#02040A", "#07111D", "#03060B"]} style={styles.full}>
+    <LinearGradient colors={[palette.void, palette.obsidian, palette.void]} style={styles.full}>
       <Animated.View style={{ transform: [{ scale }], opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.82, 1] }) }}>
         <LogoMark />
       </Animated.View>
@@ -478,7 +479,7 @@ function OnboardingScreen({ onComplete }: { onComplete: () => void }): JSX.Eleme
     if (isLast) onComplete(); else setStep((value) => value + 1);
   };
   return (
-    <LinearGradient colors={["#03060B", "#0B1826", "#03060B"]} style={styles.fullPadded}>
+    <LinearGradient colors={[palette.void, palette.obsidian, palette.void]} style={styles.fullPadded}>
       <View style={styles.scanLine} />
       <View style={styles.onboardingHero}>{item.icon}<Text style={styles.kicker}>{item.kicker}</Text><Text style={styles.heroTitle}>{item.title}</Text><Text style={styles.heroBody}>{item.body}</Text></View>
       <View style={styles.dots}>{onboarding.map((_, index) => <View key={index} style={[styles.dot, index === step && styles.dotActive]} />)}</View>
@@ -547,7 +548,7 @@ function AuthScreen(): JSX.Element {
   }, []);
 
   return (
-    <LinearGradient colors={["#03060B", "#111B29"]} style={styles.fullPadded}>
+    <LinearGradient colors={[palette.void, palette.obsidian]} style={styles.fullPadded}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.authFlex}>
         <LogoMark size={72} />
         <Text style={styles.authTitle}>{mode === "signin" ? "Rejoin the grid" : "Create your signal"}</Text>
@@ -784,7 +785,7 @@ function BannerPurchaseModal({
     <Modal visible={visible} transparent animationType="slide" onRequestClose={() => { reset(); onClose(); }}>
       <View style={styles.modalOverlay}>
         <View style={styles.modalSheet}>
-          <LinearGradient colors={["#0A1628", "#050D18"]} style={StyleSheet.absoluteFill} />
+          <LinearGradient colors={[palette.graphite, palette.void]} style={StyleSheet.absoluteFill} />
           <View style={styles.modalHandle} />
           <View style={styles.modalHeaderRow}>
             <Megaphone color={palette.cyan} size={20} />
@@ -912,6 +913,7 @@ export default function HomeScreen(): JSX.Element {
   const h = useHaptics();
   const { isReady, isAuthenticated, user } = useAuth();
   const { profile, effectiveSubscriptionTier } = useProfile();
+  const { palette: pal } = useAppTheme();
   const [phase, setPhase] = useState<Phase>("loading");
   const [bootDone, setBootDone] = useState<boolean>(false);
   const [onboardingDone, setOnboardingDone] = useState<boolean>(false);
@@ -937,7 +939,7 @@ export default function HomeScreen(): JSX.Element {
   if (phase === "onboarding") return <OnboardingScreen onComplete={() => setOnboardingDone(true)} />;
   if (phase === "auth") return <AuthScreen />;
   return (
-    <View style={[styles.appRoot, compact && styles.compact]}>
+    <View style={[styles.appRoot, compact && styles.compact, { backgroundColor: pal.void }]}>
       <HomeApp
         userId={user?.id ?? null}
         onPromote={() => {
@@ -997,20 +999,20 @@ const styles = StyleSheet.create({
   ghostButton: { alignItems: "center", padding: 18 },
   ghostText: { color: palette.gold, fontWeight: "800" },
   screenTitle: { color: palette.text, fontSize: 34, fontWeight: "900", letterSpacing: -1, marginBottom: 4 },
-  heroShell: { borderWidth: 1, borderColor: "rgba(54,245,255,0.22)", backgroundColor: "rgba(8,15,25,0.92)", borderRadius: 5, padding: 20, overflow: "hidden", gap: 14 },
+  heroShell: { borderWidth: 1, borderColor: "rgba(54,245,255,0.22)", backgroundColor: palette.obsidian, borderRadius: 5, padding: 20, overflow: "hidden", gap: 14 },
   heroOrbit: { position: "absolute", right: -70, top: -65, width: 180, height: 180, borderRadius: 90, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" },
   heroHomeBody: { color: palette.muted, fontSize: 14, lineHeight: 21, maxWidth: 315 },
   statRow: { flexDirection: "row", gap: 10 },
-  stat: { flex: 1, borderWidth: 1, borderColor: palette.line, borderRadius: 5, padding: 13, backgroundColor: "rgba(16,27,42,0.72)" },
+  stat: { flex: 1, borderWidth: 1, borderColor: palette.line, borderRadius: 5, padding: 13, backgroundColor: palette.panelStrong },
   statValue: { color: palette.text, fontSize: 20, fontWeight: "900" },
   statLabel: { color: palette.muted, fontSize: 12, marginTop: 3 },
-  edgeBalance: { minHeight: 52, borderRadius: 5, paddingHorizontal: 14, backgroundColor: "rgba(255,184,77,0.10)", borderWidth: 1, borderColor: "rgba(255,184,77,0.24)", flexDirection: "row", alignItems: "center", gap: 10 },
+  edgeBalance: { minHeight: 52, borderRadius: 5, paddingHorizontal: 14, backgroundColor: palette.goldSoft, borderWidth: 1, borderColor: "rgba(255,184,77,0.24)", flexDirection: "row", alignItems: "center", gap: 10 },
   edgeText: { color: palette.muted, fontSize: 13, fontWeight: "700", flex: 1 },
   edgeAmount: { color: palette.gold, fontSize: 15, fontWeight: "900" },
   card: { borderWidth: 1, borderColor: palette.line, backgroundColor: palette.panel, borderRadius: 5, padding: 18, overflow: "hidden" },
   cardGlow: { position: "absolute", right: -28, top: -28, width: 86, height: 86, borderRadius: 5, opacity: 0.16 },
   cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 14 },
-  iconPod: { width: 38, height: 38, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.04)" },
+  iconPod: { width: 38, height: 38, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: palette.panel },
   meta: { fontSize: 11, fontWeight: "900", letterSpacing: 1.6 },
   cardTitle: { color: palette.text, fontSize: 20, fontWeight: "900", marginBottom: 7 },
   cardSubtitle: { color: palette.muted, fontSize: 14, lineHeight: 20 },
@@ -1019,7 +1021,7 @@ const styles = StyleSheet.create({
   sectionTitle: { color: palette.text, fontSize: 22, fontWeight: "900", letterSpacing: -0.4 },
   sectionAction: { color: palette.gold, fontSize: 12, fontWeight: "900", letterSpacing: 1.1 },
   horizontalList: { gap: 12, paddingRight: 18 },
-  sponsoredCard: { width: 318, minHeight: 166, borderRadius: 5, borderWidth: 1, borderColor: palette.line, backgroundColor: "rgba(14,24,37,0.88)", padding: 12, flexDirection: "row", gap: 12, overflow: "hidden" },
+  sponsoredCard: { width: 318, minHeight: 166, borderRadius: 5, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.obsidian, padding: 12, flexDirection: "row", gap: 12, overflow: "hidden" },
   eagohImage: { width: 104, minHeight: 128, borderRadius: 5, overflow: "hidden", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" },
   imageLabel: { position: "absolute", bottom: 12, fontSize: 10, fontWeight: "900", letterSpacing: 1.7 },
   sponsoredContent: { flex: 1, paddingVertical: 4 },
@@ -1042,16 +1044,16 @@ const styles = StyleSheet.create({
   feedTime: { color: palette.gold, fontSize: 12, fontWeight: "900" },
   analystGrid: { gap: 12 },
   quickGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  quickButton: { width: "48%", minHeight: 56, borderRadius: 5, borderWidth: 1, borderColor: palette.line, backgroundColor: "rgba(16,27,42,0.78)", flexDirection: "row", alignItems: "center", paddingHorizontal: 13, gap: 9 },
+  quickButton: { width: "48%", minHeight: 56, borderRadius: 5, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.graphite, flexDirection: "row", alignItems: "center", paddingHorizontal: 13, gap: 9 },
   quickText: { color: palette.text, fontSize: 13, fontWeight: "900" },
-  featureCard: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 5, padding: 14, backgroundColor: "rgba(14,24,37,0.72)", borderWidth: 1, borderColor: palette.line },
-  featureIconWrap: { width: 46, height: 46, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.04)" },
+  featureCard: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 5, padding: 14, backgroundColor: palette.obsidian, borderWidth: 1, borderColor: palette.line },
+  featureIconWrap: { width: 46, height: 46, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: palette.panel },
   featureInfo: { flex: 1 },
   featureTitle: { color: palette.text, fontSize: 14, fontWeight: "900" },
   featureDesc: { color: palette.muted, fontSize: 12, lineHeight: 17, marginTop: 4 },
   teamList: { borderWidth: 1, borderColor: palette.line, borderRadius: 5, backgroundColor: palette.panel, padding: 12, gap: 10 },
   teamRow: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 50 },
-  teamBadge: { width: 38, height: 38, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.04)" },
+  teamBadge: { width: 38, height: 38, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: palette.panel },
   teamHeat: { fontSize: 16, fontWeight: "900" },
   // Sponsored banner extras
   hotBadge: { position: "absolute", top: 8, right: 8, borderRadius: 5, backgroundColor: palette.ember, paddingHorizontal: 7, paddingVertical: 3 },
@@ -1062,7 +1064,7 @@ const styles = StyleSheet.create({
   emptyBannerText: { color: palette.muted, fontSize: 13, textAlign: "center", lineHeight: 18, fontWeight: "700" },
   // Domain cards
   domainRail: { gap: 10, paddingRight: 18, paddingVertical: 4 },
-  domainCard: { borderRadius: 5, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: "rgba(10,20,35,0.55)", alignItems: "center", gap: 4, minWidth: 72, overflow: "hidden" as const },
+  domainCard: { borderRadius: 5, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: palette.panel, alignItems: "center", gap: 4, minWidth: 72, overflow: "hidden" as const },
   domainCardGlow: { position: "absolute" as const, top: 0, left: 0, right: 0, bottom: 0 },
   domainCardDot: { width: 8, height: 8, borderRadius: 4 },
   domainCardLabel: { fontSize: 11, fontWeight: "900" as const },
@@ -1081,7 +1083,7 @@ const styles = StyleSheet.create({
   },
   promoteBannerText: { color: palette.cyan, fontSize: 13, fontWeight: "900" },
   // Modal (shared pattern with marketplace)
-  modalOverlay: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.72)" },
+  modalOverlay: { flex: 1, justifyContent: "flex-end", backgroundColor: palette.overlay },
   modalSheet: {
     maxHeight: "88%",
     borderRadius: 5,
@@ -1105,7 +1107,7 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     paddingHorizontal: 12,
     paddingVertical: 7,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: palette.panel,
   },
   activeChip: { backgroundColor: palette.cyan, borderColor: palette.cyan },
   chipText: { color: palette.muted, fontSize: 11, fontWeight: "900" },
@@ -1120,7 +1122,7 @@ const styles = StyleSheet.create({
     padding: 12,
     alignItems: "center",
     gap: 4,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: palette.panel,
   },
   locationChipActive: { backgroundColor: palette.cyanSoft, borderColor: palette.cyan },
   locationChipText: { color: palette.muted, fontSize: 13, fontWeight: "900" },
@@ -1132,7 +1134,7 @@ const styles = StyleSheet.create({
     borderColor: palette.line,
     borderRadius: 5,
     padding: 13,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: palette.panel,
     color: palette.text,
     fontSize: 14,
     fontWeight: "800",
@@ -1146,7 +1148,7 @@ const styles = StyleSheet.create({
     borderColor: palette.line,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: palette.panel,
   },
   dayChipActive: { backgroundColor: palette.cyan, borderColor: palette.cyan },
   dayChipText: { color: palette.muted, fontSize: 15, fontWeight: "900" },
@@ -1160,7 +1162,7 @@ const styles = StyleSheet.create({
     padding: 10,
     alignItems: "center",
     gap: 4,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: palette.panel,
   },
   premiumChipActive: { backgroundColor: palette.goldSoft, borderColor: palette.gold },
   premiumChipText: { color: palette.muted, fontSize: 12, fontWeight: "900" },
@@ -1174,7 +1176,7 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     paddingVertical: 10,
     paddingHorizontal: 14,
-    backgroundColor: "rgba(255,181,71,0.10)",
+    backgroundColor: palette.goldSoft,
     borderWidth: 1,
     borderColor: "rgba(255,181,71,0.22)",
   },

@@ -12,6 +12,13 @@ export const palette = {
   panel: "rgba(10, 20, 40, 0.55)",
   panelStrong: "#0A1426",
 
+  // --- Semantic aliases (map to background keys) ---
+  background: "#02040A",       // → void
+  surface: "#07111F",           // → obsidian
+  card: "#0A1426",              // → graphite
+  inputBackground: "rgba(10, 20, 40, 0.55)",  // → panel
+  overlay: "rgba(2, 4, 10, 0.88)",
+
   // --- Neon glows ---
   blue: "#3DA5FF", // primary glow
   cyan: "#6CE6FF", // secondary glow (alias kept for compatibility)
@@ -29,10 +36,17 @@ export const palette = {
   successSoft: "rgba(0, 255, 178, 0.14)",
 
   // --- Text & borders ---
-  text: "#F4FAFF",
-  muted: "#8DA2B5",
-  line: "rgba(120, 180, 255, 0.18)",
+  text: "#F4FAFF",              // → textPrimary
+  textPrimary: "#F4FAFF",
+  muted: "#8DA2B5",             // → textSecondary
+  textSecondary: "#8DA2B5",
+  line: "rgba(120, 180, 255, 0.18)",   // → border
+  border: "rgba(120, 180, 255, 0.18)",
   lineStrong: "rgba(120, 180, 255, 0.32)",
+
+  // --- Input ---
+  inputText: "#F4FAFF",
+  placeholderText: "#8DA2B5",
 };
 
 export const radii = {
@@ -77,6 +91,13 @@ export const lightPalette = {
   panel: "rgba(255, 255, 255, 0.72)",
   panelStrong: "#FFFFFF",
 
+  // --- Semantic aliases ---
+  background: "#F0F3F8",
+  surface: "#E4E8F0",
+  card: "#D8DDE6",
+  inputBackground: "rgba(255, 255, 255, 0.72)",
+  overlay: "rgba(240, 243, 248, 0.90)",
+
   blue: "#1A7FD4",
   cyan: "#0E9EBB",
   violet: "#6B3FF5",
@@ -92,9 +113,15 @@ export const lightPalette = {
   successSoft: "rgba(0, 143, 94, 0.10)",
 
   text: "#0B1420",
+  textPrimary: "#0B1420",
   muted: "#54657E",
+  textSecondary: "#54657E",
   line: "rgba(10, 20, 40, 0.14)",
+  border: "rgba(10, 20, 40, 0.14)",
   lineStrong: "rgba(10, 20, 40, 0.26)",
+
+  inputText: "#0B1420",
+  placeholderText: "#54657E",
 } as const;
 
 export function getPaletteForTheme(theme: "dark" | "light"): typeof palette {

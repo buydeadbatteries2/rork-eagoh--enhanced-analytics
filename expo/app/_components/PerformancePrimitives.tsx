@@ -67,7 +67,7 @@ export const OptimizedEagohImage = memo(function OptimizedEagohImage({ tone, lab
       />
       {!hasRealImage && (
         <>
-          <LinearGradient colors={[`${color}44`, "rgba(255,255,255,0.03)", "rgba(3,6,11,0.94)"]} style={StyleSheet.absoluteFill} />
+          <LinearGradient colors={[`${color}44`, "rgba(255,255,255,0.03)", palette.void]} style={StyleSheet.absoluteFill} />
           <View style={[styles.ring, { borderColor: color }]} />
           <Hexagon color={color} size={size === "profile" ? 58 : 38} strokeWidth={1.4} />
           <Text style={[styles.label, { color }]}>{label}</Text>
@@ -75,7 +75,7 @@ export const OptimizedEagohImage = memo(function OptimizedEagohImage({ tone, lab
       )}
       {hasRealImage && (
         <>
-          <LinearGradient colors={["rgba(3,6,11,0.0)", "rgba(3,6,11,0.15)"]} style={StyleSheet.absoluteFill} />
+          <LinearGradient colors={["rgba(3,6,11,0.0)", palette.panel]} style={StyleSheet.absoluteFill} />
           {showLabel && (
             <Text style={[styles.label, { color: "rgba(255,255,255,0.85)" }]}>{label}</Text>
           )}

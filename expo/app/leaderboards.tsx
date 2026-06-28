@@ -1,4 +1,5 @@
 import { palette } from "@/constants/colors";
+import { useAppTheme } from "@/providers/ThemeProvider";
 import { getTeamById } from "@/data/teams";
 import { HORIZONTAL_LIST_PERFORMANCE_PROPS, LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/_components/PerformancePrimitives";
 import { LinearGradient } from "expo-linear-gradient";
@@ -176,6 +177,7 @@ const LeaderboardCard = React.memo(function LeaderboardCard({ item }: { item: Le
 // ── Main Screen ────────────────────────────────────────────────────────
 
 export default function LeaderboardsScreen(): JSX.Element {
+  const { palette: pal } = useAppTheme();
   const h = useHaptics();
   const [category, setCategory] = useState<LeaderboardCategory>("overall");
   const [filters, setFilters] = useState<LeaderboardFilters>({});
@@ -395,7 +397,7 @@ export default function LeaderboardsScreen(): JSX.Element {
 
   if (loading && entries.length === 0) {
     return (
-      <LinearGradient colors={["#03060B", "#08111C", "#0B141F"]} style={styles.root}>
+      <LinearGradient colors={[pal.void, pal.obsidian, pal.graphite]} style={styles.root}>
         <SafeAreaView edges={["top"]} style={styles.safe}>
           <View style={styles.loadingWrap}>
             <ActivityIndicator color={palette.gold} size="large" />
@@ -407,7 +409,7 @@ export default function LeaderboardsScreen(): JSX.Element {
   }
 
   return (
-    <LinearGradient colors={["#03060B", "#08111C", "#0B141F"]} style={styles.root}>
+    <LinearGradient colors={[pal.void, pal.obsidian, pal.graphite]} style={styles.root}>
       <SafeAreaView edges={["top"]} style={styles.safe}>
         <KeyboardAvoidingView
           style={{ flex: 1 }}

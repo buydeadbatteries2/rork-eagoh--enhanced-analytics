@@ -154,7 +154,7 @@ const styles = StyleSheet.create({
     marginBottom: 22,
     padding: 14,
     borderRadius: 5,
-    backgroundColor: "rgba(10,20,40,0.45)",
+    backgroundColor: palette.panel,
     borderWidth: 1,
     borderColor: palette.line,
   },

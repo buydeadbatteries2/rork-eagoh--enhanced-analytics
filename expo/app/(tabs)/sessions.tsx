@@ -64,6 +64,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
+import EagohHeroBanner from "@/app/_components/EagohHeroBanner";
 import { useAuth } from "@/providers/AuthProvider";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useEdge } from "@/providers/EdgeProvider";
@@ -252,74 +253,7 @@ function SessionCard({
   );
 }
 
-// ── Selected EAGOH card ──
-function SelectedEagohCard({
-  eagoh,
-  onPress,
-  hasMultiple,
-  userTier,
-}: {
-  eagoh: EagohRecord | null;
-  onPress: () => void;
-  hasMultiple: boolean;
-  userTier: string;
-}): JSX.Element {
-  const domain = eagoh ? INTELLIGENCE_DOMAINS.find((d) => d.id === eagoh.domain) : null;
-  const domainTone = domain ? toneColor(domain.tone) : palette.cyan;
-  const hero = eagoh?.image_url ?? eagoh?.image_thumb_url ?? null;
-  const isActive = userTier !== "free";
 
-  return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.eagohHero, { shadowColor: domainTone, borderColor: eagoh ? `${domainTone}55` : palette.lineStrong }, pressed && styles.pressed]}>
-      {/* Featured image */}
-      <View style={styles.eagohHeroImageWrap}>
-        {hero ? (
-          <Image source={{ uri: hero }} style={styles.eagohHeroImage} resizeMode="contain" />
-        ) : (
-          <View style={styles.eagohHeroPlaceholder}>
-            <BrainCircuit color={eagoh ? domainTone : palette.muted} size={64} />
-          </View>
-        )}
-        {/* atmospheric tint + bottom fade */}
-        <LinearGradient
-          colors={[`${domainTone}22`, "transparent", "rgba(5,9,16,0.96)"]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
-        {/* top badges */}
-        <View style={styles.eagohHeroTopRow}>
-          <View style={[styles.eagohHeroDomainTag, { borderColor: `${domainTone}55`, backgroundColor: `${domainTone}1F` }]}>
-            <Text style={[styles.eagohHeroDomainText, { color: domainTone }]} numberOfLines={1}>
-              {eagoh ? (domain?.label ?? eagoh.domain ?? "No domain").toUpperCase() : "SELECT EAGOH"}
-            </Text>
-          </View>
-          {eagoh ? (
-            <View style={[styles.eagohHeroStatus, { borderColor: isActive ? "rgba(0,255,178,0.4)" : palette.line, backgroundColor: isActive ? "rgba(0,255,178,0.12)" : "rgba(255,255,255,0.04)" }]}>
-              <View style={[styles.eagohStatusDot, { backgroundColor: isActive ? palette.success : palette.muted, shadowColor: isActive ? palette.success : "transparent" }]} />
-              <Text style={[styles.eagohStatusText, { color: isActive ? palette.success : palette.muted }]}>
-                {isActive ? "SHELL ACTIVE" : "DORMANT"}
-              </Text>
-            </View>
-          ) : null}
-        </View>
-        {/* bottom name + change button */}
-        <View style={styles.eagohHeroBottom}>
-          <View style={styles.eagohHeroNameWrap}>
-            <Text style={styles.eagohHeroLabel}>ACTIVE EAGOH</Text>
-            <Text style={styles.eagohHeroName} numberOfLines={1}>
-              {eagoh?.name || "No EAGOH selected"}
-            </Text>
-          </View>
-          <View style={[styles.eagohChangeBtn, { borderColor: `${domainTone}55`, backgroundColor: `${domainTone}22` }]}>
-            <Text style={[styles.eagohChangeText, { color: domainTone }]}>{hasMultiple ? "Change" : "Select"}</Text>
-            <ChevronDown color={domainTone} size={13} />
-          </View>
-        </View>
-      </View>
-    </Pressable>
-  );
-}
 
 // ── EAGOH picker dropdown ──
 function EagohPicker({
@@ -427,11 +361,23 @@ function SessionSetup({
         showsVerticalScrollIndicator={false}
       >
         {/* EAGOH Hero Card */}
-        <SelectedEagohCard
-          eagoh={selectedEagoh ?? null}
+        <EagohHeroBanner
+          mode="sessions"
+          domainId={selectedEagoh?.domain ?? null}
+          domainTone={selectedEagoh ? (INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh.domain)?.tone ?? "cyan") : "cyan"}
+          imageUrl={selectedEagoh?.image_url ?? selectedEagoh?.image_thumb_url ?? null}
+          domainLabel={selectedEagoh ? (INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh.domain)?.label ?? selectedEagoh.domain ?? "No domain") : "Select EAGOH"}
+          topRightBadge={selectedEagoh ? {
+            text: userTier !== "free" ? "SHELL ACTIVE" : "DORMANT",
+            color: userTier !== "free" ? palette.success : palette.muted,
+            backgroundColor: userTier !== "free" ? "rgba(0,255,178,0.12)" : "rgba(255,255,255,0.04)",
+            borderColor: userTier !== "free" ? "rgba(0,255,178,0.4)" : palette.line,
+            dotColor: userTier !== "free" ? palette.success : palette.muted,
+          } : undefined}
+          bottomLabel="ACTIVE EAGOH"
+          bottomName={selectedEagoh?.name || "No EAGOH selected"}
+          changeBtnText={eagohs.length > 1 ? "Change" : "Select"}
           onPress={onChangeEagoh}
-          hasMultiple={eagohs.length > 1}
-          userTier={userTier}
         />
 
         {/* Session header */}
@@ -1122,11 +1068,23 @@ function OpenIntelSession({
         scrollEventThrottle={16}
       >
         {/* EAGOH Hero Card */}
-        <SelectedEagohCard
-          eagoh={selectedEagoh ?? null}
+        <EagohHeroBanner
+          mode="sessions"
+          domainId={selectedEagoh?.domain ?? null}
+          domainTone={selectedEagoh ? (INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh.domain)?.tone ?? "cyan") : "cyan"}
+          imageUrl={selectedEagoh?.image_url ?? selectedEagoh?.image_thumb_url ?? null}
+          domainLabel={selectedEagoh ? (INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh.domain)?.label ?? selectedEagoh.domain ?? "No domain") : "Select EAGOH"}
+          topRightBadge={selectedEagoh ? {
+            text: userTier !== "free" ? "SHELL ACTIVE" : "DORMANT",
+            color: userTier !== "free" ? palette.success : palette.muted,
+            backgroundColor: userTier !== "free" ? "rgba(0,255,178,0.12)" : "rgba(255,255,255,0.04)",
+            borderColor: userTier !== "free" ? "rgba(0,255,178,0.4)" : palette.line,
+            dotColor: userTier !== "free" ? palette.success : palette.muted,
+          } : undefined}
+          bottomLabel="ACTIVE EAGOH"
+          bottomName={selectedEagoh?.name || "No EAGOH selected"}
+          changeBtnText={eagohs.length > 1 ? "Change" : "Select"}
           onPress={onChangeEagoh}
-          hasMultiple={eagohs.length > 1}
-          userTier={userTier}
         />
 
         {/* Open Intelligence header */}
@@ -1515,11 +1473,23 @@ function FactionNetworkSession({
         showsVerticalScrollIndicator={false}
       >
         {/* EAGOH Hero Card */}
-        <SelectedEagohCard
-          eagoh={selectedEagoh ?? null}
+        <EagohHeroBanner
+          mode="sessions"
+          domainId={selectedEagoh?.domain ?? null}
+          domainTone={selectedEagoh ? (INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh.domain)?.tone ?? "cyan") : "cyan"}
+          imageUrl={selectedEagoh?.image_url ?? selectedEagoh?.image_thumb_url ?? null}
+          domainLabel={selectedEagoh ? (INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh.domain)?.label ?? selectedEagoh.domain ?? "No domain") : "Select EAGOH"}
+          topRightBadge={selectedEagoh ? {
+            text: userTier !== "free" ? "SHELL ACTIVE" : "DORMANT",
+            color: userTier !== "free" ? palette.success : palette.muted,
+            backgroundColor: userTier !== "free" ? "rgba(0,255,178,0.12)" : "rgba(255,255,255,0.04)",
+            borderColor: userTier !== "free" ? "rgba(0,255,178,0.4)" : palette.line,
+            dotColor: userTier !== "free" ? palette.success : palette.muted,
+          } : undefined}
+          bottomLabel="ACTIVE EAGOH"
+          bottomName={selectedEagoh?.name || "No EAGOH selected"}
+          changeBtnText={eagohs.length > 1 ? "Change" : "Select"}
           onPress={onChangeEagoh}
-          hasMultiple={eagohs.length > 1}
-          userTier={userTier}
         />
 
         {/* Faction Network header */}
@@ -1722,11 +1692,23 @@ function MyRankingsSession({
         showsVerticalScrollIndicator={false}
       >
         {/* EAGOH Hero Card */}
-        <SelectedEagohCard
-          eagoh={selectedEagoh ?? null}
+        <EagohHeroBanner
+          mode="sessions"
+          domainId={selectedEagoh?.domain ?? null}
+          domainTone={selectedEagoh ? (INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh.domain)?.tone ?? "cyan") : "cyan"}
+          imageUrl={selectedEagoh?.image_url ?? selectedEagoh?.image_thumb_url ?? null}
+          domainLabel={selectedEagoh ? (INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh.domain)?.label ?? selectedEagoh.domain ?? "No domain") : "Select EAGOH"}
+          topRightBadge={selectedEagoh ? {
+            text: userTier !== "free" ? "SHELL ACTIVE" : "DORMANT",
+            color: userTier !== "free" ? palette.success : palette.muted,
+            backgroundColor: userTier !== "free" ? "rgba(0,255,178,0.12)" : "rgba(255,255,255,0.04)",
+            borderColor: userTier !== "free" ? "rgba(0,255,178,0.4)" : palette.line,
+            dotColor: userTier !== "free" ? palette.success : palette.muted,
+          } : undefined}
+          bottomLabel="ACTIVE EAGOH"
+          bottomName={selectedEagoh?.name || "No EAGOH selected"}
+          changeBtnText={eagohs.length > 1 ? "Change" : "Select"}
           onPress={onChangeEagoh}
-          hasMultiple={eagohs.length > 1}
-          userTier={userTier}
         />
 
         {/* My Rankings header */}
@@ -2085,11 +2067,23 @@ export default function SessionsScreen(): JSX.Element {
           </View>
 
           {/* Selected EAGOH card */}
-          <SelectedEagohCard
-            eagoh={selectedEagoh ?? null}
+          <EagohHeroBanner
+            mode="sessions"
+            domainId={selectedEagoh?.domain ?? null}
+            domainTone={selectedEagoh ? (INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh.domain)?.tone ?? "cyan") : "cyan"}
+            imageUrl={selectedEagoh?.image_url ?? selectedEagoh?.image_thumb_url ?? null}
+            domainLabel={selectedEagoh ? (INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh.domain)?.label ?? selectedEagoh.domain ?? "No domain") : "Select EAGOH"}
+            topRightBadge={selectedEagoh ? {
+              text: userTier !== "free" ? "SHELL ACTIVE" : "DORMANT",
+              color: userTier !== "free" ? palette.success : palette.muted,
+              backgroundColor: userTier !== "free" ? "rgba(0,255,178,0.12)" : "rgba(255,255,255,0.04)",
+              borderColor: userTier !== "free" ? "rgba(0,255,178,0.4)" : palette.line,
+              dotColor: userTier !== "free" ? palette.success : palette.muted,
+            } : undefined}
+            bottomLabel="ACTIVE EAGOH"
+            bottomName={selectedEagoh?.name || "No EAGOH selected"}
+            changeBtnText={eagohs.length > 1 ? "Change" : "Select"}
             onPress={() => setShowPicker(true)}
-            hasMultiple={eagohs.length > 1}
-            userTier={userTier}
           />
 
           {/* Recent Analyst Threads */}

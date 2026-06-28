@@ -30,6 +30,7 @@ import { TIER_MAX_EAGOHS, TIER_MULTIPLIER, getForgeCost } from "@/services/edge"
 import type { EagohDraft } from "@/services/eagohs";
 import { useHaptics } from "@/hooks/useHaptics";
 import TeamSelector from "@/app/_components/TeamSelector";
+import EagohHeroBanner from "@/app/_components/EagohHeroBanner";
 import { getTeamById, getSportCanonical } from "@/data/teams";
 import { MUSIC_GENRES, MUSIC_ROLES, getMusicGenre, getMusicRole } from "@/data/music";
 import { FILM_TV_CATEGORIES, FILM_TV_GENRES, FILM_TV_ROLES, getFilmTvCategory, getFilmTvGenre, getFilmTvRole } from "@/data/filmTv";
@@ -1537,67 +1538,28 @@ export default function ForgeScreen(): JSX.Element {
           onScroll={handleScroll}
           scrollEventThrottle={16}
         >
-          {/* ── Preview area ────────────────────────────────────── */}
-          <Pressable
-            onPress={(): void => setShowPicker(true)}
-            style={[styles.previewArea, { height: previewHeight }]}
-          >
-            <ForgePreview
-              name={name}
-              sport={sport}
-              gender={gender}
-              domain={domain}
-              cyberneticIntensity={cyberneticIntensity}
-              pose={pose}
-              tier={currentTier}
-              imageUrl={isEditing ? editingEagoh?.image_url ?? editingEagoh?.image_thumb_url : null}
+          {/* ── Hero banner (matching Sessions) ──────────────────── */}
+          <View style={{ paddingHorizontal: 2, paddingTop: 2 }}>
+            <EagohHeroBanner
+              mode="forge"
+              domainId={domain}
+              domainTone={INTELLIGENCE_DOMAINS.find((d) => d.id === domain)?.tone ?? "cyan"}
+              imageUrl={isEditing ? editingEagoh?.image_url ?? editingEagoh?.image_thumb_url ?? null : null}
+              domainLabel={domainLabel}
+              topRightBadge={{
+                text: `${currentStepIndex + 1}/${wizardSteps.length}`,
+                color: palette.cyan,
+                backgroundColor: "rgba(108,230,255,0.10)",
+                borderColor: "rgba(108,230,255,0.25)",
+                dotColor: undefined,
+              }}
+              bottomLabel={isEditing ? "REFORGING" : "FORGING"}
+              bottomName={name || "New EAGOH"}
+              changeBtnText={isEditing ? (editingEagoh?.name ?? "Change") : "Select EAGOH"}
+              onPress={(): void => setShowPicker(true)}
+              isFree={currentTier === "free"}
               isEditing={isEditing}
             />
-            {/* Change/Select EAGOH pill */}
-            <View style={[styles.eagohSelectBtn, isEditing && styles.eagohSelectBtnEditing]}>
-              {isEditing ? (
-                <>
-                  <BrainCircuit color={palette.gold} size={11} />
-                  <Text style={styles.eagohSelectBtnText} numberOfLines={1}>
-                    {editingEagoh?.name ?? "Selected"}
-                  </Text>
-                  <ChevronDown color={palette.gold} size={10} />
-                </>
-              ) : (
-                <>
-                  <Plus color={palette.cyan} size={11} />
-                  <Text style={styles.eagohSelectBtnText}>Select EAGOH</Text>
-                </>
-              )}
-            </View>
-            <View style={[styles.tierChipFloat, currentTier !== "free" && styles.tierChipFloatPaid]}>
-              <Zap color={currentTier !== "free" ? palette.cyan : palette.muted} size={11} />
-              <Text style={[styles.tierChipFloatText, currentTier !== "free" && { color: palette.cyan }]}>
-                {currentTier.replace("_", " ").toUpperCase()}
-              </Text>
-            </View>
-          </Pressable>
-
-          {/* ── Info strip ──────────────────────────────────────── */}
-          <View style={styles.infoStrip}>
-            <Text style={styles.infoName} numberOfLines={1}>{name || "Unnamed EAGOH"}</Text>
-            <View style={styles.infoMeta}>
-              {isEditing ? (
-                <View style={styles.editingChip}>
-                  <Sparkles color={palette.gold} size={10} />
-                  <Text style={styles.editingChipText}>EDITING</Text>
-                </View>
-              ) : (
-                <>
-                  <Text style={styles.infoDomain}>{domainLabel}</Text>
-                  <View style={styles.infoDot} />
-                  <Text style={styles.infoShell}>{currentTier === "free" ? "DORMANT SHELL" : "ACTIVATED CHASSIS"}</Text>
-                </>
-              )}
-              <View style={styles.infoDot} />
-              <Text style={styles.infoSlots}>{remaining}/{maxEagohs} slots</Text>
-              {multiplier > 0 ? <Text style={styles.multiplier}>{multiplier.toFixed(1)}x</Text> : null}
-            </View>
           </View>
 
           {/* ── Stepper bar ─────────────────────────────────────── */}

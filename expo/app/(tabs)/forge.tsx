@@ -13,6 +13,7 @@
  */
 
 import { palette } from "@/constants/colors";
+import { useAppTheme } from "@/providers/ThemeProvider";
 import { useAuth } from "@/providers/AuthProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useEagohs, useEagohFull } from "@/providers/EagohProvider";
@@ -357,6 +358,7 @@ export default function ForgeScreen(): JSX.Element {
   const { pending, prepareForge, confirmForge, cancelForge, isGenerating } = useForge();
   const { eagohs, remaining, canCreate, tier, deleteEagoh, isDeleting } = useEagohs();
   const { height: windowHeight } = useWindowDimensions();
+  const { palette: pal } = useAppTheme();
 
   const [name, setName] = useState<string>("");
   const [sport, setSport] = useState<string>("football");
@@ -599,6 +601,24 @@ export default function ForgeScreen(): JSX.Element {
   const isFinanceDomain = domain === "finance";
   const isTechnologyDomain = domain === "technology";
   const isHealthFitnessDomain = domain === "health-fitness";
+
+  /** Display label for the current specialty / sport / genre. */
+  const specialtyLabel: string | null = useMemo((): string | null => {
+    if (isSportsDomain) {
+      const s = sports.find((spt) => spt.id === sport);
+      return s?.label ?? null;
+    }
+    if (isMusicDomain && musicGenre) return getMusicGenre(musicGenre)?.label ?? musicGenre;
+    if (isFilmTvDomain && filmTvCategory) return getFilmTvCategory(filmTvCategory)?.label ?? filmTvCategory;
+    if (isFashionDomain && fashionStyleCategory) return getFashionStyleCategory(fashionStyleCategory)?.label ?? fashionStyleCategory;
+    if (isEducationDomain && educationSubject) return getEducationSubject(educationSubject)?.label ?? educationSubject;
+    if (isGamingDomain && gamingGenre) return getGamingGenre(gamingGenre)?.label ?? gamingGenre;
+    if (isBusinessDomain && businessIndustry) return getBusinessIndustry(businessIndustry)?.label ?? businessIndustry;
+    if (isFinanceDomain && financeFocus) return getFinanceFocus(financeFocus)?.label ?? financeFocus;
+    if (isTechnologyDomain && technologyArea) return getTechnologyArea(technologyArea)?.label ?? technologyArea;
+    if (isHealthFitnessDomain && healthFitnessArea) return getHealthFitnessArea(healthFitnessArea)?.label ?? healthFitnessArea;
+    return null;
+  }, [isSportsDomain, isMusicDomain, isFilmTvDomain, isFashionDomain, isEducationDomain, isGamingDomain, isBusinessDomain, isFinanceDomain, isTechnologyDomain, isHealthFitnessDomain, sport, musicGenre, filmTvCategory, fashionStyleCategory, educationSubject, gamingGenre, businessIndustry, financeFocus, technologyArea, healthFitnessArea]);
 
   const wizardSteps: WizardStep[] = useMemo(() => {
     const base: WizardStep[] = [
@@ -1671,9 +1691,9 @@ export default function ForgeScreen(): JSX.Element {
               domainLabel={domainLabel}
               topRightBadge={{
                 text: `${currentStepIndex + 1}/${wizardSteps.length}`,
-                color: palette.cyan,
-                backgroundColor: "rgba(108,230,255,0.10)",
-                borderColor: "rgba(108,230,255,0.25)",
+                color: pal.cyan,
+                backgroundColor: `${pal.cyanSoft}`,
+                borderColor: `${pal.cyan}40`,
                 dotColor: undefined,
               }}
               bottomLabel={isEditing ? "REFORGING" : "FORGING"}
@@ -1682,6 +1702,9 @@ export default function ForgeScreen(): JSX.Element {
               onPress={(): void => setShowPicker(true)}
               isFree={currentTier === "free"}
               isEditing={isEditing}
+              specialtyLabel={specialtyLabel}
+              credentialStatus={isEditing ? (credentials ? "complete" : "missing") : null}
+              onCredentialsPress={isEditing ? (): void => setShowCredentialsModal(true) : undefined}
             />
           </View>
 
@@ -2023,6 +2046,10 @@ export default function ForgeScreen(): JSX.Element {
       {showCredentialsModal ? (
         <View style={styles.credModalOverlay}>
           <Pressable style={StyleSheet.absoluteFill} onPress={(): void => setShowCredentialsModal(false)} />
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            style={{ width: "100%" }}
+          >
           <View style={styles.credModal}>
             <LinearGradient colors={["rgba(10,18,28,0.99)", "rgba(5,10,18,0.99)"]} style={StyleSheet.absoluteFill} />
             <ScrollView
@@ -2030,6 +2057,7 @@ export default function ForgeScreen(): JSX.Element {
               contentContainerStyle={styles.credModalContent}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
             >
               {/* Header */}
               <View style={styles.credModalHeader}>
@@ -2218,6 +2246,7 @@ export default function ForgeScreen(): JSX.Element {
               </Pressable>
             </View>
           </View>
+          </KeyboardAvoidingView>
         </View>
       ) : null}
     </SafeAreaView>

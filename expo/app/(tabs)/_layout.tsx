@@ -2,26 +2,29 @@ import { Tabs } from "expo-router";
 import { Atom, Home, MessageCircle, Store, UserRound } from "lucide-react-native";
 import React from "react";
 import { Platform } from "react-native";
-import { palette } from "@/constants/colors";
+import { useAppTheme } from "@/providers/ThemeProvider";
 
 /**
  * Standard native mobile tab bar anchored to the bottom of the screen.
  * Five tabs: Home, Forge, Sessions, Exchange, Profile.
  * Forge is visually emphasized as the primary action tab.
  * Labels always display fully.
+ * Theme-aware — responds to light/dark mode preference.
  */
 export default function TabLayout(): JSX.Element {
+  const { palette: pal } = useAppTheme();
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: palette.cyan,
-        tabBarInactiveTintColor: palette.muted,
+        tabBarActiveTintColor: pal.cyan,
+        tabBarInactiveTintColor: pal.muted,
         tabBarShowLabel: true,
         tabBarStyle: {
-          backgroundColor: palette.obsidian,
+          backgroundColor: pal.obsidian,
           borderTopWidth: 1,
-          borderTopColor: palette.line,
+          borderTopColor: pal.line,
           height: Platform.OS === "ios" ? 88 : 68,
           paddingTop: 10,
           paddingBottom: Platform.OS === "ios" ? 28 : 10,
@@ -80,5 +83,3 @@ export default function TabLayout(): JSX.Element {
     </Tabs>
   );
 }
-
-

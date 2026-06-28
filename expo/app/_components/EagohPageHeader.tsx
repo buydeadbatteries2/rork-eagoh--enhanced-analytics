@@ -2,10 +2,11 @@
  * Shared page header used by Sessions and Forge pages.
  * Displays a small uppercase kicker label and a large title below it —
  * matching the cybernetic EAGOH brand typography.
+ * Theme-aware: responds to light/dark mode preference.
  */
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { palette } from "@/constants/colors";
+import { useAppTheme } from "@/providers/ThemeProvider";
 
 export interface EagohPageHeaderProps {
   kicker: string;
@@ -15,10 +16,12 @@ export interface EagohPageHeaderProps {
 }
 
 export default function EagohPageHeader({ kicker, title, children }: EagohPageHeaderProps): JSX.Element {
+  const { palette: pal } = useAppTheme();
+
   return (
     <View style={styles.hero}>
-      <Text style={styles.kicker}>{kicker}</Text>
-      <Text style={styles.title}>{title}</Text>
+      <Text style={[styles.kicker, { color: pal.cyan }]}>{kicker}</Text>
+      <Text style={[styles.title, { color: pal.text }]}>{title}</Text>
       {children}
     </View>
   );
@@ -27,14 +30,12 @@ export default function EagohPageHeader({ kicker, title, children }: EagohPageHe
 const styles = StyleSheet.create({
   hero: { marginBottom: 14 },
   kicker: {
-    color: palette.cyan,
     fontSize: 10,
     fontWeight: "900" as const,
     letterSpacing: 2.2,
     marginBottom: 4,
   },
   title: {
-    color: palette.text,
     fontSize: 26,
     fontWeight: "900" as const,
     letterSpacing: -0.6,

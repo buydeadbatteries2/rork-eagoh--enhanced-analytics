@@ -4,12 +4,17 @@
  * Used by both Sessions (SelectedEagohCard) and Forge (preview area replacement).
  * The "mode" prop controls which labels and badges are shown; the visual structure
  * (image, gradient, shadow, border, typography) is identical for both.
+ *
+ * Pills are displayed vertically on the left side to avoid overlap with the EAGOH image.
  */
 
-import { palette } from "@/constants/colors";
+import { palette as darkPalette } from "@/constants/colors";
+import { useAppTheme, type ThemePalette } from "@/providers/ThemeProvider";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import type { EagohRecord } from "@/services/eagohs";
 import {
+  BadgeCheck,
+  BookOpen,
   BrainCircuit,
   ChevronDown,
   Sparkles,
@@ -71,14 +76,23 @@ interface EagohHeroBannerProps {
 
   /** Editing badge (Forge mode) */
   isEditing?: boolean;
+
+  /** Specialty / sport / genre label shown as a pill (Forge mode) */
+  specialtyLabel?: string | null;
+
+  /** Credentials status pill */
+  credentialStatus?: "complete" | "missing" | null;
+
+  /** Credentials pill press handler */
+  onCredentialsPress?: () => void;
 }
 
-function toneHex(tone: string): string {
-  if (tone === "gold") return palette.gold;
-  if (tone === "violet") return palette.violet;
-  if (tone === "ember") return palette.ember;
-  if (tone === "success") return palette.success;
-  return palette.cyan;
+function toneHex(tone: string, pal: ThemePalette): string {
+  if (tone === "gold") return pal.gold;
+  if (tone === "violet") return pal.violet;
+  if (tone === "ember") return pal.ember;
+  if (tone === "success") return pal.success;
+  return pal.cyan;
 }
 
 const EagohHeroBanner = React.memo(function EagohHeroBanner({
@@ -95,8 +109,12 @@ const EagohHeroBanner = React.memo(function EagohHeroBanner({
   onPress,
   isFree = false,
   isEditing = false,
+  specialtyLabel,
+  credentialStatus,
+  onCredentialsPress,
 }: EagohHeroBannerProps): JSX.Element {
-  const accent = isFree ? "#6B7280" : toneHex(domainTone);
+  const { palette: pal } = useAppTheme();
+  const accent = isFree ? "#6B7280" : toneHex(domainTone, pal);
 
   return (
     <Pressable
@@ -108,7 +126,7 @@ const EagohHeroBanner = React.memo(function EagohHeroBanner({
       ]}
     >
       {/* Featured image area */}
-      <View style={styles.imageWrap}>
+      <View style={[styles.imageWrap, { backgroundColor: pal.graphite }]}>
         {imageUrl ? (
           <Image
             source={{ uri: imageUrl }}
@@ -124,7 +142,7 @@ const EagohHeroBanner = React.memo(function EagohHeroBanner({
         ) : (
           <View style={styles.placeholder}>
             <BrainCircuit
-              color={mode === "forge" && !isFree ? accent : palette.muted}
+              color={mode === "forge" && !isFree ? accent : pal.muted}
               size={64}
             />
           </View>
@@ -132,18 +150,18 @@ const EagohHeroBanner = React.memo(function EagohHeroBanner({
 
         {/* Atmospheric gradient overlay */}
         <LinearGradient
-          colors={[`${accent}22`, "transparent", "rgba(5,9,16,0.96)"]}
+          colors={[`${accent}22`, "transparent", `${pal.void}E6`]}
           start={{ x: 0, y: 0 }}
           end={{ x: 0, y: 1 }}
           style={StyleSheet.absoluteFill}
         />
 
-        {/* Top badges row — wraps to avoid overlap on small screens */}
-        <View style={styles.topRow}>
+        {/* ── Vertical pills column on the left ──────── */}
+        <View style={styles.pillsColumn}>
           {/* Editing badge (Forge mode only) */}
           {mode === "forge" && isEditing ? (
             <View style={styles.editingBadge}>
-              <Sparkles color={palette.gold} size={10} />
+              <Sparkles color={darkPalette.gold} size={10} />
               <Text style={styles.editingBadgeText}>EDITING</Text>
             </View>
           ) : null}
@@ -163,7 +181,52 @@ const EagohHeroBanner = React.memo(function EagohHeroBanner({
             </Text>
           </View>
 
-          {/* Top-right badge */}
+          {/* Specialty / genre pill */}
+          {specialtyLabel ? (
+            <View
+              style={[
+                styles.pill,
+                { borderColor: `${pal.muted}40`, backgroundColor: `${pal.panel}` },
+              ]}
+            >
+              <Text
+                style={[styles.specialtyText, { color: pal.muted }]}
+                numberOfLines={1}
+              >
+                {specialtyLabel}
+              </Text>
+            </View>
+          ) : null}
+
+          {/* Credentials status pill */}
+          {credentialStatus ? (
+            <Pressable
+              onPress={onCredentialsPress}
+              style={[
+                styles.pill,
+                credentialStatus === "complete"
+                  ? { borderColor: `${pal.success}40`, backgroundColor: `${pal.successSoft}` }
+                  : { borderColor: `${pal.gold}40`, backgroundColor: `${pal.goldSoft}` },
+              ]}
+            >
+              {credentialStatus === "complete" ? (
+                <BadgeCheck color={pal.success} size={10} />
+              ) : (
+                <BookOpen color={pal.gold} size={10} />
+              )}
+              <Text
+                style={[
+                  styles.credStatusText,
+                  { color: credentialStatus === "complete" ? pal.success : pal.gold },
+                ]}
+                numberOfLines={1}
+              >
+                {credentialStatus === "complete" ? "Credentials" : "+ Credentials"}
+              </Text>
+            </Pressable>
+          ) : null}
+
+          {/* Top-right badge (step counter, etc.) */}
           {topRightBadge ? (
             <View
               style={[
@@ -197,8 +260,8 @@ const EagohHeroBanner = React.memo(function EagohHeroBanner({
         {/* Bottom row */}
         <View style={styles.bottom}>
           <View style={styles.nameWrap}>
-            <Text style={styles.label}>{bottomLabel}</Text>
-            <Text style={styles.name} numberOfLines={1}>
+            <Text style={[styles.label, { color: pal.cyan }]}>{bottomLabel}</Text>
+            <Text style={[styles.name, { color: pal.text }]} numberOfLines={1}>
               {bottomName}
             </Text>
           </View>
@@ -238,7 +301,6 @@ const styles = StyleSheet.create({
   imageWrap: {
     height: 260,
     width: "100%",
-    backgroundColor: "rgba(8,16,30,0.92)",
     justifyContent: "space-between",
   },
   image: {
@@ -251,13 +313,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  topRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingTop: 10,
+  // ── Vertical pills column (left side) ────────
+  pillsColumn: {
+    position: "absolute",
+    top: 10,
+    left: 10,
+    flexDirection: "column",
+    alignItems: "flex-start",
     gap: 5,
+    zIndex: 5,
+    maxWidth: "52%",
   },
   pill: {
     flexDirection: "row",
@@ -267,9 +332,11 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 5,
     borderWidth: 1,
-    maxWidth: "100%",
+    alignSelf: "flex-start",
   },
   domainText: { fontSize: 9, fontWeight: "900", letterSpacing: 1.4 },
+  specialtyText: { fontSize: 9, fontWeight: "800", letterSpacing: 0.8 },
+  credStatusText: { fontSize: 9, fontWeight: "800", letterSpacing: 0.6 },
   statusDot: {
     width: 6,
     height: 6,
@@ -289,14 +356,12 @@ const styles = StyleSheet.create({
   },
   nameWrap: { flex: 1 },
   label: {
-    color: palette.cyan,
     fontSize: 9,
     fontWeight: "900",
     letterSpacing: 2,
     marginBottom: 3,
   },
   name: {
-    color: palette.text,
     fontSize: 24,
     fontWeight: "900",
     letterSpacing: -0.5,
@@ -321,9 +386,10 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,181,71,0.18)",
     borderWidth: 1,
     borderColor: "rgba(255,181,71,0.30)",
+    alignSelf: "flex-start",
   },
   editingBadgeText: {
-    color: palette.gold,
+    color: darkPalette.gold,
     fontSize: 8,
     fontWeight: "900",
     letterSpacing: 1.2,

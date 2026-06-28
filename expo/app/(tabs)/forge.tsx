@@ -82,7 +82,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 
-const GENERIC_EAGOH_URI = "https://pub-e001eb4506b145aa938b5d3badbff6a5.r2.dev/attachments/pl6p26j6a1qg1xdfjloo1.png";
+const GENERIC_EAGOH_URI = "https://pub-e001eb4506b145aa938b5d3badbff6a5.r2.dev/attachments/x0u51a75lkvm28afuhja2.png";
 
 type OptionTone = "cyan" | "gold" | "violet" | "ember" | "success";
 type ForgeOption = { id: string; label: string; detail?: string; tone: OptionTone };
@@ -1551,6 +1551,7 @@ export default function ForgeScreen(): JSX.Element {
               domainId={domain}
               domainTone={INTELLIGENCE_DOMAINS.find((d) => d.id === domain)?.tone ?? "cyan"}
               imageUrl={isEditing ? editingEagoh?.image_url ?? editingEagoh?.image_thumb_url ?? null : null}
+              fallbackImageUrl={isEditing ? null : GENERIC_EAGOH_URI}
               domainLabel={domainLabel}
               topRightBadge={{
                 text: `${currentStepIndex + 1}/${wizardSteps.length}`,

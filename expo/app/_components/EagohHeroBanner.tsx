@@ -45,6 +45,9 @@ interface EagohHeroBannerProps {
   /** Image */
   imageUrl?: string | null;
 
+  /** Fallback image shown when imageUrl is absent (e.g. default Forge hero) */
+  fallbackImageUrl?: string | null;
+
   /** Top-left domain tag text (e.g. "SPORTS") */
   domainLabel: string;
 
@@ -83,6 +86,7 @@ const EagohHeroBanner = React.memo(function EagohHeroBanner({
   domainId,
   domainTone,
   imageUrl,
+  fallbackImageUrl,
   domainLabel,
   topRightBadge,
   bottomLabel,
@@ -108,6 +112,12 @@ const EagohHeroBanner = React.memo(function EagohHeroBanner({
         {imageUrl ? (
           <Image
             source={{ uri: imageUrl }}
+            style={styles.image}
+            resizeMode="contain"
+          />
+        ) : fallbackImageUrl ? (
+          <Image
+            source={{ uri: fallbackImageUrl }}
             style={styles.image}
             resizeMode="contain"
           />

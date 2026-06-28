@@ -5,9 +5,7 @@
  * total EAGOHs, top EAGOHs, active domains, source credentials badge.
  * Never shows: email, private user ID, subscription, admin data, preferences.
  */
-import { palette, lightPalette } from "@/constants/colors";
-import { getPaletteForTheme } from "@/constants/colors";
-import { useAppTheme } from "@/providers/ThemeProvider";
+import { palette } from "@/constants/colors";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import {
@@ -356,7 +354,7 @@ const SectionHeader = memo(function SectionHeader({
 export default function PublicProfileScreen(): JSX.Element {
   const router = useRouter();
   const { userId: routeUserId } = useLocalSearchParams<{ userId: string }>();
-  const { palette: pal } = useAppTheme();
+  const pal = palette;
   const s = useMemo(() => createStyles(pal), [pal]);
 
   const [loading, setLoading] = useState<boolean>(true);

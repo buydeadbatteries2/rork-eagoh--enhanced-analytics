@@ -1,4 +1,4 @@
-import { useAppTheme } from "@/providers/ThemeProvider";
+import { palette } from "@/constants/colors";
 import { useAuth } from "@/providers/AuthProvider";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useHaptics } from "@/hooks/useHaptics";
@@ -9,14 +9,12 @@ import {
   AlertTriangle,
   ArrowLeft,
   BadgeCheck,
-  Brush,
   Camera,
   ChevronRight,
   Coins,
   Cpu,
   Crown,
   FileText,
-  Globe,
   Hand,
   ImageIcon,
   Info,
@@ -26,13 +24,10 @@ import {
   LogOut,
   Mail,
   MessageCircle,
-  Moon,
   RefreshCcw,
-  Settings,
   Shield,
   Sliders,
   Star,
-  Sun,
   Trash2,
   Upload,
   User,
@@ -54,8 +49,7 @@ import {
 } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
-import type { AppTheme } from "@/services/profile";
-import { palette as darkPalette, lightPalette } from "@/constants/colors";
+import type { ProfilePreferences } from "@/services/profile";
 import {
   getUserVerificationStatus,
   connectSocialAccountMock,
@@ -70,7 +64,7 @@ import {
 import * as ImagePicker from "expo-image-picker";
 import { supabase } from "@/lib/supabase";
 
-type P = typeof darkPalette;
+type P = typeof palette;
 
 // ── Section types ──────────────────────────────────────────────────────────
 
@@ -961,7 +955,7 @@ export default function SettingsScreen(): JSX.Element {
     updateProfile,
     setPreferences,
   } = useProfile();
-  const { theme, setTheme, palette: pal } = useAppTheme();
+  const pal = palette;
   const h = useHaptics();
   const queryClient = useQueryClient();
 
@@ -1036,14 +1030,7 @@ export default function SettingsScreen(): JSX.Element {
     }).catch((err: unknown) => console.warn("[settings] haptics toggle failed", err));
   }, [hapticsEnabled, profile?.preferences, setPreferences]);
 
-  const handleThemeSelect = useCallback(
-    (id: string): void => {
-      setTheme(id as AppTheme).catch((err: unknown) =>
-        console.warn("[settings] theme change failed", err),
-      );
-    },
-    [setTheme],
-  );
+
 
   const handleClearCache = useCallback((): void => {
     Alert.alert(
@@ -1308,24 +1295,7 @@ export default function SettingsScreen(): JSX.Element {
           },
         ],
       },
-      {
-        id: "appearance",
-        title: "Appearance",
-        titleIcon: <Brush color={pal.violet} size={15} />,
-        rows: [
-          {
-            kind: "picker",
-            label: "Theme",
-            value: theme,
-            icon: <Moon color={pal.muted} size={18} />,
-            options: [
-              { id: "dark", label: "Dark Mode", icon: <Moon color={pal.blue} size={14} /> },
-              { id: "light", label: "Light Mode", icon: <Sun color={pal.gold} size={14} /> },
-            ],
-            onSelect: handleThemeSelect,
-          },
-        ],
-      },
+
       {
         id: "feedback",
         title: "Touch Feedback",
@@ -1506,8 +1476,6 @@ export default function SettingsScreen(): JSX.Element {
     resetPasswordState.isPending,
     handleLogout,
     signOutState.isPending,
-    theme,
-    handleThemeSelect,
     hapticsEnabled,
     handleToggleHaptics,
     currentTier,

@@ -10,27 +10,25 @@ import { ProfileProvider } from "@/providers/ProfileProvider";
 import { EagohProvider } from "@/providers/EagohProvider";
 import { EdgeProvider } from "@/providers/EdgeProvider";
 import { ForgeProvider } from "@/providers/ForgeProvider";
-import { ThemeProvider, useAppTheme } from "@/providers/ThemeProvider";
+import { palette } from "@/constants/colors";
 
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
-/** Inner component that can consume ThemeProvider context for root-level theme. */
+/** Inner component with the dark cybernetic EAGOH theme applied at root level. */
 function ThemedRoot(): JSX.Element {
-  const { palette, theme } = useAppTheme();
-
   const themedStyles = useMemo(
     () => ({
       root: { flex: 1, backgroundColor: palette.void } as const,
     }),
-    [palette.void],
+    [],
   );
 
   return (
     <GestureHandlerRootView style={themedStyles.root}>
       <View style={themedStyles.root}>
-        <StatusBar style={theme === "dark" ? "light" : "dark"} />
+        <StatusBar style="light" />
         <Stack
           screenOptions={{
             headerShown: false,
@@ -89,7 +87,6 @@ export default function RootLayout(): JSX.Element {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <ProfileProvider>
-          <ThemeProvider>
           <EdgeProvider>
           <EagohProvider>
           <ForgeProvider>
@@ -97,7 +94,6 @@ export default function RootLayout(): JSX.Element {
           </ForgeProvider>
           </EagohProvider>
           </EdgeProvider>
-          </ThemeProvider>
         </ProfileProvider>
       </AuthProvider>
     </QueryClientProvider>

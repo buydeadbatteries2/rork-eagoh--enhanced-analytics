@@ -966,6 +966,69 @@ create policy "usa_marketplace_select" on public.user_social_accounts
   );
 
 -- =============================================================================
+-- ANALYST THREADS (persistent AI chat sessions)
+-- =============================================================================
+create table if not exists public.analyst_threads (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
+  session_type text not null,
+  title text not null,
+  domain text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists at_user_id_idx on public.analyst_threads(user_id, updated_at desc);
+create index if not exists at_eagoh_idx on public.analyst_threads(eagoh_id);
+
+alter table public.analyst_threads enable row level security;
+
+drop policy if exists "at_self_select" on public.analyst_threads;
+drop policy if exists "at_self_insert" on public.analyst_threads;
+drop policy if exists "at_self_update" on public.analyst_threads;
+drop policy if exists "at_self_delete" on public.analyst_threads;
+
+create policy "at_self_select" on public.analyst_threads
+  for select using (auth.uid() = user_id);
+
+create policy "at_self_insert" on public.analyst_threads
+  for insert with check (auth.uid() = user_id);
+
+create policy "at_self_update" on public.analyst_threads
+  for update using (auth.uid() = user_id);
+
+create policy "at_self_delete" on public.analyst_threads
+  for delete using (auth.uid() = user_id);
+
+-- =============================================================================
+-- ANALYST MESSAGES (individual messages inside a thread)
+-- =============================================================================
+create table if not exists public.analyst_messages (
+  id uuid primary key default gen_random_uuid(),
+  thread_id uuid not null references public.analyst_threads(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  role text not null check (role in ('user', 'assistant')),
+  content text not null,
+  edge_cost int default 0,
+  created_at timestamptz default now()
+);
+
+create index if not exists am_thread_id_idx on public.analyst_messages(thread_id, created_at asc);
+create index if not exists am_user_id_idx on public.analyst_messages(user_id);
+
+alter table public.analyst_messages enable row level security;
+
+drop policy if exists "am_self_select" on public.analyst_messages;
+drop policy if exists "am_self_insert" on public.analyst_messages;
+
+create policy "am_self_select" on public.analyst_messages
+  for select using (auth.uid() = user_id);
+
+create policy "am_self_insert" on public.analyst_messages
+  for insert with check (auth.uid() = user_id);
+
+-- =============================================================================
 -- STORAGE BUCKET: user-profile-media (public read, owner write)
 -- =============================================================================
 insert into storage.buckets (id, name, public)

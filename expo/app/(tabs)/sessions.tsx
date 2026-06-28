@@ -28,15 +28,18 @@ import {
   Flame,
   Globe,
   Hash,
+  MessageSquare,
   Orbit,
   Plus,
   Save,
   Search,
+  Send,
   Shield,
   Sparkles,
   Star,
   Swords,
   Tag,
+  Trash2,
   TrendingUp,
   Trophy,
   Users,
@@ -68,6 +71,17 @@ import { useEagohs } from "@/providers/EagohProvider";
 import { INTELLIGENCE_DOMAINS, getDomainColor, normalizeDomainId } from "@/services/domains";
 import { guardDomainRequest } from "@/services/domainGuard";
 import { getQuickCheckCost, runQuickCheck, runQuickAnalytics, runStandardSession, runDeepDive, runPremiumEvent, getSessionCost, type AnalystSessionType, type AnalystRequestKind, type AnalystErrorCode } from "@/services/analyst";
+import {
+  createThread,
+  addMessage,
+  listMessages,
+  listThreads,
+  deleteThread,
+  generateThreadTitle,
+  type AnalystThread,
+  type AnalystMessage,
+  type ThreadWithMeta,
+} from "@/services/analystThreads";
 import type { EagohRecord } from "@/services/eagohs";
 import type { EdgeReason } from "@/services/edge";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -484,60 +498,88 @@ function SessionSetup({
   );
 }
 
-// ── Active chat ──
-function ActiveChat({
-  session,
+// ── Analyst Chat Thread (persistent, messenger-style) ──
+function AnalystChatThread({
+  threadId,
   eagoh,
-  prompt,
+  session,
+  initialPrompt,
   onDone,
 }: {
-  session: SessionType;
+  threadId?: string;
   eagoh: EagohRecord;
-  prompt: string;
+  session: SessionType;
+  initialPrompt?: string;
   onDone: () => void;
 }): JSX.Element {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { id: "u-init", sender: "user", text: prompt },
-  ]);
-  const [isTyping, setIsTyping] = useState<boolean>(true);
+  const { profile } = useProfile();
+  const { spend, total: edgeTotal } = useEdge();
+  const scrollRef = useRef<ScrollView>(null);
+  const inputRef = useRef<TextInput>(null);
+
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [inputText, setInputText] = useState<string>("");
+  const [isSending, setIsSending] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const { deductQuickCheck, spend, total: edgeTotal } = useEdge();
-  const started = useRef(false);
-  const edgeDeducted = useRef(false);
+  const [currentThreadId, setCurrentThreadId] = useState<string | null>(threadId ?? null);
+  const [isInitialising, setIsInitialising] = useState<boolean>(true);
+  const initialisedRef = useRef(false);
 
-  const runSession = useCallback(async (): Promise<void> => {
-    if (started.current) return;
-    started.current = true;
+  // Load existing messages if reopening a thread
+  useEffect(() => {
+    if (!threadId || initialisedRef.current) return;
+    initialisedRef.current = true;
+    listMessages(threadId)
+      .then((msgs) => {
+        const chatMsgs: ChatMessage[] = msgs.map((m) => ({
+          id: m.id,
+          sender: m.role as "user" | "analyst",
+          text: m.content,
+          cost: m.edge_cost > 0 ? m.edge_cost : undefined,
+        }));
+        setMessages(chatMsgs);
+        setIsInitialising(false);
+      })
+      .catch(() => {
+        setError("Failed to load thread.");
+        setIsInitialising(false);
+      });
+  }, [threadId]);
 
+  // Send first message for new threads
+  useEffect(() => {
+    if (threadId || !initialPrompt || initialisedRef.current) return;
+    initialisedRef.current = true;
+    sendInitialMessage(initialPrompt);
+  }, [threadId, initialPrompt]);
+
+  const sendInitialMessage = useCallback(async (prompt: string): Promise<void> => {
+    if (!profile) return;
+    setIsSending(true);
+    setError(null);
+
+    const title = generateThreadTitle(prompt);
     const eagohMeta = { id: eagoh.id, name: eagoh.name || "Unnamed", domain: eagoh.domain ?? "unknown" };
 
-    // ── Shared flow for ALL analyst session types ──
-    // 1. Compute cost
-    const cost = getSessionCost(session.id as AnalystSessionType, prompt);
-
-    // 2. Domain guard
+    // 1. Domain guard
     if (eagoh.domain) {
       const domainCheck = guardDomainRequest(eagoh.domain, prompt, true, { id: eagoh.id, name: eagoh.name || "Unnamed" });
       if (!domainCheck.ok) {
-        setMessages((prev) => [...prev, {
-          id: `a-domain-${Date.now()}`,
-          sender: "analyst",
-          text: domainCheck.rejectionMessage,
-          confidence: 0,
-        }]);
-        setIsTyping(false);
+        setMessages((prev) => [...prev, { id: `error-${Date.now()}`, sender: "analyst", text: domainCheck.rejectionMessage }]);
+        setIsSending(false);
         return;
       }
     }
 
-    // 3. Check Edge balance (don't spend yet)
+    // 2. Compute cost
+    const cost = getSessionCost(session.id as AnalystSessionType, prompt);
     if (edgeTotal < cost) {
       setError(`Insufficient Edge. Need ${cost} Edge (have ${edgeTotal}).`);
-      setIsTyping(false);
+      setIsSending(false);
       return;
     }
 
-    // 4. Call analyst FIRST — only deduct Edge on success
+    // 3. Call analyst
     const kind = detectQuickCheckKind(prompt);
     let result;
     if (session.id === "quick-check") {
@@ -553,72 +595,203 @@ function ActiveChat({
     }
 
     if (!result.ok) {
-      // Analyst failed — do NOT deduct Edge
       setError(result.error);
-      setIsTyping(false);
+      setIsSending(false);
       return;
     }
 
-    // 5. Analyst succeeded — now deduct Edge
+    // 4. Deduct Edge
+    const reasonMap: Record<string, EdgeReason> = {
+      "quick-check": "quick_check",
+      "quick-analysis": "quick_analysis",
+      "standard": "standard_analysis",
+      "oracle": "oracle_dive",
+      "premium-event": "premium_event",
+    };
     try {
-      const reasonMap: Record<string, EdgeReason> = {
-        "quick-check": "quick_check",
-        "quick-analysis": "quick_analysis",
-        "standard": "standard_analysis",
-        "oracle": "oracle_dive",
-        "premium-event": "premium_event",
-      };
-      const reason = reasonMap[session.id] ?? "manual";
-      await spend(cost, reason, `${session.name} · ${cost} Edge`);
-      edgeDeducted.current = true;
-    } catch (err) {
-      // Edge deduction failed even though analyst responded — show reply but warn
-      setMessages((prev) => [...prev, {
-        id: `a-${Date.now()}`,
-        sender: "analyst",
-        text: result.reply,
-        confidence: result.confidence,
-        cost,
-      }]);
-      setError("Edge deduction failed, but here's your analysis.");
-      setIsTyping(false);
+      await spend(cost, reasonMap[session.id] ?? "manual", `${session.name} · ${cost} Edge`);
+    } catch {
+      setError("Edge deduction failed.");
+      setIsSending(false);
       return;
     }
 
-    setMessages((prev) => [...prev, {
-      id: `a-${Date.now()}`,
-      sender: "analyst",
-      text: result.reply,
-      confidence: result.confidence,
-      cost,
-    }]);
-    setIsTyping(false);
+    // 5. Create thread in DB
+    try {
+      const thread = await createThread({
+        userId: profile.id,
+        eagohId: eagoh.id,
+        sessionType: session.id as AnalystSessionType,
+        title,
+        domain: eagoh.domain ?? null,
+      });
+      setCurrentThreadId(thread.id);
+
+      const userMsg = await addMessage({ threadId: thread.id, userId: profile.id, role: "user", content: prompt, edgeCost: cost });
+      const assistantMsg = await addMessage({ threadId: thread.id, userId: profile.id, role: "assistant", content: result.reply, edgeCost: 0 });
+
+      setMessages([
+        { id: userMsg.id, sender: "user", text: prompt, cost },
+        { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence },
+      ]);
+    } catch (dbErr) {
+      setError("Failed to save session. Please try again.");
+    }
+
+    setIsSending(false);
   }, []);
 
-  React.useEffect(() => { runSession(); }, [runSession]);
+  // Send follow-up message
+  const handleSend = useCallback(async (): Promise<void> => {
+    const text = inputText.trim();
+    if (!text || !profile || !currentThreadId) return;
+    Keyboard.dismiss();
+    setInputText("");
+    setIsSending(true);
+    setError(null);
 
-  const scrollRef = useRef<ScrollView>(null);
+    const eagohMeta = { id: eagoh.id, name: eagoh.name || "Unnamed", domain: eagoh.domain ?? "unknown" };
+    const cost = getSessionCost(session.id as AnalystSessionType, text);
+
+    // Domain guard
+    if (eagoh.domain) {
+      const domainCheck = guardDomainRequest(eagoh.domain, text, true, { id: eagoh.id, name: eagoh.name || "Unnamed" });
+      if (!domainCheck.ok) {
+        setMessages((prev) => [...prev, { id: `u-${Date.now()}`, sender: "user", text, cost }, { id: `domain-${Date.now()}`, sender: "analyst", text: domainCheck.rejectionMessage }]);
+        setIsSending(false);
+        return;
+      }
+    }
+
+    // Edge check
+    if (edgeTotal < cost) {
+      setError(`Insufficient Edge. Need ${cost} Edge (have ${edgeTotal}).`);
+      setInputText(text);
+      setIsSending(false);
+      return;
+    }
+
+    // Build context from last 10 messages
+    const context = messages.slice(-10).map((m) => `${m.sender === "user" ? "User" : "EAGOH"}: ${m.text}`);
+
+    // Call analyst
+    const kind = detectQuickCheckKind(text);
+    let result;
+    if (session.id === "quick-check") {
+      result = await runQuickCheck({ prompt: text, kind, personality: "tactical", context, eagohMeta });
+    } else if (session.id === "quick-analysis") {
+      result = await runQuickAnalytics({ prompt: text, kind: "general", personality: "calm", context, eagohMeta });
+    } else if (session.id === "oracle") {
+      result = await runDeepDive({ prompt: text, kind: "general", personality: "oracle", context, eagohMeta });
+    } else if (session.id === "premium-event") {
+      result = await runPremiumEvent({ prompt: text, kind: "general", personality: "calm", context, eagohMeta });
+    } else {
+      result = await runStandardSession({ prompt: text, kind: "general", personality: "calm", context, eagohMeta });
+    }
+
+    if (!result.ok) {
+      // Don't deduct Edge on failure
+      setMessages((prev) => [...prev, { id: `u-${Date.now()}`, sender: "user", text, cost }]);
+      setError(result.error);
+      setIsSending(false);
+      return;
+    }
+
+    // Deduct Edge
+    const reasonMap: Record<string, EdgeReason> = {
+      "quick-check": "quick_check",
+      "quick-analysis": "quick_analysis",
+      "standard": "standard_analysis",
+      "oracle": "oracle_dive",
+      "premium-event": "premium_event",
+    };
+    try {
+      await spend(cost, reasonMap[session.id] ?? "manual", `${session.name} follow-up · ${cost} Edge`);
+    } catch {
+      setMessages((prev) => [...prev, { id: `u-${Date.now()}`, sender: "user", text, cost }]);
+      setError("Edge deduction failed.");
+      setIsSending(false);
+      return;
+    }
+
+    // Save to DB
+    try {
+      const userMsg = await addMessage({ threadId: currentThreadId, userId: profile.id, role: "user", content: text, edgeCost: cost });
+      const assistantMsg = await addMessage({ threadId: currentThreadId, userId: profile.id, role: "assistant", content: result.reply, edgeCost: 0 });
+
+      setMessages((prev) => [
+        ...prev,
+        { id: userMsg.id, sender: "user", text, cost },
+        { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence },
+      ]);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { id: `u-${Date.now()}`, sender: "user", text, cost },
+        { id: `a-${Date.now()}`, sender: "analyst", text: result.reply, confidence: result.confidence },
+      ]);
+      setError("Could not save to history.");
+    }
+
+    setIsSending(false);
+  }, [inputText, profile, currentThreadId, messages, eagoh, session, edgeTotal, spend]);
+
+  // Scroll on new messages
+  useEffect(() => {
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+  }, [messages.length]);
+
+  const canSend = inputText.trim().length > 0 && !isSending;
+  const estCost = inputText.trim() ? getSessionCost(session.id as AnalystSessionType, inputText) : 0;
+  const canAfford = edgeTotal >= estCost || estCost === 0;
+
+  if (isInitialising) {
+    return (
+      <View style={styles.chatWrap}>
+        <Pressable onPress={onDone} style={styles.backBtn}>
+          <ArrowLeft color={palette.muted} size={18} />
+          <Text style={styles.backText}>Sessions</Text>
+        </Pressable>
+        <View style={styles.threadLoading}>
+          <ActivityIndicator color={palette.cyan} />
+          <Text style={styles.threadLoadingText}>Loading thread…</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
-    <View style={styles.chatWrap}>
+    <KeyboardAvoidingView
+      style={styles.chatWrap}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
+    >
+      {/* Back button */}
       <Pressable onPress={onDone} style={styles.backBtn}>
         <ArrowLeft color={palette.muted} size={18} />
         <Text style={styles.backText}>Sessions</Text>
       </Pressable>
 
+      {/* Header */}
       <View style={styles.chatHeader}>
         <BrainCircuit color={toneColor(session.tone)} size={20} />
-        <View>
-          <Text style={styles.chatName}>{eagoh.name}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.chatName} numberOfLines={1}>{eagoh.name}</Text>
           <Text style={styles.chatType}>{session.name} · {session.model}</Text>
+        </View>
+        <View style={[styles.threadBadge, { backgroundColor: toneBg(session.tone), borderColor: `${toneColor(session.tone)}44` }]}>
+          <Text style={[styles.threadBadgeText, { color: toneColor(session.tone) }]}>{session.id === "quick-check" ? "QC" : session.id === "quick-analysis" ? "QA" : session.id === "oracle" ? "ODD" : session.id === "premium-event" ? "PE" : "SA"}</Text>
         </View>
       </View>
 
+      {/* Messages */}
       <ScrollView
         ref={scrollRef}
         style={styles.chatMsgs}
         contentContainerStyle={styles.chatMsgsContent}
         onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
       >
         {messages.map((msg) => (
           <View key={msg.id} style={[styles.msgBubble, msg.sender === "analyst" ? styles.msgAnalyst : styles.msgUser]}>
@@ -627,7 +800,7 @@ function ActiveChat({
             {msg.cost ? <Text style={styles.msgCost}>{msg.cost} Edge</Text> : null}
           </View>
         ))}
-        {isTyping ? (
+        {isSending ? (
           <View style={styles.typing}>
             <View style={styles.typingDots}>
               <View style={[styles.dot, { backgroundColor: palette.cyan }]} />
@@ -638,8 +811,47 @@ function ActiveChat({
           </View>
         ) : null}
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        <View style={{ height: 16 }} />
       </ScrollView>
-    </View>
+
+      {/* Input composer */}
+      <View style={styles.composer}>
+        {estCost > 0 ? (
+          <View style={styles.composerCostRow}>
+            <Zap color={canAfford ? palette.gold : palette.ember} size={12} />
+            <Text style={[styles.composerCostText, !canAfford && { color: palette.ember }]}>
+              {estCost} Edge{!canAfford ? " (insufficient)" : ""}
+            </Text>
+          </View>
+        ) : null}
+        <View style={styles.composerRow}>
+          <TextInput
+            ref={inputRef}
+            value={inputText}
+            onChangeText={setInputText}
+            placeholder="Ask a follow-up question…"
+            placeholderTextColor={palette.muted}
+            multiline
+            style={styles.composerInput}
+            editable={!isSending}
+          />
+          <Pressable
+            onPress={handleSend}
+            disabled={!canSend || !canAfford}
+            style={({ pressed }) => [
+              styles.composerSend,
+              (canSend && canAfford) ? { backgroundColor: toneColor(session.tone) } : { backgroundColor: "rgba(255,255,255,0.08)" },
+              pressed && styles.pressed,
+            ]}
+          >
+            <Send color={canSend && canAfford ? palette.void : palette.muted} size={16} />
+          </Pressable>
+        </View>
+        {!canAfford && inputText.trim() ? (
+          <Text style={styles.composerEdgeHint}>Insufficient Edge — visit Edge Store</Text>
+        ) : null}
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -1540,15 +1752,24 @@ export default function SessionsScreen(): JSX.Element {
   const { eagohs } = useEagohs();
   const { profile } = useProfile();
   const { effectiveSubscriptionTier: userTier } = useProfile();
+  const queryClient = useQueryClient();
   const [selectedEagohId, setSelectedEagohId] = useState<string>(eagohs[0]?.id ?? "");
   const [showPicker, setShowPicker] = useState<boolean>(false);
   const [activeSession, setActiveSession] = useState<SessionType | null>(null);
 
-  // Chat state
-  const [activePrompt, setActivePrompt] = useState<string>("");
-  const [isChatActive, setIsChatActive] = useState<boolean>(false);
+  // Thread state — replaces old isChatActive/activePrompt
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [activeThreadSession, setActiveThreadSession] = useState<SessionType | null>(null);
+  const [activeThreadInitialPrompt, setActiveThreadInitialPrompt] = useState<string>("");
 
   const selectedEagoh = useMemo(() => eagohs.find((e) => e.id === selectedEagohId), [eagohs, selectedEagohId]);
+
+  // Recent threads query
+  const threadsQuery = useQuery<ThreadWithMeta[]>({
+    queryKey: ["analyst", "threads", profile?.id],
+    enabled: !!profile?.id,
+    queryFn: () => profile?.id ? listThreads(profile.id, 10) : Promise.resolve([]),
+  });
 
   // Keep selected in sync when eagohs load
   React.useEffect(() => {
@@ -1563,7 +1784,6 @@ export default function SessionsScreen(): JSX.Element {
       Alert.alert("No EAGOH", "Forge an EAGOH first to run sessions.");
       return;
     }
-    // All analyst session types are now live
     if (!session.active && session.id !== "open-intelligence" && session.id !== "faction-network" && session.id !== "my-rankings") {
       return;
     }
@@ -1575,14 +1795,51 @@ export default function SessionsScreen(): JSX.Element {
   }, []);
 
   const handleStart = useCallback((eagohId: string, prompt: string): void => {
-    setActivePrompt(prompt);
-    setIsChatActive(true);
-  }, []);
+    setActiveThreadInitialPrompt(prompt);
+    setActiveThreadSession(activeSession);
+    setActiveThreadId(null); // null = new thread, will be created on first analyst response
+  }, [activeSession]);
 
   const handleDone = useCallback((): void => {
-    setIsChatActive(false);
+    setActiveThreadId(null);
+    setActiveThreadSession(null);
+    setActiveThreadInitialPrompt("");
     setActiveSession(null);
-  }, []);
+    // Refresh threads list
+    queryClient.invalidateQueries({ queryKey: ["analyst", "threads", profile?.id] });
+  }, [profile?.id, queryClient]);
+
+  const handleReopenThread = useCallback((thread: ThreadWithMeta): void => {
+    h.selection();
+    setActiveThreadId(thread.id);
+    // Find matching session type
+    const st = sessionTypes.find((s) => s.id === thread.session_type);
+    setActiveThreadSession(st ?? null);
+    setSelectedEagohId(thread.eagoh_id);
+    setActiveSession(null);
+  }, [h]);
+
+  const handleDeleteThread = useCallback((thread: ThreadWithMeta): void => {
+    Alert.alert(
+      "Delete Thread",
+      `Delete "${thread.title}"? This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deleteThread(thread.id, profile?.id ?? "");
+              queryClient.invalidateQueries({ queryKey: ["analyst", "threads", profile?.id] });
+            } catch {
+              Alert.alert("Error", "Failed to delete thread.");
+            }
+          },
+        },
+      ],
+    );
+  }, [profile?.id, queryClient]);
 
   const handleChangeEagoh = useCallback((): void => {
     setShowPicker(true);
@@ -1592,11 +1849,17 @@ export default function SessionsScreen(): JSX.Element {
     setSelectedEagohId(id);
   }, []);
 
-  // Chat view
-  if (isChatActive && activeSession && selectedEagoh) {
+  // Thread view
+  if (activeThreadSession && selectedEagoh) {
     return (
       <SafeAreaView style={styles.safe} edges={["top"]}>
-        <ActiveChat session={activeSession} eagoh={selectedEagoh} prompt={activePrompt} onDone={handleDone} />
+        <AnalystChatThread
+          threadId={activeThreadId ?? undefined}
+          eagoh={selectedEagoh}
+          session={activeThreadSession}
+          initialPrompt={activeThreadId ? undefined : activeThreadInitialPrompt}
+          onDone={handleDone}
+        />
       </SafeAreaView>
     );
   }
@@ -1705,6 +1968,47 @@ export default function SessionsScreen(): JSX.Element {
             hasMultiple={eagohs.length > 1}
             userTier={userTier}
           />
+
+          {/* Recent Analyst Threads */}
+          {threadsQuery.data && threadsQuery.data.length > 0 ? (
+            <View style={styles.recentThreadsSection}>
+              <Text style={styles.sectionLabel}>RECENT ANALYST THREADS</Text>
+              <View style={styles.recentThreadsList}>
+                {threadsQuery.data.slice(0, 5).map((thread) => {
+                  const st = sessionTypes.find((s) => s.id === thread.session_type);
+                  const ac = st ? toneColor(st.tone) : palette.cyan;
+                  return (
+                    <Pressable
+                      key={thread.id}
+                      onPress={() => handleReopenThread(thread)}
+                      style={({ pressed }) => [
+                        styles.recentThreadCard,
+                        { borderColor: `${ac}22` },
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <View style={[styles.recentThreadIcon, { backgroundColor: `${ac}14`, borderColor: `${ac}33` }]}>
+                        <MessageSquare color={ac} size={16} />
+                      </View>
+                      <View style={styles.recentThreadInfo}>
+                        <Text style={styles.recentThreadTitle} numberOfLines={1}>{thread.title}</Text>
+                        <Text style={styles.recentThreadMeta}>
+                          {thread.eagoh_name ?? "EAGOH"} · {st?.name ?? thread.session_type} · {thread.message_count} msgs · {new Date(thread.updated_at).toLocaleDateString()}
+                        </Text>
+                      </View>
+                      <Pressable
+                        onPress={() => handleDeleteThread(thread)}
+                        hitSlop={8}
+                        style={styles.recentThreadDelete}
+                      >
+                        <Trash2 color={palette.muted} size={14} />
+                      </Pressable>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ) : null}
 
           {/* Session type cards */}
           <Text style={styles.sectionLabel}>SESSION TYPES</Text>
@@ -2053,6 +2357,91 @@ const styles = StyleSheet.create({
   dotMid: { opacity: 0.55 },
 
   bottomSpacer: { height: 40 },
+
+  // Thread chat additions
+  threadBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  threadBadgeText: { fontSize: 9, fontWeight: "900", letterSpacing: 0.8 },
+  threadLoading: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10 },
+  threadLoadingText: { color: palette.muted, fontSize: 13, fontWeight: "700" },
+  composer: {
+    borderTopWidth: 1,
+    borderTopColor: palette.line,
+    backgroundColor: palette.void,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 6,
+  },
+  composerCostRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 4,
+  },
+  composerCostText: { color: palette.gold, fontSize: 10, fontWeight: "800" },
+  composerRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 8,
+  },
+  composerInput: {
+    flex: 1,
+    color: palette.text,
+    fontSize: 13,
+    fontWeight: "700",
+    maxHeight: 90,
+    minHeight: 40,
+    borderRadius: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(14,24,37,0.65)",
+    textAlignVertical: "center",
+  },
+  composerSend: {
+    width: 40,
+    height: 40,
+    borderRadius: 5,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  composerEdgeHint: {
+    color: palette.ember,
+    fontSize: 10,
+    fontWeight: "700",
+    textAlign: "center",
+    paddingBottom: 4,
+  },
+
+  // Recent threads section
+  recentThreadsSection: { marginBottom: 18 },
+  recentThreadsList: { gap: 6 },
+  recentThreadCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 5,
+    padding: 10,
+    borderWidth: 1,
+    backgroundColor: "rgba(10,18,30,0.40)",
+  },
+  recentThreadIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 5,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  recentThreadInfo: { flex: 1, gap: 2 },
+  recentThreadTitle: { color: palette.text, fontSize: 13, fontWeight: "800" },
+  recentThreadMeta: { color: palette.muted, fontSize: 10, fontWeight: "700" },
+  recentThreadDelete: { padding: 4 },
 
   // Open Intelligence
   oiHeader: { alignItems: "center", gap: 6, marginBottom: 18 },

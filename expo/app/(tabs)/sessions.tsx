@@ -65,6 +65,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import EagohHeroBanner from "@/app/_components/EagohHeroBanner";
+import EagohPageHeader from "@/app/_components/EagohPageHeader";
 import { useAuth } from "@/providers/AuthProvider";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useEdge } from "@/providers/EdgeProvider";
@@ -2055,16 +2056,14 @@ export default function SessionsScreen(): JSX.Element {
       <View style={styles.root}>
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           {/* Header */}
-          <View style={styles.hero}>
-            <Text style={styles.kicker}>INTELLIGENCE SESSIONS</Text>
-            <Text style={styles.title}>Run your EAGOH</Text>
+          <EagohPageHeader kicker="INTELLIGENCE SESSIONS" title="Run your EAGOH">
             {eagohs.length === 0 ? (
               <View style={styles.emptyBanner}>
                 <Sparkles color={palette.gold} size={14} />
                 <Text style={styles.emptyText}>Forge an EAGOH first to run sessions.</Text>
               </View>
             ) : null}
-          </View>
+          </EagohPageHeader>
 
           {/* Selected EAGOH card */}
           <EagohHeroBanner

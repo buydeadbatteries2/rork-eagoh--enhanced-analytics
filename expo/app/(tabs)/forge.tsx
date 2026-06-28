@@ -31,6 +31,7 @@ import type { EagohDraft } from "@/services/eagohs";
 import { useHaptics } from "@/hooks/useHaptics";
 import TeamSelector from "@/app/_components/TeamSelector";
 import EagohHeroBanner from "@/app/_components/EagohHeroBanner";
+import EagohPageHeader from "@/app/_components/EagohPageHeader";
 import { getTeamById, getSportCanonical } from "@/data/teams";
 import { MUSIC_GENRES, MUSIC_ROLES, getMusicGenre, getMusicRole } from "@/data/music";
 import { FILM_TV_CATEGORIES, FILM_TV_GENRES, FILM_TV_ROLES, getFilmTvCategory, getFilmTvGenre, getFilmTvRole } from "@/data/filmTv";
@@ -1538,6 +1539,11 @@ export default function ForgeScreen(): JSX.Element {
           onScroll={handleScroll}
           scrollEventThrottle={16}
         >
+          {/* ── Page header (matching Sessions) ────────────────── */}
+          <View style={styles.headerWrap}>
+            <EagohPageHeader kicker="BRANDING SESSIONS" title="Build your EAGOH" />
+          </View>
+
           {/* ── Hero banner (matching Sessions) ──────────────────── */}
           <View style={{ paddingHorizontal: 2, paddingTop: 2 }}>
             <EagohHeroBanner
@@ -1867,6 +1873,7 @@ export default function ForgeScreen(): JSX.Element {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.void },
+  headerWrap: { paddingHorizontal: 14, paddingTop: 8 },
   previewArea: { position: "relative", marginHorizontal: 12, marginTop: 6 },
   previewStage: {
     flex: 1,

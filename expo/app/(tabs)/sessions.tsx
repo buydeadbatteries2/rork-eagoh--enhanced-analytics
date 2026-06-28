@@ -546,24 +546,39 @@ function AnalystChatThread({
       });
   }, [threadId]);
 
-  // Send first message for new threads
+  // Stable refs so the effect can safely retry when profile loads asynchronously
+  const profileRef = useRef(profile);
+  profileRef.current = profile;
+  const edgeTotalRef = useRef(edgeTotal);
+  edgeTotalRef.current = edgeTotal;
+  const eagohRef = useRef(eagoh);
+  eagohRef.current = eagoh;
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+
+  // Send first message for new threads — retries when profile loads
   useEffect(() => {
     if (threadId || !initialPrompt || initialisedRef.current) return;
+    if (!profile) return; // wait for profile to load — effect will re-run when profile changes
     initialisedRef.current = true;
     sendInitialMessage(initialPrompt);
-  }, [threadId, initialPrompt]);
+  }, [threadId, initialPrompt, profile]);
 
   const sendInitialMessage = useCallback(async (prompt: string): Promise<void> => {
-    if (!profile) return;
+    const currentProfile = profileRef.current;
+    const currentEagoh = eagohRef.current;
+    const currentSession = sessionRef.current;
+    const currentEdgeTotal = edgeTotalRef.current;
+    if (!currentProfile) return;
     setIsSending(true);
     setError(null);
 
     const title = generateThreadTitle(prompt);
-    const eagohMeta = { id: eagoh.id, name: eagoh.name || "Unnamed", domain: eagoh.domain ?? "unknown" };
+    const eagohMeta = { id: currentEagoh.id, name: currentEagoh.name || "Unnamed", domain: currentEagoh.domain ?? "unknown" };
 
     // 1. Domain guard
-    if (eagoh.domain) {
-      const domainCheck = guardDomainRequest(eagoh.domain, prompt, true, { id: eagoh.id, name: eagoh.name || "Unnamed" });
+    if (currentEagoh.domain) {
+      const domainCheck = guardDomainRequest(currentEagoh.domain, prompt, true, { id: currentEagoh.id, name: currentEagoh.name || "Unnamed" });
       if (!domainCheck.ok) {
         setMessages((prev) => [...prev, { id: `error-${Date.now()}`, sender: "analyst", text: domainCheck.rejectionMessage }]);
         setIsSending(false);
@@ -572,9 +587,9 @@ function AnalystChatThread({
     }
 
     // 2. Compute cost
-    const cost = getSessionCost(session.id as AnalystSessionType, prompt);
-    if (edgeTotal < cost) {
-      setError(`Insufficient Edge. Need ${cost} Edge (have ${edgeTotal}).`);
+    const cost = getSessionCost(currentSession.id as AnalystSessionType, prompt);
+    if (currentEdgeTotal < cost) {
+      setError(`Insufficient Edge. Need ${cost} Edge (have ${currentEdgeTotal}).`);
       setIsSending(false);
       return;
     }
@@ -582,13 +597,13 @@ function AnalystChatThread({
     // 3. Call analyst
     const kind = detectQuickCheckKind(prompt);
     let result;
-    if (session.id === "quick-check") {
+    if (currentSession.id === "quick-check") {
       result = await runQuickCheck({ prompt, kind, personality: "tactical", context: [], eagohMeta });
-    } else if (session.id === "quick-analysis") {
+    } else if (currentSession.id === "quick-analysis") {
       result = await runQuickAnalytics({ prompt, kind: "general", personality: "calm", context: [], eagohMeta });
-    } else if (session.id === "oracle") {
+    } else if (currentSession.id === "oracle") {
       result = await runDeepDive({ prompt, kind: "general", personality: "oracle", context: [], eagohMeta });
-    } else if (session.id === "premium-event") {
+    } else if (currentSession.id === "premium-event") {
       result = await runPremiumEvent({ prompt, kind: "general", personality: "calm", context: [], eagohMeta });
     } else {
       result = await runStandardSession({ prompt, kind: "general", personality: "calm", context: [], eagohMeta });
@@ -609,7 +624,7 @@ function AnalystChatThread({
       "premium-event": "premium_event",
     };
     try {
-      await spend(cost, reasonMap[session.id] ?? "manual", `${session.name} · ${cost} Edge`);
+      await spend(cost, reasonMap[currentSession.id] ?? "manual", `${currentSession.name} · ${cost} Edge`);
     } catch {
       setError("Edge deduction failed.");
       setIsSending(false);
@@ -619,16 +634,16 @@ function AnalystChatThread({
     // 5. Create thread in DB
     try {
       const thread = await createThread({
-        userId: profile.id,
-        eagohId: eagoh.id,
-        sessionType: session.id as AnalystSessionType,
+        userId: currentProfile.id,
+        eagohId: currentEagoh.id,
+        sessionType: currentSession.id as AnalystSessionType,
         title,
-        domain: eagoh.domain ?? null,
+        domain: currentEagoh.domain ?? null,
       });
       setCurrentThreadId(thread.id);
 
-      const userMsg = await addMessage({ threadId: thread.id, userId: profile.id, role: "user", content: prompt, edgeCost: cost });
-      const assistantMsg = await addMessage({ threadId: thread.id, userId: profile.id, role: "assistant", content: result.reply, edgeCost: 0 });
+      const userMsg = await addMessage({ threadId: thread.id, userId: currentProfile.id, role: "user", content: prompt, edgeCost: cost });
+      const assistantMsg = await addMessage({ threadId: thread.id, userId: currentProfile.id, role: "assistant", content: result.reply, edgeCost: 0 });
 
       setMessages([
         { id: userMsg.id, sender: "user", text: prompt, cost },
@@ -639,7 +654,7 @@ function AnalystChatThread({
     }
 
     setIsSending(false);
-  }, []);
+  }, [spend]);
 
   // Send follow-up message
   const handleSend = useCallback(async (): Promise<void> => {

@@ -523,14 +523,22 @@ function AnalystChatThread({
   const [error, setError] = useState<string | null>(null);
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(threadId ?? null);
   const [isInitialising, setIsInitialising] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialisedRef = useRef(false);
 
   // Load existing messages if reopening a thread
   useEffect(() => {
     if (!threadId || initialisedRef.current) return;
     initialisedRef.current = true;
+    if (__DEV__) {
+      console.log("[analyst-thread] routeThreadId:", threadId);
+    }
     listMessages(threadId)
       .then((msgs) => {
+        if (__DEV__) {
+          console.log("[analyst-thread] messages load result:", msgs.length, "messages");
+        }
         const chatMsgs: ChatMessage[] = msgs.map((m) => ({
           id: m.id,
           sender: m.role as "user" | "analyst",
@@ -540,8 +548,11 @@ function AnalystChatThread({
         setMessages(chatMsgs);
         setIsInitialising(false);
       })
-      .catch(() => {
-        setError("Failed to load thread.");
+      .catch((err) => {
+        if (__DEV__) {
+          console.log("[analyst-thread] messages load error:", err?.message ?? err);
+        }
+        setLoadError("Failed to load thread messages. The thread may have been deleted or the database is unreachable.");
         setIsInitialising(false);
       });
   }, [threadId]);
@@ -556,11 +567,32 @@ function AnalystChatThread({
   const sessionRef = useRef(session);
   sessionRef.current = session;
 
+  // 8-second timeout — never leave screen stuck indefinitely
+  useEffect(() => {
+    if (!isInitialising) return;
+    timeoutRef.current = setTimeout(() => {
+      if (__DEV__) {
+        console.log("[analyst-thread] timeout after 8s — isInitialising still true");
+      }
+      setLoadError("Loading timed out. The server may be slow or unreachable.");
+      setIsInitialising(false);
+    }, 8000);
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+    };
+  }, [isInitialising]);
+
   // Send first message for new threads — retries when profile loads
   useEffect(() => {
     if (threadId || !initialPrompt || initialisedRef.current) return;
     if (!profile) return; // wait for profile to load — effect will re-run when profile changes
     initialisedRef.current = true;
+    if (__DEV__) {
+      console.log("[analyst-thread] starting new thread, profile ready, initialPrompt length:", initialPrompt.length);
+    }
     sendInitialMessage(initialPrompt);
   }, [threadId, initialPrompt, profile]);
 
@@ -569,9 +601,19 @@ function AnalystChatThread({
     const currentEagoh = eagohRef.current;
     const currentSession = sessionRef.current;
     const currentEdgeTotal = edgeTotalRef.current;
-    if (!currentProfile) return;
+    if (!currentProfile) {
+      setLoadError("Profile not loaded. Please try again.");
+      setIsInitialising(false);
+      return;
+    }
     setIsSending(true);
     setError(null);
+    setLoadError(null);
+
+    if (__DEV__) {
+      console.log("[analyst-thread] selectedEagoh.name:", currentEagoh.name);
+      console.log("[analyst-thread] selectedEagoh.domain:", currentEagoh.domain);
+    }
 
     const title = generateThreadTitle(prompt);
     const eagohMeta = { id: currentEagoh.id, name: currentEagoh.name || "Unnamed", domain: currentEagoh.domain ?? "unknown" };
@@ -582,6 +624,7 @@ function AnalystChatThread({
       if (!domainCheck.ok) {
         setMessages((prev) => [...prev, { id: `error-${Date.now()}`, sender: "analyst", text: domainCheck.rejectionMessage }]);
         setIsSending(false);
+        setIsInitialising(false);
         return;
       }
     }
@@ -591,69 +634,89 @@ function AnalystChatThread({
     if (currentEdgeTotal < cost) {
       setError(`Insufficient Edge. Need ${cost} Edge (have ${currentEdgeTotal}).`);
       setIsSending(false);
+      setIsInitialising(false);
       return;
     }
 
     // 3. Call analyst
-    const kind = detectQuickCheckKind(prompt);
-    let result;
-    if (currentSession.id === "quick-check") {
-      result = await runQuickCheck({ prompt, kind, personality: "tactical", context: [], eagohMeta });
-    } else if (currentSession.id === "quick-analysis") {
-      result = await runQuickAnalytics({ prompt, kind: "general", personality: "calm", context: [], eagohMeta });
-    } else if (currentSession.id === "oracle") {
-      result = await runDeepDive({ prompt, kind: "general", personality: "oracle", context: [], eagohMeta });
-    } else if (currentSession.id === "premium-event") {
-      result = await runPremiumEvent({ prompt, kind: "general", personality: "calm", context: [], eagohMeta });
-    } else {
-      result = await runStandardSession({ prompt, kind: "general", personality: "calm", context: [], eagohMeta });
-    }
-
-    if (!result.ok) {
-      setError(result.error);
-      setIsSending(false);
-      return;
-    }
-
-    // 4. Deduct Edge
-    const reasonMap: Record<string, EdgeReason> = {
-      "quick-check": "quick_check",
-      "quick-analysis": "quick_analysis",
-      "standard": "standard_analysis",
-      "oracle": "oracle_dive",
-      "premium-event": "premium_event",
-    };
     try {
-      await spend(cost, reasonMap[currentSession.id] ?? "manual", `${currentSession.name} · ${cost} Edge`);
-    } catch {
-      setError("Edge deduction failed.");
-      setIsSending(false);
-      return;
-    }
+      const kind = detectQuickCheckKind(prompt);
+      let result;
+      if (currentSession.id === "quick-check") {
+        result = await runQuickCheck({ prompt, kind, personality: "tactical", context: [], eagohMeta });
+      } else if (currentSession.id === "quick-analysis") {
+        result = await runQuickAnalytics({ prompt, kind: "general", personality: "calm", context: [], eagohMeta });
+      } else if (currentSession.id === "oracle") {
+        result = await runDeepDive({ prompt, kind: "general", personality: "oracle", context: [], eagohMeta });
+      } else if (currentSession.id === "premium-event") {
+        result = await runPremiumEvent({ prompt, kind: "general", personality: "calm", context: [], eagohMeta });
+      } else {
+        result = await runStandardSession({ prompt, kind: "general", personality: "calm", context: [], eagohMeta });
+      }
 
-    // 5. Create thread in DB
-    try {
-      const thread = await createThread({
-        userId: currentProfile.id,
-        eagohId: currentEagoh.id,
-        sessionType: currentSession.id as AnalystSessionType,
-        title,
-        domain: currentEagoh.domain ?? null,
-      });
-      setCurrentThreadId(thread.id);
+      if (!result.ok) {
+        setError(result.error);
+        setIsSending(false);
+        setIsInitialising(false);
+        return;
+      }
 
-      const userMsg = await addMessage({ threadId: thread.id, userId: currentProfile.id, role: "user", content: prompt, edgeCost: cost });
-      const assistantMsg = await addMessage({ threadId: thread.id, userId: currentProfile.id, role: "assistant", content: result.reply, edgeCost: 0 });
+      // 4. Deduct Edge
+      const reasonMap: Record<string, EdgeReason> = {
+        "quick-check": "quick_check",
+        "quick-analysis": "quick_analysis",
+        "standard": "standard_analysis",
+        "oracle": "oracle_dive",
+        "premium-event": "premium_event",
+      };
+      try {
+        await spend(cost, reasonMap[currentSession.id] ?? "manual", `${currentSession.name} · ${cost} Edge`);
+      } catch {
+        setError("Edge deduction failed.");
+        setIsSending(false);
+        setIsInitialising(false);
+        return;
+      }
 
-      setMessages([
-        { id: userMsg.id, sender: "user", text: prompt, cost },
-        { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence },
-      ]);
-    } catch (dbErr) {
-      setError("Failed to save session. Please try again.");
+      // 5. Create thread in DB
+      try {
+        const thread = await createThread({
+          userId: currentProfile.id,
+          eagohId: currentEagoh.id,
+          sessionType: currentSession.id as AnalystSessionType,
+          title,
+          domain: currentEagoh.domain ?? null,
+        });
+        if (__DEV__) {
+          console.log("[analyst-thread] createdThreadId:", thread.id);
+          console.log("[analyst-thread] thread load result: created new thread");
+        }
+        setCurrentThreadId(thread.id);
+
+        const userMsg = await addMessage({ threadId: thread.id, userId: currentProfile.id, role: "user", content: prompt, edgeCost: cost });
+        const assistantMsg = await addMessage({ threadId: thread.id, userId: currentProfile.id, role: "assistant", content: result.reply, edgeCost: 0 });
+
+        setMessages([
+          { id: userMsg.id, sender: "user", text: prompt, cost },
+          { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence },
+        ]);
+      } catch (dbErr: unknown) {
+        const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
+        if (__DEV__) {
+          console.log("[analyst-thread] Supabase error:", msg);
+        }
+        setError("Failed to save session. The database may be unreachable. Please try again.");
+      }
+    } catch (unexpectedErr: unknown) {
+      const msg = unexpectedErr instanceof Error ? unexpectedErr.message : String(unexpectedErr);
+      if (__DEV__) {
+        console.log("[analyst-thread] unexpected error in sendInitialMessage:", msg);
+      }
+      setError(`Session failed: ${msg}`);
     }
 
     setIsSending(false);
+    setIsInitialising(false);
   }, [spend]);
 
   // Send follow-up message
@@ -770,6 +833,51 @@ function AnalystChatThread({
         <View style={styles.threadLoading}>
           <ActivityIndicator color={palette.cyan} />
           <Text style={styles.threadLoadingText}>Loading thread…</Text>
+        </View>
+      </View>
+    );
+  }
+
+  // Error state (timeout, Supabase failure, etc.) with retry + back
+  if (loadError) {
+    return (
+      <View style={styles.chatWrap}>
+        <Pressable onPress={onDone} style={styles.backBtn}>
+          <ArrowLeft color={palette.muted} size={18} />
+          <Text style={styles.backText}>Sessions</Text>
+        </Pressable>
+        <View style={styles.threadErrorWrap}>
+          <View style={styles.threadErrorIcon}>
+            <Cpu color={palette.ember} size={32} />
+          </View>
+          <Text style={styles.threadErrorTitle}>Thread Error</Text>
+          <Text style={styles.threadErrorText}>{loadError}</Text>
+          <View style={styles.threadErrorButtons}>
+            <Pressable
+              onPress={() => {
+                setLoadError(null);
+                setIsInitialising(true);
+                initialisedRef.current = false;
+              }}
+              style={({ pressed }) => [
+                styles.threadErrorRetryBtn,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Sparkles color={palette.void} size={14} />
+              <Text style={styles.threadErrorRetryText}>Retry</Text>
+            </Pressable>
+            <Pressable
+              onPress={onDone}
+              style={({ pressed }) => [
+                styles.threadErrorBackBtn,
+                pressed && styles.pressed,
+              ]}
+            >
+              <ArrowLeft color={palette.muted} size={14} />
+              <Text style={styles.threadErrorBackText}>Back</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
     );
@@ -2383,6 +2491,54 @@ const styles = StyleSheet.create({
   threadBadgeText: { fontSize: 9, fontWeight: "900", letterSpacing: 0.8 },
   threadLoading: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10 },
   threadLoadingText: { color: palette.muted, fontSize: 13, fontWeight: "700" },
+  // Error state (timeout, Supabase failure, etc.)
+  threadErrorWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+    gap: 12,
+  },
+  threadErrorIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "rgba(255,77,109,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(255,77,109,0.25)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+  },
+  threadErrorTitle: { color: palette.text, fontSize: 16, fontWeight: "900", letterSpacing: -0.3 },
+  threadErrorText: { color: palette.muted, fontSize: 12, fontWeight: "600", textAlign: "center", lineHeight: 18 },
+  threadErrorButtons: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 8,
+  },
+  threadErrorRetryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: palette.cyan,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 7,
+  },
+  threadErrorRetryText: { color: palette.void, fontSize: 12, fontWeight: "900" },
+  threadErrorBackBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 7,
+  },
+  threadErrorBackText: { color: palette.muted, fontSize: 12, fontWeight: "800" },
   composer: {
     borderTopWidth: 1,
     borderTopColor: palette.line,

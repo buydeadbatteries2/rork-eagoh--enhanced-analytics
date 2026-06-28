@@ -67,8 +67,9 @@ import { useEdge } from "@/providers/EdgeProvider";
 import { useEagohs } from "@/providers/EagohProvider";
 import { INTELLIGENCE_DOMAINS, getDomainColor, normalizeDomainId } from "@/services/domains";
 import { guardDomainRequest } from "@/services/domainGuard";
-import { getQuickCheckCost, runQuickCheck, runQuickAnalytics, runStandardSession, runDeepDive, type AnalystRequestKind, type AnalystErrorCode } from "@/services/analyst";
+import { getQuickCheckCost, runQuickCheck, runQuickAnalytics, runStandardSession, runDeepDive, runPremiumEvent, getSessionCost, type AnalystSessionType, type AnalystRequestKind, type AnalystErrorCode } from "@/services/analyst";
 import type { EagohRecord } from "@/services/eagohs";
+import type { EdgeReason } from "@/services/edge";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ENTRY_TYPE_EDGE_COST,
@@ -127,10 +128,10 @@ type SessionType = {
 
 const sessionTypes: SessionType[] = [
   { id: "quick-check", name: "Quick Check", description: "Rapid intelligence check", costRange: "1-3 Edge", minCost: 1, maxCost: 3, model: "Pulse-Lite", duration: "~2 min", tone: "cyan", active: true },
-  { id: "quick-analysis", name: "Quick Analysis", description: "Tactical strategic read", costRange: "10-15 Edge", minCost: 10, maxCost: 15, model: "Tactic-Core", duration: "~5 min", tone: "gold", active: false },
-  { id: "standard", name: "Standard Analysis", description: "Deep strategic assessment", costRange: "40-75 Edge", minCost: 40, maxCost: 75, model: "EAGOH Analyst", duration: "~8 min", tone: "success", active: false },
-  { id: "oracle", name: "Oracle Deep Dive", description: "Elite predictive modeling", costRange: "150-300 Edge", minCost: 150, maxCost: 300, model: "Oracle-Synapse", duration: "~15 min", tone: "violet", active: false },
-  { id: "premium-event", name: "Premium Event", description: "Event-focused intelligence", costRange: "75-150 Edge", minCost: 75, maxCost: 150, model: "Event-Lens Pro", duration: "~10 min", tone: "ember", active: false },
+  { id: "quick-analysis", name: "Quick Analysis", description: "Tactical strategic read", costRange: "10-15 Edge", minCost: 10, maxCost: 15, model: "Tactic-Core", duration: "~5 min", tone: "gold", active: true },
+  { id: "standard", name: "Standard Analysis", description: "Deep strategic assessment", costRange: "40-75 Edge", minCost: 40, maxCost: 75, model: "EAGOH Analyst", duration: "~8 min", tone: "success", active: true },
+  { id: "oracle", name: "Oracle Deep Dive", description: "Elite predictive modeling", costRange: "150-300 Edge", minCost: 150, maxCost: 300, model: "Oracle-Synapse", duration: "~15 min", tone: "violet", active: true },
+  { id: "premium-event", name: "Premium Event", description: "Event-focused intelligence", costRange: "75-150 Edge", minCost: 75, maxCost: 150, model: "Event-Lens Pro", duration: "~10 min", tone: "ember", active: true },
   { id: "open-intelligence", name: "Open Intelligence", description: "Feed observations to your EAGOH", costRange: "10-25 Edge", minCost: 10, maxCost: 25, model: "Open Intel", duration: "Per entry", tone: "gold", active: true },
   { id: "faction-network", name: "Faction Network", description: "Intelligence alliance network", costRange: "Free", minCost: 0, maxCost: 0, model: "Network View", duration: "Live", tone: "violet", active: true },
   { id: "my-rankings", name: "My Rankings", description: "Leaderboard positions & badges", costRange: "Free", minCost: 0, maxCost: 0, model: "Rankings View", duration: "Live", tone: "gold", active: true },
@@ -379,7 +380,7 @@ function SessionSetup({
   const { effectiveSubscriptionTier: userTier } = useProfile();
   const domain = useMemo(() => INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh?.domain), [selectedEagoh]);
 
-  const cost = session.id === "quick-check" && prompt ? getQuickCheckCost(prompt) : session.minCost;
+  const cost = prompt.trim() ? getSessionCost(session.id as AnalystSessionType, prompt) : session.minCost;
   const { total: edgeTotal } = useEdge();
   const canAfford = edgeTotal >= cost;
   const domainGuardResult = !prompt || !selectedEagoh?.domain ? null : guardDomainRequest(selectedEagoh.domain, prompt, true, selectedEagoh ? { id: selectedEagoh.id, name: selectedEagoh.name || "Unnamed" } : undefined);
@@ -500,7 +501,7 @@ function ActiveChat({
   ]);
   const [isTyping, setIsTyping] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const { deductQuickCheck, total: edgeTotal } = useEdge();
+  const { deductQuickCheck, spend, total: edgeTotal } = useEdge();
   const started = useRef(false);
   const edgeDeducted = useRef(false);
 
@@ -508,85 +509,13 @@ function ActiveChat({
     if (started.current) return;
     started.current = true;
 
-    // Guard: inactive session types show "Coming soon" immediately
-    if (!session.active && session.id !== "open-intelligence" && session.id !== "faction-network" && session.id !== "my-rankings") {
-      setMessages((prev) => [...prev, {
-        id: `a-coming-${Date.now()}`,
-        sender: "analyst",
-        text: "This analyst session is coming online soon.",
-        confidence: 0,
-      }]);
-      setIsTyping(false);
-      return;
-    }
-
     const eagohMeta = { id: eagoh.id, name: eagoh.name || "Unnamed", domain: eagoh.domain ?? "unknown" };
 
-    if (session.id === "quick-check") {
-      const cost = getQuickCheckCost(prompt);
+    // ── Shared flow for ALL analyst session types ──
+    // 1. Compute cost
+    const cost = getSessionCost(session.id as AnalystSessionType, prompt);
 
-      // 1. Domain guard
-      const domainCheck = guardDomainRequest(eagoh.domain, prompt, true, { id: eagoh.id, name: eagoh.name || "Unnamed" });
-      if (!domainCheck.ok) {
-        setMessages((prev) => [...prev, {
-          id: `a-domain-${Date.now()}`,
-          sender: "analyst",
-          text: domainCheck.rejectionMessage,
-          confidence: 0,
-        }]);
-        setIsTyping(false);
-        return;
-      }
-
-      // 2. Check Edge balance (don't spend yet)
-      if (edgeTotal < cost) {
-        setError(`Insufficient Edge. Need ${cost} Edge (have ${edgeTotal}).`);
-        setIsTyping(false);
-        return;
-      }
-
-      // 3. Call analyst FIRST — only deduct Edge on success
-      const kind = detectQuickCheckKind(prompt);
-      const result = await runQuickCheck({ prompt, kind, personality: "tactical", context: [], eagohMeta });
-
-      if (!result.ok) {
-        // Analyst failed — do NOT deduct Edge
-        setError(result.error);
-        setIsTyping(false);
-        return;
-      }
-
-      // 4. Analyst succeeded — now deduct Edge
-      try {
-        await deductQuickCheck(prompt, `Quick Check · ${cost} Edge`);
-        edgeDeducted.current = true;
-      } catch (err) {
-        // Edge deduction failed even though analyst responded — show reply but warn
-        setMessages((prev) => [...prev, {
-          id: `a-${Date.now()}`,
-          sender: "analyst",
-          text: result.reply,
-          confidence: result.confidence,
-          cost,
-        }]);
-        setError("Edge deduction failed, but here's your analysis.");
-        setIsTyping(false);
-        return;
-      }
-
-      setMessages((prev) => [...prev, {
-        id: `a-${Date.now()}`,
-        sender: "analyst",
-        text: result.reply,
-        confidence: result.confidence,
-        cost,
-      }]);
-      setIsTyping(false);
-      return;
-    }
-
-    // All other session types: domain guard, then attempt analyst call.
-    // If the backend hasn't wired these yet, it will return a specific error.
+    // 2. Domain guard
     if (eagoh.domain) {
       const domainCheck = guardDomainRequest(eagoh.domain, prompt, true, { id: eagoh.id, name: eagoh.name || "Unnamed" });
       if (!domainCheck.ok) {
@@ -601,27 +530,68 @@ function ActiveChat({
       }
     }
 
-    // Attempt the analyst call — the backend will respond with a specific
-    // error if the session type is not yet implemented.
+    // 3. Check Edge balance (don't spend yet)
+    if (edgeTotal < cost) {
+      setError(`Insufficient Edge. Need ${cost} Edge (have ${edgeTotal}).`);
+      setIsTyping(false);
+      return;
+    }
+
+    // 4. Call analyst FIRST — only deduct Edge on success
+    const kind = detectQuickCheckKind(prompt);
     let result;
-    if (session.id === "quick-analysis") {
+    if (session.id === "quick-check") {
+      result = await runQuickCheck({ prompt, kind, personality: "tactical", context: [], eagohMeta });
+    } else if (session.id === "quick-analysis") {
       result = await runQuickAnalytics({ prompt, kind: "general", personality: "calm", context: [], eagohMeta });
     } else if (session.id === "oracle") {
       result = await runDeepDive({ prompt, kind: "general", personality: "oracle", context: [], eagohMeta });
+    } else if (session.id === "premium-event") {
+      result = await runPremiumEvent({ prompt, kind: "general", personality: "calm", context: [], eagohMeta });
     } else {
       result = await runStandardSession({ prompt, kind: "general", personality: "calm", context: [], eagohMeta });
     }
 
-    if (result.ok) {
+    if (!result.ok) {
+      // Analyst failed — do NOT deduct Edge
+      setError(result.error);
+      setIsTyping(false);
+      return;
+    }
+
+    // 5. Analyst succeeded — now deduct Edge
+    try {
+      const reasonMap: Record<string, EdgeReason> = {
+        "quick-check": "quick_check",
+        "quick-analysis": "quick_analysis",
+        "standard": "standard_analysis",
+        "oracle": "oracle_dive",
+        "premium-event": "premium_event",
+      };
+      const reason = reasonMap[session.id] ?? "manual";
+      await spend(cost, reason, `${session.name} · ${cost} Edge`);
+      edgeDeducted.current = true;
+    } catch (err) {
+      // Edge deduction failed even though analyst responded — show reply but warn
       setMessages((prev) => [...prev, {
         id: `a-${Date.now()}`,
         sender: "analyst",
         text: result.reply,
         confidence: result.confidence,
+        cost,
       }]);
-    } else {
-      setError(result.error);
+      setError("Edge deduction failed, but here's your analysis.");
+      setIsTyping(false);
+      return;
     }
+
+    setMessages((prev) => [...prev, {
+      id: `a-${Date.now()}`,
+      sender: "analyst",
+      text: result.reply,
+      confidence: result.confidence,
+      cost,
+    }]);
     setIsTyping(false);
   }, []);
 
@@ -1593,9 +1563,8 @@ export default function SessionsScreen(): JSX.Element {
       Alert.alert("No EAGOH", "Forge an EAGOH first to run sessions.");
       return;
     }
-    // Block inactive session types — only Quick Check is connected
+    // All analyst session types are now live
     if (!session.active && session.id !== "open-intelligence" && session.id !== "faction-network" && session.id !== "my-rankings") {
-      Alert.alert("Coming Soon", "This analyst session is coming online soon.");
       return;
     }
     setActiveSession(session);

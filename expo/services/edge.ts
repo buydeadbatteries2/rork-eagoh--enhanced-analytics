@@ -22,6 +22,10 @@ export type EdgeBalances = { subscription: number; purchased: number; total: num
 
 export type EdgeReason =
   | "quick_check"
+  | "quick_analysis"
+  | "standard_analysis"
+  | "oracle_dive"
+  | "premium_event"
   | "observation"
   | "marketplace"
   | "customization"

@@ -20,7 +20,8 @@ export type AnalystSessionType =
   | "quick-check"
   | "quick-analytics"
   | "standard"
-  | "oracle";
+  | "oracle"
+  | "premium-event";
 
 export type AnalystPersonality =
   | "tactical"
@@ -126,9 +127,34 @@ const SESSION_BUDGETS: Record<AnalystSessionType, { sentences: number; baseConfi
   "quick-analytics": { sentences: 5, baseConfidence: 86 },
   standard: { sentences: 7, baseConfidence: 89 },
   oracle: { sentences: 10, baseConfidence: 93 },
+  "premium-event": { sentences: 8, baseConfidence: 90 },
 };
 
 // ── User-facing error messages per error code ──────────────────────────────
+
+/** Edge cost ranges per session type. */
+const SESSION_COST_RANGES: Record<AnalystSessionType, { min: number; max: number }> = {
+  "quick-check": { min: 1, max: 3 },
+  "quick-analytics": { min: 10, max: 15 },
+  standard: { min: 40, max: 75 },
+  oracle: { min: 150, max: 300 },
+  "premium-event": { min: 75, max: 150 },
+};
+
+/**
+ * Estimate Edge cost for any session type based on prompt complexity.
+ * Short prompt → min, long/multi-question → max, otherwise midpoint.
+ */
+export function getSessionCost(sessionType: string, prompt: string): number {
+  const range = SESSION_COST_RANGES[sessionType as AnalystSessionType];
+  if (!range) return 1;
+  const trimmed = prompt.trim();
+  const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+  const questionMarks = (trimmed.match(/\?/g) ?? []).length;
+  if (wordCount <= 12 && questionMarks <= 1) return range.min;
+  if (wordCount <= 30 && questionMarks <= 2) return Math.round((range.min + range.max) / 2);
+  return range.max;
+}
 
 const ERROR_MESSAGES: Record<AnalystErrorCode, string> = {
   missing_api_key: "OpenAI API key not configured.",
@@ -448,7 +474,7 @@ export function runStandardSession(args: {
   );
 }
 
-/** Deep Dive / Oracle — reserved for future activation. */
+/** Deep Dive / Oracle — premium long-form reasoning. */
 export function runDeepDive(args: {
   prompt: string;
   kind?: AnalystRequestKind;
@@ -462,6 +488,26 @@ export function runDeepDive(args: {
       sessionType: "oracle",
       kind: args.kind,
       personality: args.personality ?? "oracle",
+      context: args.context,
+    },
+    args.eagohMeta,
+  );
+}
+
+/** Premium Event Analysis — event-focused intelligence breakdown. */
+export function runPremiumEvent(args: {
+  prompt: string;
+  kind?: AnalystRequestKind;
+  personality?: AnalystPersonality;
+  context?: string[];
+  eagohMeta?: { id: string; name: string; domain: string };
+}): Promise<AnalystResponse> {
+  return callAnalyst(
+    {
+      prompt: args.prompt,
+      sessionType: "premium-event",
+      kind: args.kind ?? "general",
+      personality: args.personality ?? "calm",
       context: args.context,
     },
     args.eagohMeta,

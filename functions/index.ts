@@ -29,6 +29,7 @@ function getSessionInstruction(sessionType: string): string {
   if (sessionType === "oracle") return "Deliver a deep tactical read with emotionally aware risk framing. Keep it concise and premium.";
   if (sessionType === "quick-analytics") return "Deliver a short tactical analytics read with clear confidence language.";
   if (sessionType === "quick-check") return "Deliver a fast, direct signal check in three sentences or fewer. No preamble. No filler.";
+  if (sessionType === "premium-event") return "Deliver an event-focused intelligence breakdown. Analyse timing, matchups, narratives, and critical moments.";
   return "Deliver a balanced EAGOH analyst response with tactical intelligence, emotional awareness, and confidence caveats.";
 }
 

@@ -1,11 +1,13 @@
 import { palette } from "@/constants/colors";
 import { getTeamById } from "@/data/teams";
 import { HORIZONTAL_LIST_PERFORMANCE_PROPS, LIST_PERFORMANCE_PROPS, OptimizedEagohImage, type RenderTone } from "@/app/_components/PerformancePrimitives";
+import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useHaptics } from "@/hooks/useHaptics";
 import {
   ArrowRightLeft,
   Award,
+  BadgeCheck,
   BookOpen,
   Clock,
   Coins,
@@ -421,8 +423,19 @@ const ListingCard = memo(function ListingCard({
 
         {/* Vendor strip */}
         <View style={styles.vendorStrip}>
-          <UserCheck color={palette.muted} size={12} />
+          <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: palette.graphite, overflow: "hidden" as const, borderWidth: 1, borderColor: palette.line }}>
+            {item.vendor_avatar_url ? (
+              <Image source={{ uri: item.vendor_avatar_url }} style={{ width: "100%", height: "100%" }} />
+            ) : (
+              <View style={{ flex: 1, alignItems: "center" as const, justifyContent: "center" as const }}>
+                <UserCheck color={palette.muted} size={10} />
+              </View>
+            )}
+          </View>
           <Text style={styles.vendorText}>{item.vendor_username ?? "Anonymous"}</Text>
+          {item.is_vendor_verified && (
+            <BadgeCheck color={palette.cyan} size={12} />
+          )}
           {reputation && (
             <>
               <View style={styles.vendorDivider} />

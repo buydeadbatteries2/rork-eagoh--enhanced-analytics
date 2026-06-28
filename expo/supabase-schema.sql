@@ -908,6 +908,87 @@ create policy "ukc_marketplace_select" on public.user_knowledge_credentials
   );
 
 -- =============================================================================
+-- PROFILE COLUMNS: avatar, banner, social verification, public display
+-- =============================================================================
+alter table public.profiles add column if not exists avatar_url text;
+alter table public.profiles add column if not exists banner_url text;
+alter table public.profiles add column if not exists public_display_title text;
+alter table public.profiles add column if not exists is_social_verified boolean default false;
+alter table public.profiles add column if not exists social_verified_platform text;
+
+-- =============================================================================
+-- USER SOCIAL ACCOUNTS (connected social media verification)
+-- =============================================================================
+create table if not exists public.user_social_accounts (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  platform text not null,
+  handle text,
+  profile_url text,
+  is_connected boolean default true,
+  is_platform_verified boolean default false,
+  verified_checked_at timestamptz,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique(user_id, platform)
+);
+
+create index if not exists usa_user_id_idx on public.user_social_accounts(user_id);
+
+alter table public.user_social_accounts enable row level security;
+
+drop policy if exists "usa_self_select" on public.user_social_accounts;
+drop policy if exists "usa_self_insert" on public.user_social_accounts;
+drop policy if exists "usa_self_update" on public.user_social_accounts;
+drop policy if exists "usa_self_delete" on public.user_social_accounts;
+drop policy if exists "usa_marketplace_select" on public.user_social_accounts;
+
+create policy "usa_self_select" on public.user_social_accounts
+  for select using (auth.uid() = user_id);
+
+create policy "usa_self_insert" on public.user_social_accounts
+  for insert with check (auth.uid() = user_id);
+
+create policy "usa_self_update" on public.user_social_accounts
+  for update using (auth.uid() = user_id);
+
+create policy "usa_self_delete" on public.user_social_accounts
+  for delete using (auth.uid() = user_id);
+
+-- Marketplace: anyone can read social accounts for verified vendors
+create policy "usa_marketplace_select" on public.user_social_accounts
+  for select using (
+    is_platform_verified = true or
+    exists (
+      select 1 from public.marketplace_listings ml
+      where ml.vendor_id = user_social_accounts.user_id and ml.active = true
+    )
+  );
+
+-- =============================================================================
+-- STORAGE BUCKET: user-profile-media (public read, owner write)
+-- =============================================================================
+insert into storage.buckets (id, name, public)
+  values ('user-profile-media', 'user-profile-media', true)
+  on conflict (id) do nothing;
+
+create policy "upm_select_all"
+  on storage.objects for select
+  using (bucket_id = 'user-profile-media');
+
+create policy "upm_insert_authenticated"
+  on storage.objects for insert
+  with check (bucket_id = 'user-profile-media' and auth.role() = 'authenticated');
+
+create policy "upm_update_owner"
+  on storage.objects for update
+  using (bucket_id = 'user-profile-media' and auth.uid() = owner);
+
+create policy "upm_delete_owner"
+  on storage.objects for delete
+  using (bucket_id = 'user-profile-media' and auth.uid() = owner);
+
+-- =============================================================================
 -- STORAGE BUCKET: eagoh-renders (public read, owner write)
 -- =============================================================================
 insert into storage.buckets (id, name, public)

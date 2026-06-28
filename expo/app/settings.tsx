@@ -8,16 +8,21 @@ import { useRouter } from "expo-router";
 import {
   AlertTriangle,
   ArrowLeft,
+  BadgeCheck,
   BookOpen,
   Brush,
+  Camera,
   ChevronRight,
   Coins,
   Cpu,
   Crown,
   FileText,
+  Globe,
   Hand,
+  ImageIcon,
   Info,
   Layers3,
+  Link2,
   Lock,
   LogOut,
   Mail,
@@ -35,6 +40,7 @@ import {
   Upload,
   User,
   Vibrate,
+  X,
   Zap,
 } from "lucide-react-native";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
@@ -48,6 +54,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { Image as ExpoImage } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { AppTheme } from "@/services/profile";
 import { palette as darkPalette, lightPalette } from "@/constants/colors";
@@ -58,6 +65,19 @@ import {
   type KnowledgeCredentialsInput,
   type KnowledgeCredentialsRow,
 } from "@/services/knowledgeCredentials";
+import {
+  getUserVerificationStatus,
+  connectSocialAccountMock,
+  disconnectSocialAccount,
+  refreshSocialVerificationStatus,
+  SOCIAL_PLATFORMS,
+  PLATFORM_DISPLAY,
+  type SocialPlatform,
+  type SocialAccountRow,
+  type UserVerificationStatus,
+} from "@/services/socialVerification";
+import * as ImagePicker from "expo-image-picker";
+import { supabase } from "@/lib/supabase";
 
 type P = typeof darkPalette;
 
@@ -71,7 +91,8 @@ type SectionRow =
   | { kind: "picker"; label: string; value: string; options: { id: string; label: string; icon: React.ReactNode }[]; icon: React.ReactNode; onSelect: (id: string) => void }
   | { kind: "link"; label: string; icon: React.ReactNode; onPress: () => void }
   | { kind: "adminOverride"; tier: string; expiresAt: string | null; note: string | null }
-  | { kind: "custom"; render: () => React.ReactNode };
+  | { kind: "custom"; render: () => React.ReactNode }
+  | { kind: "imageUpload"; label: string; currentUrl: string | null; icon: React.ReactNode; onPress: () => void; uploading: boolean };
 
 type SettingsSection = {
   id: string;
@@ -79,6 +100,337 @@ type SettingsSection = {
   titleIcon: React.ReactNode;
   rows: SectionRow[];
 };
+
+// ── Image Upload Row ─────────────────────────────────────────────────────
+
+const ImageUploadRow = memo(function ImageUploadRow({
+  label,
+  currentUrl,
+  icon,
+  onPress,
+  uploading,
+  s,
+  pal,
+}: Extract<SectionRow, { kind: "imageUpload" }> & { s: ReturnType<typeof createStyles>; pal: P }): JSX.Element {
+  return (
+    <View style={s.row}>
+      <View style={s.rowIcon}>{icon}</View>
+      <View style={s.rowContent}>
+        <Text style={s.rowLabel}>{label}</Text>
+        <View style={{ flexDirection: "row" as const, alignItems: "center" as const, gap: 10, marginTop: 8 }}>
+          {currentUrl ? (
+            <View style={{ width: 48, height: 48, borderRadius: 5, backgroundColor: pal.graphite, overflow: "hidden" as const, borderWidth: 1, borderColor: pal.line }}>
+              <ExpoImage source={{ uri: currentUrl }} style={{ width: "100%", height: "100%" }} />
+            </View>
+          ) : (
+            <View style={{ width: 48, height: 48, borderRadius: 5, backgroundColor: pal.blueSoft, alignItems: "center" as const, justifyContent: "center" as const, borderWidth: 1, borderColor: pal.line }}>
+              <Camera color={pal.muted} size={22} />
+            </View>
+          )}
+          <Pressable
+            onPress={onPress}
+            disabled={uploading}
+            style={({ pressed }) => [
+              s.saveBtn,
+              pressed && { opacity: 0.7 },
+            ]}
+          >
+            {uploading ? (
+              <ActivityIndicator color={pal.text} size="small" />
+            ) : (
+              <Text style={s.saveBtnText}>{currentUrl ? "Change" : "Upload"}</Text>
+            )}
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+});
+
+// ── Social Verification Panel ─────────────────────────────────────────────
+
+const SocialVerificationPanel = memo(function SocialVerificationPanel({
+  pal,
+}: {
+  pal: P;
+}): JSX.Element {
+  const { user } = useAuth();
+  const h = useHaptics();
+  const [accounts, setAccounts] = useState<SocialAccountRow[]>([]);
+  const [verification, setVerification] = useState<UserVerificationStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [connecting, setConnecting] = useState<string | null>(null);
+  const [showConnect, setShowConnect] = useState(false);
+  const [handleInput, setHandleInput] = useState("");
+  const [connectPlatform, setConnectPlatform] = useState<SocialPlatform | null>(null);
+
+  const loadAccounts = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const status = await getUserVerificationStatus(user.id);
+      setVerification(status);
+      setAccounts(status.connectedAccounts);
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    void loadAccounts();
+  }, [loadAccounts]);
+
+  const handleConnect = useCallback(async (platform: SocialPlatform) => {
+    setConnectPlatform(platform);
+    setHandleInput("");
+    setShowConnect(true);
+  }, []);
+
+  const handleSubmitConnect = useCallback(async () => {
+    if (!user?.id || !connectPlatform || !handleInput.trim()) return;
+    setConnecting(connectPlatform);
+    try {
+      await connectSocialAccountMock(user.id, connectPlatform, handleInput.trim());
+      await refreshSocialVerificationStatus(user.id);
+      await loadAccounts();
+      h.success();
+      setShowConnect(false);
+      setHandleInput("");
+      setConnectPlatform(null);
+    } catch (err: unknown) {
+      console.warn("[settings] connect social failed", err);
+    } finally {
+      setConnecting(null);
+    }
+  }, [user?.id, connectPlatform, handleInput, loadAccounts, h]);
+
+  const handleDisconnect = useCallback(async (platform: SocialPlatform) => {
+    if (!user?.id) return;
+    try {
+      await disconnectSocialAccount(user.id, platform);
+      await loadAccounts();
+      h.warning();
+    } catch (err: unknown) {
+      console.warn("[settings] disconnect social failed", err);
+    }
+  }, [user?.id, loadAccounts, h]);
+
+  const inlineStyles = useMemo(
+    () => ({
+      container: { padding: 14, gap: 12 } as const,
+      verifiedBanner: {
+        flexDirection: "row" as const,
+        alignItems: "center" as const,
+        gap: 8,
+        padding: 10,
+        borderRadius: 5,
+        backgroundColor: pal.cyanSoft,
+        borderWidth: 1,
+        borderColor: pal.cyan,
+      },
+      verifiedText: { color: pal.cyan, fontSize: 12, fontWeight: "800" as const, flex: 1 },
+      platformRow: {
+        flexDirection: "row" as const,
+        alignItems: "center" as const,
+        justifyContent: "space-between" as const,
+        paddingVertical: 8,
+        paddingHorizontal: 10,
+        borderRadius: 5,
+        backgroundColor: "rgba(255,255,255,0.03)",
+        borderWidth: 1,
+        borderColor: pal.line,
+      },
+      platformLabel: { color: pal.text, fontSize: 13, fontWeight: "800" as const },
+      platformHandle: { color: pal.muted, fontSize: 11, fontWeight: "600" as const },
+      connectBtn: {
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 5,
+        backgroundColor: pal.blueSoft,
+        borderWidth: 1,
+        borderColor: pal.blue,
+      },
+      connectBtnText: { color: pal.blue, fontSize: 11, fontWeight: "800" as const },
+      disconnectBtn: {
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 5,
+        backgroundColor: pal.emberSoft,
+        borderWidth: 1,
+        borderColor: pal.ember,
+      },
+      disconnectBtnText: { color: pal.ember, fontSize: 11, fontWeight: "800" as const },
+      verifiedChip: {
+        flexDirection: "row" as const,
+        alignItems: "center" as const,
+        gap: 3,
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 5,
+        backgroundColor: pal.cyanSoft,
+        borderWidth: 1,
+        borderColor: pal.cyan,
+      },
+      verifiedChipText: { color: pal.cyan, fontSize: 10, fontWeight: "800" as const },
+      connectSheet: {
+        padding: 14,
+        gap: 10,
+      },
+      connectSheetTitle: { color: pal.text, fontSize: 15, fontWeight: "900" as const },
+      textInput: {
+        backgroundColor: "rgba(3,6,11,0.62)",
+        borderWidth: 1,
+        borderColor: pal.line,
+        borderRadius: 5,
+        paddingHorizontal: 12,
+        paddingVertical: 9,
+        color: pal.text,
+        fontSize: 13,
+        fontWeight: "700" as const,
+      },
+      helperText: {
+        color: pal.muted,
+        fontSize: 11,
+        fontWeight: "600" as const,
+        lineHeight: 16,
+      },
+      privacyHelper: {
+        color: pal.ember,
+        fontSize: 10,
+        fontWeight: "700" as const,
+        lineHeight: 15,
+        backgroundColor: pal.emberSoft,
+        padding: 8,
+        borderRadius: 5,
+        borderWidth: 1,
+        borderColor: `${pal.ember}30`,
+      },
+    }),
+    [pal],
+  );
+
+  if (loading) {
+    return (
+      <View style={{ padding: 14, alignItems: "center" }}>
+        <ActivityIndicator color={pal.cyan} size="small" />
+      </View>
+    );
+  }
+
+  return (
+    <View style={inlineStyles.container}>
+      {verification?.isVerified && (
+        <View style={inlineStyles.verifiedBanner}>
+          <BadgeCheck color={pal.cyan} size={18} />
+          <Text style={inlineStyles.verifiedText}>
+            Verified through connected social account
+          </Text>
+        </View>
+      )}
+
+      {!verification?.isVerified && (
+        <Text style={inlineStyles.helperText}>
+          Connect a social account to verify your identity and earn the verified badge.
+        </Text>
+      )}
+
+      {SOCIAL_PLATFORMS.map((platform) => {
+        const account = accounts.find((a) => a.platform === platform);
+        const isConnected = account?.is_connected;
+
+        return (
+          <View key={platform} style={inlineStyles.platformRow}>
+            <View style={{ gap: 2 }}>
+              <Text style={inlineStyles.platformLabel}>{PLATFORM_DISPLAY[platform]}</Text>
+              {isConnected && account?.handle ? (
+                <Text style={inlineStyles.platformHandle}>@{account.handle}</Text>
+              ) : null}
+            </View>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              {isConnected && account?.is_platform_verified ? (
+                <View style={inlineStyles.verifiedChip}>
+                  <BadgeCheck color={pal.cyan} size={12} />
+                  <Text style={inlineStyles.verifiedChipText}>Verified</Text>
+                </View>
+              ) : null}
+              {isConnected ? (
+                <Pressable
+                  onPress={() => handleDisconnect(platform)}
+                  style={({ pressed }) => [inlineStyles.disconnectBtn, pressed && { opacity: 0.7 }]}
+                >
+                  <Text style={inlineStyles.disconnectBtnText}>Disconnect</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={() => handleConnect(platform)}
+                  style={({ pressed }) => [inlineStyles.connectBtn, pressed && { opacity: 0.7 }]}
+                >
+                  <Text style={inlineStyles.connectBtnText}>Connect</Text>
+                </Pressable>
+              )}
+            </View>
+          </View>
+        );
+      })}
+
+      {/* Connect modal */}
+      {showConnect && connectPlatform && (
+        <View style={inlineStyles.connectSheet}>
+          <Text style={inlineStyles.connectSheetTitle}>
+            Connect {PLATFORM_DISPLAY[connectPlatform]}
+          </Text>
+          <Text style={inlineStyles.helperText}>
+            Enter your {PLATFORM_DISPLAY[connectPlatform]} handle (v1: mock verification).
+          </Text>
+          <TextInput
+            style={inlineStyles.textInput}
+            value={handleInput}
+            onChangeText={setHandleInput}
+            placeholder={`Your ${PLATFORM_DISPLAY[connectPlatform]} handle`}
+            placeholderTextColor={pal.muted}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Pressable
+              onPress={() => { setShowConnect(false); setHandleInput(""); setConnectPlatform(null); }}
+              style={({ pressed }) => [
+                { flex: 1, minHeight: 40, borderRadius: 5, alignItems: "center", justifyContent: "center", backgroundColor: pal.panel, borderWidth: 1, borderColor: pal.line },
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Text style={{ color: pal.muted, fontSize: 13, fontWeight: "800" }}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleSubmitConnect}
+              disabled={connecting === connectPlatform || !handleInput.trim()}
+              style={({ pressed }) => [
+                { flex: 1, minHeight: 40, borderRadius: 5, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6, backgroundColor: pal.cyan, opacity: handleInput.trim() ? 1 : 0.5 },
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              {connecting === connectPlatform ? (
+                <ActivityIndicator color={pal.void} size="small" />
+              ) : (
+                <>
+                  <Link2 color={pal.void} size={14} />
+                  <Text style={{ color: pal.void, fontSize: 13, fontWeight: "900" }}>Connect</Text>
+                </>
+              )}
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      <View style={inlineStyles.privacyHelper}>
+        <Text style={{ color: pal.ember, fontSize: 10, fontWeight: "900" }}>
+          Only public profile information is shown to other users. Email and private account details are never shown.
+        </Text>
+      </View>
+    </View>
+  );
+});
 
 // ── Styles factory (parametrised on palette so theme changes re-render) ────
 
@@ -913,6 +1265,8 @@ export default function SettingsScreen(): JSX.Element {
     profile?.username ?? "",
   );
   const [savingUsername, setSavingUsername] = useState<boolean>(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState<boolean>(false);
+  const [uploadingBanner, setUploadingBanner] = useState<boolean>(false);
 
   const usernameValue = profile?.username ?? "";
   const displayUsername = usernameDraft || usernameValue;
@@ -1038,6 +1392,58 @@ export default function SettingsScreen(): JSX.Element {
     [router, h],
   );
 
+  const uploadProfileMedia = useCallback(async (type: "avatar" | "banner", setUploading: (v: boolean) => void): Promise<void> => {
+    if (!user?.id) return;
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Permission Required", "Photo library access is needed to upload a profile image.");
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: type === "avatar" ? [1, 1] : [3, 1],
+        quality: 0.8,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+      setUploading(true);
+      const asset = result.assets[0];
+      const ext = asset.uri.split(".").pop()?.split("?")[0] ?? "jpg";
+      const fileName = `${user.id}/${type}_${Date.now()}.${ext}`;
+      const response = await fetch(asset.uri);
+      const blob = await response.blob();
+      const { error: uploadError } = await supabase.storage
+        .from("user-profile-media")
+        .upload(fileName, blob, { upsert: true, contentType: `image/${ext === "png" ? "png" : "jpeg"}` });
+      if (uploadError) {
+        console.warn("[settings] upload failed", uploadError.message);
+        Alert.alert("Upload Failed", uploadError.message);
+        return;
+      }
+      const { data: urlData } = supabase.storage.from("user-profile-media").getPublicUrl(fileName);
+      const publicUrl = urlData?.publicUrl;
+      if (publicUrl) {
+        const field = type === "avatar" ? { avatar_url: publicUrl } : { banner_url: publicUrl };
+        await updateProfile(field);
+        h.success();
+      }
+    } catch (err: unknown) {
+      console.warn(`[settings] ${type} upload error`, err);
+      Alert.alert("Upload Failed", "Could not upload image. Please try again.");
+    } finally {
+      setUploading(false);
+    }
+  }, [user?.id, updateProfile, h]);
+
+  const handleAvatarUpload = useCallback((): void => {
+    void uploadProfileMedia("avatar", setUploadingAvatar);
+  }, [uploadProfileMedia]);
+
+  const handleBannerUpload = useCallback((): void => {
+    void uploadProfileMedia("banner", setUploadingBanner);
+  }, [uploadProfileMedia]);
+
   // ── Sections ────────────────────────────────────────────────────────────
 
   const sections: SettingsSection[] = useMemo<SettingsSection[]>(() => {
@@ -1078,6 +1484,40 @@ export default function SettingsScreen(): JSX.Element {
             icon: <LogOut color={pal.ember} size={18} />,
             onPress: handleLogout,
             loading: signOutState.isPending,
+          },
+        ],
+      },
+      {
+        id: "profileMedia",
+        title: "Profile Media",
+        titleIcon: <Camera color={pal.cyan} size={15} />,
+        rows: [
+          {
+            kind: "imageUpload" as const,
+            label: "Profile Image",
+            currentUrl: profile?.avatar_url ?? null,
+            icon: <User color={pal.muted} size={18} />,
+            onPress: handleAvatarUpload,
+            uploading: uploadingAvatar,
+          },
+          {
+            kind: "imageUpload" as const,
+            label: "Profile Banner",
+            currentUrl: profile?.banner_url ?? null,
+            icon: <ImageIcon color={pal.muted} size={18} />,
+            onPress: handleBannerUpload,
+            uploading: uploadingBanner,
+          },
+        ],
+      },
+      {
+        id: "socialVerification",
+        title: "Social Verification",
+        titleIcon: <BadgeCheck color={pal.cyan} size={15} />,
+        rows: [
+          {
+            kind: "custom" as const,
+            render: () => <SocialVerificationPanel pal={pal} />,
           },
         ],
       },
@@ -1282,6 +1722,10 @@ export default function SettingsScreen(): JSX.Element {
     displayUsername,
     handleSaveUsername,
     savingUsername,
+    uploadingAvatar,
+    uploadingBanner,
+    handleAvatarUpload,
+    handleBannerUpload,
     handleResetPassword,
     resetPasswordState.isPending,
     handleLogout,
@@ -1343,6 +1787,8 @@ export default function SettingsScreen(): JSX.Element {
                     return <LinkRow key={key} {...row} s={s} pal={pal} />;
                   case "adminOverride":
                     return <AdminOverrideRow key={key} {...row} s={s} pal={pal} />;
+                  case "imageUpload":
+                    return <ImageUploadRow key={key} {...row} s={s} pal={pal} />;
                   case "custom":
                     return <View key={key}>{row.render()}</View>;
                   default:

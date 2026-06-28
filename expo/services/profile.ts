@@ -52,6 +52,11 @@ export type UserProfile = {
   selected_labs: string[];
   selected_eagohs: string[];
   preferences: ProfilePreferences;
+  avatar_url: string | null;
+  banner_url: string | null;
+  public_display_title: string | null;
+  is_social_verified: boolean;
+  social_verified_platform: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -71,6 +76,11 @@ const DEFAULT_PROFILE = (id: string, username?: string | null): UserProfile => (
   selected_labs: [],
   selected_eagohs: [],
   preferences: {},
+  avatar_url: null,
+  banner_url: null,
+  public_display_title: null,
+  is_social_verified: false,
+  social_verified_platform: null,
 });
 
 export async function fetchProfile(userId: string): Promise<UserProfile | null> {

@@ -55,6 +55,10 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     queryClient.invalidateQueries({ queryKey: profileKey(userId) });
   }, [queryClient, userId]);
 
+  const setQueryData = useCallback((next: UserProfile): void => {
+    queryClient.setQueryData(profileKey(userId), next);
+  }, [queryClient, userId]);
+
   const updateMutation = useMutation({
     mutationFn: (patch: ProfileUpdate): Promise<UserProfile> => {
       if (!userId) throw new Error("Not signed in");

@@ -70,6 +70,10 @@ function ThemedRoot(): JSX.Element {
             name="legal/disclaimer"
             options={{ presentation: "modal", headerShown: false }}
           />
+          <Stack.Screen
+            name="public-profile"
+            options={{ presentation: "modal", headerShown: false }}
+          />
         </Stack>
       </View>
     </GestureHandlerRootView>

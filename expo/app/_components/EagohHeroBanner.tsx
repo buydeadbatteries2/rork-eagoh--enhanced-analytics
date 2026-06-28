@@ -156,7 +156,7 @@ const EagohHeroBanner = React.memo(function EagohHeroBanner({
           style={StyleSheet.absoluteFill}
         />
 
-        {/* ── Vertical pills column on the left ──────── */}
+        {/* ── Vertical pills column (top-left) ──────── */}
         <View style={styles.pillsColumn}>
           {/* Editing badge (Forge mode only) */}
           {mode === "forge" && isEditing ? (
@@ -257,28 +257,28 @@ const EagohHeroBanner = React.memo(function EagohHeroBanner({
           ) : null}
         </View>
 
-        {/* Bottom row */}
-        <View style={styles.bottom}>
-          <View style={styles.nameWrap}>
-            <Text style={[styles.label, { color: pal.cyan }]}>{bottomLabel}</Text>
-            <Text style={[styles.name, { color: pal.text }]} numberOfLines={1}>
-              {bottomName}
-            </Text>
-          </View>
-          <View
-            style={[
-              styles.changeBtn,
-              {
-                borderColor: `${accent}55`,
-                backgroundColor: `${accent}22`,
-              },
-            ]}
-          >
-            <Text style={[styles.changeText, { color: accent }]}>
-              {changeBtnText}
-            </Text>
-            <ChevronDown color={accent} size={13} />
-          </View>
+        {/* ── Title/name block (bottom-left) ──────── */}
+        <View style={styles.nameBlock} pointerEvents="box-none">
+          <Text style={[styles.label, { color: pal.cyan }]}>{bottomLabel}</Text>
+          <Text style={[styles.name, { color: pal.text }]} numberOfLines={1}>
+            {bottomName}
+          </Text>
+        </View>
+
+        {/* ── Selector/action button (bottom-right) ── */}
+        <View
+          style={[
+            styles.changeBtnBlock,
+            {
+              borderColor: `${accent}55`,
+              backgroundColor: `${accent}22`,
+            },
+          ]}
+        >
+          <Text style={[styles.changeText, { color: accent }]}>
+            {changeBtnText}
+          </Text>
+          <ChevronDown color={accent} size={13} />
         </View>
       </View>
     </Pressable>
@@ -301,7 +301,7 @@ const styles = StyleSheet.create({
   imageWrap: {
     height: 260,
     width: "100%",
-    justifyContent: "space-between",
+    position: "relative",
   },
   image: {
     ...StyleSheet.absoluteFillObject,
@@ -313,15 +313,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  // ── Vertical pills column (left side) ────────
+  // ── Vertical pills column (top-left) ────────
   pillsColumn: {
     position: "absolute",
-    top: 10,
-    left: 10,
+    top: 24,
+    left: 18,
     flexDirection: "column",
     alignItems: "flex-start",
-    gap: 5,
-    zIndex: 5,
+    gap: 8,
+    zIndex: 3,
     maxWidth: "52%",
   },
   pill: {
@@ -346,15 +346,14 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
   },
   statusText: { fontSize: 8, fontWeight: "900", letterSpacing: 1.2 },
-  bottom: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    paddingHorizontal: 14,
-    paddingBottom: 14,
-    gap: 10,
+  // ── Title/name block (bottom-left) ────────
+  nameBlock: {
+    position: "absolute",
+    bottom: 20,
+    left: 18,
+    zIndex: 3,
+    maxWidth: "58%",
   },
-  nameWrap: { flex: 1 },
   label: {
     fontSize: 9,
     fontWeight: "900",
@@ -366,7 +365,12 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: -0.5,
   },
-  changeBtn: {
+  // ── Selector/action button (bottom-right) ──
+  changeBtnBlock: {
+    position: "absolute",
+    bottom: 20,
+    right: 18,
+    zIndex: 3,
     flexDirection: "row",
     alignItems: "center",
     gap: 3,

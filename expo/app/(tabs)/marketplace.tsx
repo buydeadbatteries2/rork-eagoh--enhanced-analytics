@@ -82,9 +82,9 @@ import {
   type EnrichedBanner,
 } from "@/services/sponsoredBanners";
 import {
-  getKnowledgeCredentials,
-  type KnowledgeCredentialsRow,
-} from "@/services/knowledgeCredentials";
+  getPublicEagohCredentials,
+  type EagohCredentialsRow,
+} from "@/services/eagohCredentials";
 import { getBulkReputations, rankColor as repRankColor, RANK_TIERS, type RankTier } from "@/services/reputation";
 import type { ReputationRow } from "@/services/reputation";
 import { getLeaderboard } from "@/services/leaderboards";
@@ -497,7 +497,7 @@ function PurchaseModal({
   const [selectedLevel, setSelectedLevel] = useState<SyncLevel>("25%");
   const [selectedDays, setSelectedDays] = useState<number>(1);
   const [showDetails, setShowDetails] = useState(false);
-  const [credentials, setCredentials] = useState<KnowledgeCredentialsRow | null>(null);
+  const [credentials, setCredentials] = useState<EagohCredentialsRow | null>(null);
   const [loadingCredentials, setLoadingCredentials] = useState(false);
 
   useEffect(() => {
@@ -514,7 +514,7 @@ function PurchaseModal({
     // Fetch vendor credentials when opening details
     if (next && listing?.vendor_id && !credentials) {
       setLoadingCredentials(true);
-      getKnowledgeCredentials(listing.vendor_id)
+      getPublicEagohCredentials(listing.eagoh_id)
         .then((row) => { setCredentials(row); setLoadingCredentials(false); })
         .catch(() => setLoadingCredentials(false));
     }
@@ -759,7 +759,7 @@ function PurchaseModal({
                     ) : listing.has_credentials ? (
                       <View style={styles.sourceCredentialsBody}>
                         <Text style={styles.sourceCredPlaceholder}>
-                          This vendor has set up knowledge credentials. Tap to view their verified expertise.
+                          No source credentials have been added for this EAGOH yet.
                         </Text>
                       </View>
                     ) : null}

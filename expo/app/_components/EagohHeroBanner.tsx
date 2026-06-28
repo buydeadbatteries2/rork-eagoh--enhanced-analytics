@@ -138,12 +138,20 @@ const EagohHeroBanner = React.memo(function EagohHeroBanner({
           style={StyleSheet.absoluteFill}
         />
 
-        {/* Top badges row */}
+        {/* Top badges row — wraps to avoid overlap on small screens */}
         <View style={styles.topRow}>
-          {/* Domain tag (left) */}
+          {/* Editing badge (Forge mode only) */}
+          {mode === "forge" && isEditing ? (
+            <View style={styles.editingBadge}>
+              <Sparkles color={palette.gold} size={10} />
+              <Text style={styles.editingBadgeText}>EDITING</Text>
+            </View>
+          ) : null}
+
+          {/* Domain tag */}
           <View
             style={[
-              styles.domainTag,
+              styles.pill,
               { borderColor: `${accent}55`, backgroundColor: `${accent}1F` },
             ]}
           >
@@ -159,7 +167,7 @@ const EagohHeroBanner = React.memo(function EagohHeroBanner({
           {topRightBadge ? (
             <View
               style={[
-                styles.statusBadge,
+                styles.pill,
                 {
                   borderColor: topRightBadge.borderColor,
                   backgroundColor: topRightBadge.backgroundColor,
@@ -185,14 +193,6 @@ const EagohHeroBanner = React.memo(function EagohHeroBanner({
             </View>
           ) : null}
         </View>
-
-        {/* Editing badge (Forge mode only, top-left) */}
-        {mode === "forge" && isEditing ? (
-          <View style={styles.editingBadge}>
-            <Sparkles color={palette.gold} size={10} />
-            <Text style={styles.editingBadgeText}>EDITING</Text>
-          </View>
-        ) : null}
 
         {/* Bottom row */}
         <View style={styles.bottom}>
@@ -253,20 +253,13 @@ const styles = StyleSheet.create({
   },
   topRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
-    justifyContent: "space-between",
     paddingHorizontal: 12,
-    paddingTop: 12,
+    paddingTop: 10,
+    gap: 5,
   },
-  domainTag: {
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderRadius: 5,
-    borderWidth: 1,
-    maxWidth: "60%",
-  },
-  domainText: { fontSize: 9, fontWeight: "900", letterSpacing: 1.4 },
-  statusBadge: {
+  pill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
@@ -274,7 +267,9 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 5,
     borderWidth: 1,
+    maxWidth: "100%",
   },
+  domainText: { fontSize: 9, fontWeight: "900", letterSpacing: 1.4 },
   statusDot: {
     width: 6,
     height: 6,
@@ -317,9 +312,6 @@ const styles = StyleSheet.create({
   },
   changeText: { fontSize: 11, fontWeight: "900", letterSpacing: 0.3 },
   editingBadge: {
-    position: "absolute",
-    top: 8,
-    left: 8,
     flexDirection: "row",
     alignItems: "center",
     gap: 4,

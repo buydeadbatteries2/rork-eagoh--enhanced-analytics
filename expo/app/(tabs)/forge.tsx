@@ -13,6 +13,7 @@
  */
 
 import { palette } from "@/constants/colors";
+import { useAuth } from "@/providers/AuthProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useEagohs, useEagohFull } from "@/providers/EagohProvider";
 import { useForge, type ForgePending } from "@/providers/ForgeProvider";
@@ -45,24 +46,36 @@ import { HEALTH_FITNESS_AREAS, HEALTH_FITNESS_ROLES, getHealthFitnessArea, getHe
 import { LinearGradient } from "expo-linear-gradient";
 import {
   AlertTriangle,
+  BadgeCheck,
+  BookOpen,
   BrainCircuit,
   Check,
   ChevronDown,
   Cpu,
   Crown,
+  Edit3,
   Footprints,
   Gem,
   Heart,
+  Info,
   Pencil,
   Plus,
   ScanFace,
   Shirt,
   SlidersHorizontal,
   Sparkles,
+  Tag,
   Trash2,
   X,
   Zap,
 } from "lucide-react-native";
+import {
+  getEagohCredentials,
+  upsertEagohCredentials,
+  deleteEagohCredentials,
+  type EagohCredentialsRow,
+} from "@/services/eagohCredentials";
+import { getCredibilityTagsForDomain } from "@/data/credibilityTags";
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -338,6 +351,7 @@ function ConfirmationSheet({
 export default function ForgeScreen(): JSX.Element {
   const h = useHaptics();
   const router = useRouter();
+  const { user } = useAuth();
   const { profile } = useProfile();
   const { total: edgeTotal } = useEdge();
   const { pending, prepareForge, confirmForge, cancelForge, isGenerating } = useForge();
@@ -397,6 +411,108 @@ export default function ForgeScreen(): JSX.Element {
   const [renameError, setRenameError] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState<boolean>(false);
   const { spend } = useEdge();
+
+  // ── Knowledge Credentials state ─────────────────────────────
+  const [credentials, setCredentials] = useState<EagohCredentialsRow | null>(null);
+  const [showCredentialsModal, setShowCredentialsModal] = useState<boolean>(false);
+  const [credentialsLoading, setCredentialsLoading] = useState<boolean>(false);
+  const [credentialsSaving, setCredentialsSaving] = useState<boolean>(false);
+  // Form fields
+  const [credPublicTitle, setCredPublicTitle] = useState<string>("");
+  const [credDomainExpertise, setCredDomainExpertise] = useState<string>("");
+  const [credExperienceSummary, setCredExperienceSummary] = useState<string>("");
+  const [credAccolades, setCredAccolades] = useState<string>("");
+  const [credRelevantBackground, setCredRelevantBackground] = useState<string>("");
+  const [credYearsExperience, setCredYearsExperience] = useState<string>("");
+  const [credSelectedTags, setCredSelectedTags] = useState<string[]>([]);
+  const [credShowDeleteConfirm, setCredShowDeleteConfirm] = useState<boolean>(false);
+
+  // Load credentials when editing an EAGOH
+  useEffect(() => {
+    if (!selectedEagohId) {
+      setCredentials(null);
+      return;
+    }
+    setCredentialsLoading(true);
+    getEagohCredentials(selectedEagohId)
+      .then((row) => {
+        setCredentials(row);
+        if (row) {
+          setCredPublicTitle(row.public_title ?? "");
+          setCredDomainExpertise(row.domain_expertise ?? "");
+          setCredExperienceSummary(row.experience_summary ?? "");
+          setCredAccolades(row.accolades ?? "");
+          setCredRelevantBackground(row.relevant_background ?? "");
+          setCredYearsExperience(row.years_experience ? String(row.years_experience) : "");
+          setCredSelectedTags(row.credibility_tags ?? []);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setCredentialsLoading(false));
+  }, [selectedEagohId]);
+
+  const openCredentialsModal = useCallback((): void => {
+    if (credentials) {
+      setCredPublicTitle(credentials.public_title ?? "");
+      setCredDomainExpertise(credentials.domain_expertise ?? "");
+      setCredExperienceSummary(credentials.experience_summary ?? "");
+      setCredAccolades(credentials.accolades ?? "");
+      setCredRelevantBackground(credentials.relevant_background ?? "");
+      setCredYearsExperience(credentials.years_experience ? String(credentials.years_experience) : "");
+      setCredSelectedTags(credentials.credibility_tags ?? []);
+    }
+    setShowCredentialsModal(true);
+  }, [credentials]);
+
+  const handleSaveCredentials = useCallback(async (): Promise<void> => {
+    if (!user?.id || !selectedEagohId) return;
+    setCredentialsSaving(true);
+    try {
+      const row = await upsertEagohCredentials(user.id, selectedEagohId, {
+        eagoh_id: selectedEagohId,
+        domain,
+        public_title: credPublicTitle.trim() || null,
+        domain_expertise: credDomainExpertise.trim() || null,
+        experience_summary: credExperienceSummary.trim() || null,
+        accolades: credAccolades.trim() || null,
+        relevant_background: credRelevantBackground.trim() || null,
+        years_experience: credYearsExperience ? parseInt(credYearsExperience, 10) || null : null,
+        credibility_tags: credSelectedTags,
+        is_public: true,
+      });
+      setCredentials(row);
+      h.success();
+      setShowCredentialsModal(false);
+    } catch (err: unknown) {
+      Alert.alert("Error", (err as Error).message ?? "Failed to save credentials.");
+    } finally {
+      setCredentialsSaving(false);
+    }
+  }, [user?.id, selectedEagohId, domain, credPublicTitle, credDomainExpertise, credExperienceSummary, credAccolades, credRelevantBackground, credYearsExperience, credSelectedTags, h]);
+
+  const handleDeleteCredentials = useCallback(async (): Promise<void> => {
+    if (!selectedEagohId) return;
+    try {
+      await deleteEagohCredentials(selectedEagohId);
+      setCredentials(null);
+      setShowCredentialsModal(false);
+      setCredShowDeleteConfirm(false);
+      h.warning();
+    } catch (err: unknown) {
+      Alert.alert("Error", (err as Error).message ?? "Failed to remove credentials.");
+    }
+  }, [selectedEagohId, h]);
+
+  const toggleCredTag = useCallback((tag: string): void => {
+    setCredSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+    );
+  }, []);
+
+  const domainCredibilityTags = useMemo(
+    () => getCredibilityTagsForDomain(domain),
+    [domain],
+  );
 
   /** When user picks an EAGOH, load its full data into the wizard form. */
   useEffect(() => {
@@ -1605,6 +1721,40 @@ export default function ForgeScreen(): JSX.Element {
             <View style={styles.stepContent}>{renderStepContent()}</View>
           </View>
 
+          {/* ── EAGOH Knowledge Credentials ──────────────────── */}
+          {isEditing ? (
+            <View style={styles.credentialsSection}>
+              {credentialsLoading ? (
+                <ActivityIndicator color={palette.cyan} size="small" />
+              ) : credentials ? (
+                <Pressable
+                  onPress={openCredentialsModal}
+                  style={({ pressed }) => [styles.credentialsRow, pressed && styles.pressed]}
+                >
+                  <View style={styles.credentialsLeft}>
+                    <BadgeCheck color={palette.success} size={16} />
+                    <Text style={styles.credentialsStatus}>Credentials Complete</Text>
+                  </View>
+                  <View style={styles.credentialsEditBtn}>
+                    <Edit3 color={palette.cyan} size={11} />
+                    <Text style={styles.credentialsEditText}>Edit</Text>
+                  </View>
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={openCredentialsModal}
+                  style={({ pressed }) => [styles.credentialsRow, styles.credentialsMissing, pressed && styles.pressed]}
+                >
+                  <View style={styles.credentialsLeft}>
+                    <BookOpen color={palette.gold} size={16} />
+                    <Text style={styles.credentialsAddText}>Add Knowledge Credentials</Text>
+                  </View>
+                  <Plus color={palette.gold} size={14} />
+                </Pressable>
+              )}
+            </View>
+          ) : null}
+
           {forgeError ? <Text style={styles.errorText}>{forgeError}</Text> : null}
 
           {isEditing ? (
@@ -1864,6 +2014,208 @@ export default function ForgeScreen(): JSX.Element {
                   {isRenaming ? <ActivityIndicator color={palette.void} /> : <Text style={styles.confirmForgeText}>Confirm Rename</Text>}
                 </Pressable>
               ) : null}
+            </View>
+          </View>
+        </View>
+      ) : null}
+
+      {/* ── Knowledge Credentials Modal ──────────────────────── */}
+      {showCredentialsModal ? (
+        <View style={styles.credModalOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={(): void => setShowCredentialsModal(false)} />
+          <View style={styles.credModal}>
+            <LinearGradient colors={["rgba(10,18,28,0.99)", "rgba(5,10,18,0.99)"]} style={StyleSheet.absoluteFill} />
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={styles.credModalContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Header */}
+              <View style={styles.credModalHeader}>
+                <View style={styles.credModalHeaderLeft}>
+                  <BookOpen color={palette.cyan} size={18} />
+                  <View>
+                    <Text style={styles.credModalTitle}>Knowledge Credentials</Text>
+                    <Text style={styles.credModalSubtitle}>
+                      Add public experience and achievements for this EAGOH's domain. Do not include private personal information.
+                    </Text>
+                  </View>
+                </View>
+                <Pressable onPress={(): void => setShowCredentialsModal(false)} hitSlop={8}>
+                  <X color={palette.muted} size={20} />
+                </Pressable>
+              </View>
+
+              {/* Privacy helper */}
+              <View style={styles.credPrivacyBanner}>
+                <Info color={palette.ember} size={12} />
+                <Text style={styles.credPrivacyBannerText}>
+                  These credentials are public and help users understand the source behind this EAGOH. Do not include private personal details.
+                </Text>
+              </View>
+
+              {/* Public Display Title */}
+              <View style={styles.credFieldWrap}>
+                <Text style={styles.credFieldLabel}>Public Display Title</Text>
+                <TextInput
+                  style={styles.credTextInput}
+                  value={credPublicTitle}
+                  onChangeText={setCredPublicTitle}
+                  placeholder='e.g. "Former Professional Analyst"'
+                  placeholderTextColor={palette.muted}
+                  autoCorrect={false}
+                />
+              </View>
+
+              {/* Domain Expertise */}
+              <View style={styles.credFieldWrap}>
+                <Text style={styles.credFieldLabel}>Domain Expertise</Text>
+                <TextInput
+                  style={styles.credTextInput}
+                  value={credDomainExpertise}
+                  onChangeText={setCredDomainExpertise}
+                  placeholder='e.g. "Sports analytics, game strategy, player development"'
+                  placeholderTextColor={palette.muted}
+                  autoCorrect={false}
+                />
+              </View>
+
+              {/* Experience Summary */}
+              <View style={styles.credFieldWrap}>
+                <Text style={styles.credFieldLabel}>Experience Summary</Text>
+                <TextInput
+                  style={[styles.credTextInput, styles.credTextArea]}
+                  value={credExperienceSummary}
+                  onChangeText={setCredExperienceSummary}
+                  placeholder="Brief summary of your relevant experience..."
+                  placeholderTextColor={palette.muted}
+                  multiline
+                  numberOfLines={3}
+                  textAlignVertical="top"
+                />
+              </View>
+
+              {/* Accolades */}
+              <View style={styles.credFieldWrap}>
+                <Text style={styles.credFieldLabel}>Accolades / Achievements</Text>
+                <TextInput
+                  style={[styles.credTextInput, styles.credTextArea]}
+                  value={credAccolades}
+                  onChangeText={setCredAccolades}
+                  placeholder='e.g. "Published 50+ analysis reports, industry awards"'
+                  placeholderTextColor={palette.muted}
+                  multiline
+                  numberOfLines={2}
+                  textAlignVertical="top"
+                />
+              </View>
+
+              {/* Relevant Background */}
+              <View style={styles.credFieldWrap}>
+                <Text style={styles.credFieldLabel}>Relevant Background</Text>
+                <TextInput
+                  style={[styles.credTextInput, styles.credTextArea]}
+                  value={credRelevantBackground}
+                  onChangeText={setCredRelevantBackground}
+                  placeholder="Your background that relates to your domain expertise..."
+                  placeholderTextColor={palette.muted}
+                  multiline
+                  numberOfLines={2}
+                  textAlignVertical="top"
+                />
+              </View>
+
+              {/* Years of Experience */}
+              <View style={styles.credFieldWrap}>
+                <Text style={styles.credFieldLabel}>Years of Experience</Text>
+                <TextInput
+                  style={styles.credTextInput}
+                  value={credYearsExperience}
+                  onChangeText={setCredYearsExperience}
+                  placeholder="e.g. 10"
+                  placeholderTextColor={palette.muted}
+                  keyboardType="numeric"
+                />
+              </View>
+
+              {/* Public Credibility Tags (domain-specific) */}
+              <View style={styles.credFieldWrap}>
+                <Text style={styles.credFieldLabel}>Public Credibility Tags</Text>
+                <View style={styles.credTagsWrap}>
+                  {domainCredibilityTags.map((tag) => {
+                    const active = credSelectedTags.includes(tag);
+                    return (
+                      <Pressable
+                        key={tag}
+                        onPress={(): void => toggleCredTag(tag)}
+                        style={[styles.credTagChip, active && styles.credTagChipActive]}
+                      >
+                        <Tag color={active ? palette.cyan : palette.muted} size={11} />
+                        <Text style={[styles.credTagText, active && styles.credTagTextActive]} numberOfLines={1}>
+                          {tag}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            </ScrollView>
+
+            {/* Fixed bottom buttons */}
+            <View style={styles.credModalFooter}>
+              {/* Delete button (if credentials exist) */}
+              {credentials && !credShowDeleteConfirm ? (
+                <Pressable
+                  onPress={(): void => setCredShowDeleteConfirm(true)}
+                  style={({ pressed }) => [styles.credDeleteBtn, pressed && styles.pressed]}
+                >
+                  <Trash2 color={palette.ember} size={14} />
+                  <Text style={styles.credDeleteBtnText}>Remove Credentials</Text>
+                </Pressable>
+              ) : credShowDeleteConfirm ? (
+                <View style={styles.credDeleteConfirm}>
+                  <Text style={styles.credDeleteConfirmText}>Remove all credentials for this EAGOH?</Text>
+                  <View style={styles.credDeleteConfirmBtns}>
+                    <Pressable
+                      onPress={(): void => setCredShowDeleteConfirm(false)}
+                      style={({ pressed }) => [
+                        { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 5, backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: palette.line },
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={{ color: palette.muted, fontSize: 11, fontWeight: "800" }}>Cancel</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={(): void => { void handleDeleteCredentials(); }}
+                      style={({ pressed }) => [
+                        { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 5, backgroundColor: palette.ember },
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={{ color: palette.void, fontSize: 11, fontWeight: "900" }}>Remove</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : null}
+
+              {/* Save button */}
+              <Pressable
+                onPress={(): void => { void handleSaveCredentials(); }}
+                disabled={credentialsSaving}
+                style={({ pressed }) => [
+                  styles.credSaveBtn,
+                  pressed && styles.pressed,
+                ]}
+              >
+                {credentialsSaving ? (
+                  <ActivityIndicator color={palette.void} size="small" />
+                ) : (
+                  <Text style={styles.credSaveBtnText}>
+                    {credentials ? "Update Credentials" : "Save Credentials"}
+                  </Text>
+                )}
+              </Pressable>
             </View>
           </View>
         </View>
@@ -2421,5 +2773,223 @@ const styles = StyleSheet.create({
     borderColor: "rgba(234,88,12,0.18)",
     backgroundColor: "rgba(234,88,12,0.06)",
     marginBottom: 2,
+  },
+
+  // ── Knowledge Credentials ───────────────────────────────────────
+  credentialsSection: {
+    marginTop: 4,
+    marginBottom: 12,
+    paddingHorizontal: 4,
+  },
+  credentialsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "rgba(43,214,127,0.25)",
+    backgroundColor: "rgba(43,214,127,0.08)",
+  },
+  credentialsMissing: {
+    borderColor: "rgba(255,181,71,0.25)",
+    backgroundColor: "rgba(255,181,71,0.08)",
+  },
+  credentialsLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  credentialsStatus: {
+    color: palette.success,
+    fontSize: 12,
+    fontWeight: "800" as const,
+  },
+  credentialsAddText: {
+    color: palette.gold,
+    fontSize: 12,
+    fontWeight: "800" as const,
+  },
+  credentialsEditBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "rgba(108,230,255,0.25)",
+    backgroundColor: "rgba(108,230,255,0.10)",
+  },
+  credentialsEditText: {
+    color: palette.cyan,
+    fontSize: 10,
+    fontWeight: "900" as const,
+    letterSpacing: 0.5,
+  },
+
+  // ── Credentials Modal ───────────────────────────────────────────
+  credModalOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(2,4,10,0.88)",
+    justifyContent: "flex-end" as const,
+    zIndex: 110,
+  },
+  credModal: {
+    height: "75%",
+    borderTopLeftRadius: 5,
+    borderTopRightRadius: 5,
+    borderWidth: 1,
+    borderColor: "rgba(54,245,255,0.20)",
+    overflow: "hidden" as const,
+  },
+  credModalContent: {
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 20,
+    gap: 14,
+  },
+  credModalHeader: {
+    flexDirection: "row" as const,
+    alignItems: "flex-start" as const,
+    justifyContent: "space-between" as const,
+    gap: 10,
+  },
+  credModalHeaderLeft: {
+    flexDirection: "row" as const,
+    alignItems: "flex-start" as const,
+    gap: 10,
+    flex: 1,
+  },
+  credModalTitle: {
+    color: palette.text,
+    fontSize: 17,
+    fontWeight: "900" as const,
+    letterSpacing: 0.4,
+  },
+  credModalSubtitle: {
+    color: palette.muted,
+    fontSize: 11,
+    fontWeight: "700" as const,
+    lineHeight: 16,
+    marginTop: 4,
+  },
+  credPrivacyBanner: {
+    flexDirection: "row" as const,
+    alignItems: "flex-start" as const,
+    gap: 8,
+    padding: 10,
+    borderRadius: 5,
+    backgroundColor: "rgba(234,88,12,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(234,88,12,0.22)",
+  },
+  credPrivacyBannerText: {
+    color: palette.ember,
+    fontSize: 10,
+    fontWeight: "700" as const,
+    flex: 1,
+    lineHeight: 15,
+  },
+  credFieldWrap: { gap: 5 },
+  credFieldLabel: {
+    color: palette.muted,
+    fontSize: 10,
+    fontWeight: "900" as const,
+    letterSpacing: 0.5,
+  },
+  credTextInput: {
+    color: palette.text,
+    fontSize: 13,
+    fontWeight: "700" as const,
+    backgroundColor: "rgba(3,6,11,0.55)",
+    borderWidth: 1,
+    borderColor: palette.line,
+    borderRadius: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  credTextArea: {
+    minHeight: 68,
+    textAlignVertical: "top" as const,
+  },
+  credTagsWrap: {
+    flexDirection: "row" as const,
+    flexWrap: "wrap" as const,
+    gap: 6,
+  },
+  credTagChip: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 5,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderWidth: 1,
+    borderColor: palette.line,
+    maxWidth: "48%" as const,
+  },
+  credTagChipActive: {
+    backgroundColor: "rgba(108,230,255,0.12)",
+    borderColor: palette.cyan,
+  },
+  credTagText: {
+    color: palette.muted,
+    fontSize: 11,
+    fontWeight: "800" as const,
+    flexShrink: 1,
+  },
+  credTagTextActive: {
+    color: palette.cyan,
+  },
+  credModalFooter: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: palette.line,
+    backgroundColor: "rgba(5,10,18,0.99)",
+    gap: 8,
+  },
+  credDeleteBtn: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    gap: 6,
+    minHeight: 36,
+    borderRadius: 5,
+    backgroundColor: "rgba(234,88,12,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(234,88,12,0.30)",
+  },
+  credDeleteBtnText: {
+    color: palette.ember,
+    fontSize: 11,
+    fontWeight: "900" as const,
+  },
+  credDeleteConfirm: {
+    gap: 8,
+  },
+  credDeleteConfirmText: {
+    color: palette.ember,
+    fontSize: 11,
+    fontWeight: "700" as const,
+  },
+  credDeleteConfirmBtns: {
+    flexDirection: "row" as const,
+    gap: 8,
+  },
+  credSaveBtn: {
+    minHeight: 46,
+    borderRadius: 5,
+    backgroundColor: palette.cyan,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+  },
+  credSaveBtnText: {
+    color: palette.void,
+    fontSize: 14,
+    fontWeight: "900" as const,
   },
 });

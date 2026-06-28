@@ -3,7 +3,7 @@ import { spendEdge, addSubscriptionEdge } from "@/services/edge";
 import type { UserProfile, SubscriptionTier } from "@/services/profile";
 import type { EagohRecord } from "@/services/eagohs";
 import { getTeamById } from "@/data/teams";
-import { getBulkHasCredentials } from "@/services/knowledgeCredentials";
+import { getBulkEagohHasCredentials } from "@/services/eagohCredentials";
 import { getBulkVerificationStatus } from "@/services/socialVerification";
 
 /** Looks up a domain specialization value from an EAGOH's dna array. */
@@ -404,6 +404,7 @@ export async function listActiveListings(
 
   // Enrich with fanatic teams, vendor stats, credentials, and verification in parallel
   const vendorIds = [...new Set(rows.map((r) => r.vendor_id))];
+  const eagohIds: string[] = [...new Set(rows.map((r) => r.eagoh_id))];
   const [enrichedCore, credentialsSet, verificationMap] = await Promise.all([
     Promise.all(
       rows.map(async (row) => {
@@ -438,7 +439,7 @@ export async function listActiveListings(
         };
       }),
     ),
-    getBulkHasCredentials(vendorIds),
+    getBulkEagohHasCredentials(eagohIds),
     getBulkVerificationStatus(vendorIds),
   ]);
 
@@ -446,7 +447,7 @@ export async function listActiveListings(
     const verif = verificationMap.get(item.vendor_id);
     return {
       ...item,
-      has_credentials: credentialsSet.has(item.vendor_id),
+      has_credentials: credentialsSet.has(item.eagoh_id),
       is_vendor_verified: verif?.isVerified ?? false,
       vendor_verified_platform: verif?.verifiedPlatform ?? null,
     };
@@ -593,6 +594,7 @@ export async function getMyListings(vendorId: string): Promise<EnrichedListing[]
   const rows: (MarketplaceListingRow & { eagoh: EagohRecord | null })[] = (data ?? []) as any;
 
   const vendorIds = [...new Set(rows.map((r) => r.vendor_id))];
+  const eagohIds: string[] = [...new Set(rows.map((r) => r.eagoh_id))];
   const [enrichedCore, credentialsSet, verificationMap] = await Promise.all([
     Promise.all(
       rows.map(async (row) => {
@@ -620,7 +622,7 @@ export async function getMyListings(vendorId: string): Promise<EnrichedListing[]
         };
       }),
     ),
-    getBulkHasCredentials(vendorIds),
+    getBulkEagohHasCredentials(eagohIds),
     getBulkVerificationStatus(vendorIds),
   ]);
 
@@ -628,7 +630,7 @@ export async function getMyListings(vendorId: string): Promise<EnrichedListing[]
     const verif = verificationMap.get(item.vendor_id);
     return {
       ...item,
-      has_credentials: credentialsSet.has(item.vendor_id),
+      has_credentials: credentialsSet.has(item.eagoh_id),
       is_vendor_verified: verif?.isVerified ?? false,
       vendor_verified_platform: verif?.verifiedPlatform ?? null,
     };
@@ -964,7 +966,7 @@ export async function getListingById(listingId: string): Promise<EnrichedListing
     .maybeSingle();
 
   const stats = await getVendorStats(row.vendor_id);
-  const credentialsSet = await getBulkHasCredentials([row.vendor_id]);
+  const credentialsSet = await getBulkEagohHasCredentials([row.eagoh_id]);
   const verificationMap = await getBulkVerificationStatus([row.vendor_id]);
   const verif = verificationMap.get(row.vendor_id);
 

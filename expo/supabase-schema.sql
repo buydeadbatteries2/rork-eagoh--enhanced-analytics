@@ -1078,3 +1078,59 @@ create policy "eagoh_renders_update_owner"
 create policy "eagoh_renders_delete_owner"
   on storage.objects for delete
   using (bucket_id = 'eagoh-renders' and auth.uid() = owner);
+
+-- =============================================================================
+-- EAGOH KNOWLEDGE CREDENTIALS (per-EAGOH public domain expertise)
+-- =============================================================================
+create table if not exists public.eagoh_knowledge_credentials (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
+  domain text not null,
+  public_title text,
+  domain_expertise text,
+  experience_summary text,
+  accolades text,
+  relevant_background text,
+  years_experience int,
+  credibility_tags jsonb default '[]'::jsonb,
+  is_public boolean default true,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique(eagoh_id)
+);
+
+create index if not exists ekc_eagoh_id_idx on public.eagoh_knowledge_credentials(eagoh_id);
+create index if not exists ekc_user_id_idx on public.eagoh_knowledge_credentials(user_id);
+create index if not exists ekc_domain_idx on public.eagoh_knowledge_credentials(domain);
+
+alter table public.eagoh_knowledge_credentials enable row level security;
+
+drop policy if exists "ekc_self_select" on public.eagoh_knowledge_credentials;
+drop policy if exists "ekc_self_insert" on public.eagoh_knowledge_credentials;
+drop policy if exists "ekc_self_update" on public.eagoh_knowledge_credentials;
+drop policy if exists "ekc_self_delete" on public.eagoh_knowledge_credentials;
+drop policy if exists "ekc_marketplace_select" on public.eagoh_knowledge_credentials;
+
+-- Owner can read/write their own credentials
+create policy "ekc_self_select" on public.eagoh_knowledge_credentials
+  for select using (auth.uid() = user_id);
+
+create policy "ekc_self_insert" on public.eagoh_knowledge_credentials
+  for insert with check (auth.uid() = user_id);
+
+create policy "ekc_self_update" on public.eagoh_knowledge_credentials
+  for update using (auth.uid() = user_id);
+
+create policy "ekc_self_delete" on public.eagoh_knowledge_credentials
+  for delete using (auth.uid() = user_id);
+
+-- Marketplace: anyone can read public credentials for active-listed EAGOHs
+create policy "ekc_marketplace_select" on public.eagoh_knowledge_credentials
+  for select using (
+    is_public = true and
+    exists (
+      select 1 from public.marketplace_listings ml
+      where ml.eagoh_id = eagoh_knowledge_credentials.eagoh_id and ml.active = true
+    )
+  );

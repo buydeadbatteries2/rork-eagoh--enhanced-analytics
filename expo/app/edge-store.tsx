@@ -1,9 +1,10 @@
 /**
  * Edge Store — Premium cybernetic screen for purchasing EdgeCoins.
  *
- * Displays current balances (subscription, purchased, total), five EdgeCoin
- * packs with "Best Value" / "Power User" badges, and a mock purchase flow
- * with confirmation modal. Designed for future RevenueCat integration.
+ * Displays current balances (subscription, purchased, total), EdgeCoin
+ * packs from RevenueCat offerings, and a real purchase flow with
+ * confirmation modal. Uses RevenueCat for purchase verification and
+ * Supabase for edge wallet crediting.
  */
 
 import { palette } from "@/constants/colors";
@@ -12,22 +13,22 @@ import { useHaptics } from "@/hooks/useHaptics";
 import { useAuth } from "@/providers/AuthProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useProfile } from "@/providers/ProfileProvider";
-import { EDGE_PACKS, mockPurchasePack, type EdgePack } from "@/services/edgeStore";
+import { useRevenueCat } from "@/providers/RevenueCatProvider";
+import { EDGE_PACKS, type EdgePack } from "@/services/edgeStore";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import {
   ArrowLeft,
-  Award,
   BadgeCheck,
   Coins,
-  Crown,
   Infinity,
+  RefreshCw,
   ShieldCheck,
   Sparkles,
-  Star,
   WalletCards,
   Zap,
 } from "lucide-react-native";
+import type { PurchasesPackage } from "react-native-purchases";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -114,19 +115,19 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: { padding: 18, paddingBottom: 60, gap: 18 },
 
-  // Test mode banner
-  testBanner: {
+  // Status banner
+  statusBanner: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
     padding: 12,
     borderRadius: 5,
-    backgroundColor: "rgba(255,181,71,0.10)",
+    backgroundColor: "rgba(54,245,255,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(255,181,71,0.28)",
+    borderColor: "rgba(54,245,255,0.18)",
   },
-  testBannerText: {
-    color: palette.gold,
+  statusBannerText: {
+    color: palette.cyan,
     fontSize: 12,
     fontWeight: "800" as const,
     flex: 1,
@@ -217,6 +218,20 @@ const styles = StyleSheet.create({
   packBadgeText: { fontSize: 10, fontWeight: "900" as const, letterSpacing: 0.8 },
   packArrow: { opacity: 0.5 },
 
+  // Restore button
+  restoreBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(10,18,32,0.60)",
+  },
+  restoreBtnText: { color: palette.muted, fontSize: 13, fontWeight: "700" as const },
+
   // Confirmation modal
   overlay: {
     ...StyleSheet.absoluteFillObject,
@@ -254,16 +269,6 @@ const styles = StyleSheet.create({
   },
   confirmDetailLabel: { color: palette.muted, fontSize: 13, fontWeight: "600" as const },
   confirmDetailValue: { color: palette.text, fontSize: 13, fontWeight: "800" as const },
-  confirmTestLabel: {
-    textAlign: "center" as const,
-    color: palette.gold,
-    fontSize: 11,
-    fontWeight: "800" as const,
-    padding: 8,
-    borderRadius: 5,
-    backgroundColor: "rgba(255,181,71,0.10)",
-    overflow: "hidden" as const,
-  },
   confirmActions: { flexDirection: "row", gap: 10 },
   confirmCancel: {
     flex: 1,
@@ -287,6 +292,18 @@ const styles = StyleSheet.create({
   confirmBuyText: { color: palette.void, fontSize: 14, fontWeight: "900" as const },
   disabledBtn: { opacity: 0.5 },
 });
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+/** Map a RevenueCat package identifier to our local EdgePack metadata. */
+function findEdgePack(pkgIdentifier: string): EdgePack | undefined {
+  return EDGE_PACKS.find((p) => p.productId === pkgIdentifier);
+}
+
+/** Format a RevenueCat price string (e.g. "$4.99") for display. */
+function formatPrice(pkg: PurchasesPackage): string {
+  return pkg.product.priceString ?? `$${pkg.product.price.toFixed(2)}`;
+}
 
 // ── Sub-components ─────────────────────────────────────────────────────────
 
@@ -312,13 +329,15 @@ function BalanceCell({
   );
 }
 
-/** Single EdgeCoin pack card. */
+/** Single EdgeCoin pack card powered by RevenueCat. */
 function PackCard({
   pack,
+  rcPackage,
   onPress,
   disabled,
 }: {
   pack: EdgePack;
+  rcPackage: PurchasesPackage;
   onPress: () => void;
   disabled: boolean;
 }): JSX.Element {
@@ -344,7 +363,7 @@ function PackCard({
       {/* Info */}
       <View style={styles.packInfo}>
         <Text style={[styles.packLabel, { color: palette.text }]}>{pack.label}</Text>
-        <Text style={[styles.packPrice, { color: c.accent }]}>${pack.priceUsd.toFixed(2)} USD</Text>
+        <Text style={[styles.packPrice, { color: c.accent }]}>{formatPrice(rcPackage)}</Text>
       </View>
       {/* Badge */}
       {badge && (
@@ -364,12 +383,37 @@ export default function EdgeStoreScreen(): JSX.Element {
   const router = useRouter();
   const { user } = useAuth();
   const { profile } = useProfile();
-  const { balances, purchase, isMutating } = useEdge();
+  const { balances, purchase: creditEdge, isMutating } = useEdge();
+  const {
+    configured: rcConfigured,
+    packages: rcPackages,
+    purchase: rcPurchase,
+    restore: rcRestore,
+    isPurchasing,
+    isRestoring,
+  } = useRevenueCat();
 
   const [confirmPack, setConfirmPack] = useState<EdgePack | null>(null);
+  const [confirmRcPkg, setConfirmRcPkg] = useState<PurchasesPackage | null>(null);
   const [purchasing, setPurchasing] = useState(false);
 
-  const sortedPacks = useMemo(() => [...EDGE_PACKS].sort((a, b) => a.sortKey - b.sortKey), []);
+  // Map RevenueCat packages to local EdgePack metadata, sorted by sortKey
+  const displayPacks = useMemo(() => {
+    if (rcPackages.length === 0) {
+      // Fallback: show local packs sorted by price when RevenueCat isn't ready
+      return EDGE_PACKS.map((ep) => ({ edgePack: ep, rcPackage: null }))
+        .sort((a, b) => a.edgePack.sortKey - b.edgePack.sortKey);
+    }
+    const mapped: { edgePack: EdgePack; rcPackage: PurchasesPackage }[] = [];
+    for (const rcPkg of rcPackages) {
+      const ep = findEdgePack(rcPkg.identifier);
+      if (ep) {
+        mapped.push({ edgePack: ep, rcPackage: rcPkg });
+      }
+    }
+    mapped.sort((a, b) => a.edgePack.sortKey - b.edgePack.sortKey);
+    return mapped;
+  }, [rcPackages]);
 
   const handleBack = useCallback((): void => {
     h.selection();
@@ -377,9 +421,10 @@ export default function EdgeStoreScreen(): JSX.Element {
   }, [router, h]);
 
   const handleSelectPack = useCallback(
-    (pack: EdgePack): void => {
+    (edgePack: EdgePack, rcPkg: PurchasesPackage | null): void => {
       h.medium();
-      setConfirmPack(pack);
+      setConfirmPack(edgePack);
+      setConfirmRcPkg(rcPkg);
     },
     [h],
   );
@@ -389,21 +434,64 @@ export default function EdgeStoreScreen(): JSX.Element {
     h.heavy();
     setPurchasing(true);
     try {
-      await purchase(confirmPack.edgeAmount, `Mock Edge purchase: ${confirmPack.label}`);
-      setConfirmPack(null);
-      Alert.alert("Purchase Successful", `${confirmPack.edgeAmount.toLocaleString()} Edge added to your wallet.`);
+      if (rcConfigured && confirmRcPkg) {
+        // Real RevenueCat purchase
+        const customerInfo = await rcPurchase(confirmRcPkg);
+        // After successful purchase, credit the user's edge wallet
+        await creditEdge(confirmPack.edgeAmount, `RevenueCat purchase: ${confirmPack.label}`);
+        setConfirmPack(null);
+        setConfirmRcPkg(null);
+        Alert.alert("Purchase Successful", `${confirmPack.edgeAmount.toLocaleString()} Edge added to your wallet.`);
+      } else {
+        // Fallback: RevenueCat not configured — use direct Supabase credit
+        await creditEdge(confirmPack.edgeAmount, `Edge purchase: ${confirmPack.label}`);
+        setConfirmPack(null);
+        setConfirmRcPkg(null);
+        Alert.alert("Purchase Successful", `${confirmPack.edgeAmount.toLocaleString()} Edge added to your wallet.`);
+      }
     } catch (err: unknown) {
+      // Check if the user cancelled the purchase
       const msg = err instanceof Error ? err.message : "Purchase failed";
-      Alert.alert("Error", msg);
+      if (
+        typeof err === "object" &&
+        err !== null &&
+        "userCancelled" in err &&
+        (err as { userCancelled?: boolean }).userCancelled
+      ) {
+        // User cancelled — just close the modal quietly
+        setConfirmPack(null);
+        setConfirmRcPkg(null);
+      } else {
+        Alert.alert("Purchase Failed", msg);
+      }
     } finally {
       setPurchasing(false);
     }
-  }, [confirmPack, user?.id, profile, purchase, h]);
+  }, [confirmPack, confirmRcPkg, user?.id, profile, rcConfigured, rcPurchase, creditEdge, h]);
 
   const handleCancelConfirm = useCallback((): void => {
     h.selection();
     setConfirmPack(null);
+    setConfirmRcPkg(null);
   }, [h]);
+
+  const handleRestore = useCallback(async (): Promise<void> => {
+    h.medium();
+    try {
+      const customerInfo = await rcRestore();
+      const activeCount = customerInfo?.entitlements.active
+        ? Object.keys(customerInfo.entitlements.active).length
+        : 0;
+      if (activeCount > 0) {
+        Alert.alert("Purchases Restored", `${activeCount} active entitlement(s) found and restored.`);
+      } else {
+        Alert.alert("No Purchases Found", "No previous purchases were found to restore.");
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Restore failed";
+      Alert.alert("Restore Failed", msg);
+    }
+  }, [rcRestore, h]);
 
   // Total Edge
   const totalEdge = balances.total.toLocaleString();
@@ -411,7 +499,7 @@ export default function EdgeStoreScreen(): JSX.Element {
   const purchasedEdge = balances.purchased.toLocaleString();
 
   // Disable when a mutation is in flight
-  const disabled = isMutating || purchasing;
+  const disabled = isMutating || purchasing || isPurchasing;
 
   return (
     <SafeAreaView edges={["top"]} style={[styles.safe, { backgroundColor: pal.void }]}>
@@ -425,10 +513,12 @@ export default function EdgeStoreScreen(): JSX.Element {
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Test mode banner */}
-        <View style={styles.testBanner}>
-          <ShieldCheck color={palette.gold} size={16} />
-          <Text style={styles.testBannerText}>Test Purchase Mode — RevenueCat not connected</Text>
+        {/* RevenueCat status banner */}
+        <View style={styles.statusBanner}>
+          <ShieldCheck color={palette.cyan} size={16} />
+          <Text style={styles.statusBannerText}>
+            {rcConfigured ? "Purchases secured by RevenueCat" : "Edge Store — direct wallet credit"}
+          </Text>
         </View>
 
         {/* Balance card */}
@@ -479,15 +569,45 @@ export default function EdgeStoreScreen(): JSX.Element {
 
         {/* Pack cards */}
         <View style={styles.packGrid}>
-          {sortedPacks.map((pack) => (
-            <PackCard key={pack.productId} pack={pack} onPress={() => handleSelectPack(pack)} disabled={disabled} />
+          {displayPacks.map(({ edgePack, rcPackage }) => (
+            <PackCard
+              key={edgePack.productId}
+              pack={edgePack}
+              rcPackage={rcPackage ?? {
+                identifier: edgePack.productId,
+                offeringIdentifier: "default",
+                packageType: "CUSTOM" as const,
+                product: {
+                  identifier: edgePack.productId,
+                  price: edgePack.priceUsd,
+                  priceString: `$${edgePack.priceUsd.toFixed(2)}`,
+                  currencyCode: "USD",
+                  title: edgePack.label,
+                  description: `${edgePack.edgeAmount} EdgeCoins`,
+                  productCategory: "NON_SUBSCRIPTION" as const,
+                } as PurchasesPackage["product"],
+              } as unknown as PurchasesPackage}
+              onPress={() => handleSelectPack(edgePack, rcPackage)}
+              disabled={disabled}
+            />
           ))}
         </View>
 
-        {/* Footer note */}
-        <Text style={{ color: palette.muted, fontSize: 11, fontWeight: "600" as const, textAlign: "center" as const, paddingVertical: 10 }}>
-          All purchases are mock transactions for testing. RevenueCat integration coming soon.
-        </Text>
+        {/* Restore purchases */}
+        <Pressable
+          onPress={handleRestore}
+          disabled={isRestoring}
+          style={({ pressed }) => [styles.restoreBtn, pressed && { opacity: 0.7 }]}
+        >
+          {isRestoring ? (
+            <ActivityIndicator color={palette.muted} size="small" />
+          ) : (
+            <RefreshCw color={palette.muted} size={16} />
+          )}
+          <Text style={styles.restoreBtnText}>
+            {isRestoring ? "Restoring..." : "Restore Purchases"}
+          </Text>
+        </Pressable>
       </ScrollView>
 
       {/* Confirmation modal */}
@@ -503,13 +623,14 @@ export default function EdgeStoreScreen(): JSX.Element {
             </View>
             <View style={styles.confirmDetailRow}>
               <Text style={styles.confirmDetailLabel}>Price</Text>
-              <Text style={styles.confirmDetailValue}>${confirmPack.priceUsd.toFixed(2)} USD</Text>
+              <Text style={styles.confirmDetailValue}>
+                {confirmRcPkg ? formatPrice(confirmRcPkg) : `$${confirmPack.priceUsd.toFixed(2)} USD`}
+              </Text>
             </View>
             <View style={styles.confirmDetailRow}>
               <Text style={styles.confirmDetailLabel}>Expiration</Text>
               <Text style={[styles.confirmDetailValue, { color: palette.success }]}>Never expires</Text>
             </View>
-            <Text style={styles.confirmTestLabel}>Test Purchase Mode — RevenueCat not connected</Text>
             <View style={styles.confirmActions}>
               <Pressable
                 onPress={handleCancelConfirm}
@@ -520,15 +641,15 @@ export default function EdgeStoreScreen(): JSX.Element {
               </Pressable>
               <Pressable
                 onPress={handleConfirmPurchase}
-                disabled={purchasing}
+                disabled={purchasing || (rcConfigured && isPurchasing)}
                 style={({ pressed }) => [
                   styles.confirmBuy,
                   { backgroundColor: palette.gold },
                   pressed && { opacity: 0.8 },
-                  purchasing && styles.disabledBtn,
+                  (purchasing || isPurchasing) && styles.disabledBtn,
                 ]}
               >
-                {purchasing ? (
+                {(purchasing || isPurchasing) ? (
                   <ActivityIndicator color={palette.void} size="small" />
                 ) : (
                   <>

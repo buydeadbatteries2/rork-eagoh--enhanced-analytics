@@ -1481,13 +1481,52 @@ export default function SettingsScreen(): JSX.Element {
       if (result.canceled || !result.assets?.[0]) return;
       const asset = result.assets[0];
 
-      // ── Format validation ──────────────────────────────────────────
-      const ext = (asset.uri.split(".").pop()?.split("?")[0] ?? "jpg").toLowerCase();
-      const allowedFormats = ["jpg", "jpeg", "png"];
-      if (!allowedFormats.includes(ext)) {
+      // ── Dev log: asset diagnostics ──────────────────────────────────
+      if (__DEV__) {
+        console.log("[settings] upload asset", {
+          fileName: asset.fileName ?? "(none)",
+          mimeType: asset.mimeType ?? "(none)",
+          type: asset.type ?? "(none)",
+          uri: asset.uri,
+        });
+      }
+
+      // ── Format validation (mimeType-first, NOT filename) ────────────
+      const acceptedMimes = ["image/jpeg", "image/jpg", "image/png", "image/webp"] as const;
+      const mimeType = (asset.mimeType ?? "").toLowerCase();
+
+      // HEIC is not natively uploadable — show a clear message if encountered
+      const isHeic = mimeType === "image/heic" || mimeType === "image/heif";
+      if (isHeic) {
         Alert.alert(
           "Unsupported Format",
-          `Please select a PNG or JPG image. "${ext.toUpperCase()}" files are not supported.`,
+          "This image format is not currently supported. Please choose a different photo.",
+        );
+        return;
+      }
+
+      // Determine a safe extension and content-type from mimeType
+      let ext: string;
+      let contentType: string;
+      if (mimeType && acceptedMimes.includes(mimeType as typeof acceptedMimes[number])) {
+        // Extract extension from mimeType (e.g. "image/png" → "png")
+        ext = mimeType.split("/")[1] === "jpeg" || mimeType.split("/")[1] === "jpg" ? "jpg" : mimeType.split("/")[1];
+        contentType = mimeType;
+      } else if (asset.type === "image") {
+        // mimeType missing on iOS — fall back to uri extension
+        const uriExt = (asset.uri.split(".").pop()?.split("?")[0] ?? "").toLowerCase();
+        if (["jpg", "jpeg", "png", "webp"].includes(uriExt)) {
+          ext = uriExt === "jpeg" ? "jpg" : uriExt;
+          contentType = `image/${uriExt === "jpg" ? "jpeg" : uriExt}`;
+        } else {
+          // asset.type says "image" but no recognizable extension — assume jpeg
+          ext = "jpg";
+          contentType = "image/jpeg";
+        }
+      } else {
+        Alert.alert(
+          "Unsupported Format",
+          `Please select a PNG, JPG, or WebP image.`,
         );
         return;
       }
@@ -1521,7 +1560,7 @@ export default function SettingsScreen(): JSX.Element {
 
       const { error: uploadError } = await supabase.storage
         .from("user-profile-media")
-        .upload(fileName, blob, { upsert: true, contentType: `image/${ext === "png" ? "png" : "jpeg"}` });
+        .upload(fileName, blob, { upsert: true, contentType });
       if (uploadError) {
         console.warn("[settings] upload failed", uploadError.message);
         Alert.alert("Upload Failed", "Could not upload image. The service may be temporarily unavailable. Please try again.");

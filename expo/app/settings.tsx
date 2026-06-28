@@ -47,6 +47,7 @@ import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -92,7 +93,7 @@ type SectionRow =
   | { kind: "link"; label: string; icon: React.ReactNode; onPress: () => void }
   | { kind: "adminOverride"; tier: string; expiresAt: string | null; note: string | null }
   | { kind: "custom"; render: () => React.ReactNode }
-  | { kind: "imageUpload"; label: string; currentUrl: string | null; icon: React.ReactNode; onPress: () => void; uploading: boolean };
+  | { kind: "imageUpload"; label: string; currentUrl: string | null; icon: React.ReactNode; onPress: () => void; uploading: boolean; helperText?: string; infoTitle?: string; infoBody?: string };
 
 type SettingsSection = {
   id: string;
@@ -109,41 +110,112 @@ const ImageUploadRow = memo(function ImageUploadRow({
   icon,
   onPress,
   uploading,
+  helperText,
+  infoTitle,
+  infoBody,
   s,
   pal,
 }: Extract<SectionRow, { kind: "imageUpload" }> & { s: ReturnType<typeof createStyles>; pal: P }): JSX.Element {
+  const [showInfo, setShowInfo] = useState(false);
+
   return (
-    <View style={s.row}>
-      <View style={s.rowIcon}>{icon}</View>
-      <View style={s.rowContent}>
-        <Text style={s.rowLabel}>{label}</Text>
-        <View style={{ flexDirection: "row" as const, alignItems: "center" as const, gap: 10, marginTop: 8 }}>
-          {currentUrl ? (
-            <View style={{ width: 48, height: 48, borderRadius: 5, backgroundColor: pal.graphite, overflow: "hidden" as const, borderWidth: 1, borderColor: pal.line }}>
-              <ExpoImage source={{ uri: currentUrl }} style={{ width: "100%", height: "100%" }} />
-            </View>
-          ) : (
-            <View style={{ width: 48, height: 48, borderRadius: 5, backgroundColor: pal.blueSoft, alignItems: "center" as const, justifyContent: "center" as const, borderWidth: 1, borderColor: pal.line }}>
-              <Camera color={pal.muted} size={22} />
-            </View>
-          )}
-          <Pressable
-            onPress={onPress}
-            disabled={uploading}
-            style={({ pressed }) => [
-              s.saveBtn,
-              pressed && { opacity: 0.7 },
-            ]}
-          >
-            {uploading ? (
-              <ActivityIndicator color={pal.text} size="small" />
+    <>
+      <View style={s.row}>
+        <View style={s.rowIcon}>{icon}</View>
+        <View style={s.rowContent}>
+          <View style={{ flexDirection: "row" as const, alignItems: "center" as const, gap: 6 }}>
+            <Text style={s.rowLabel}>{label}</Text>
+            {infoTitle || infoBody ? (
+              <Pressable
+                onPress={() => setShowInfo(true)}
+                hitSlop={8}
+                style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1 }]}
+              >
+                <Info color={pal.cyan} size={14} />
+              </Pressable>
+            ) : null}
+          </View>
+          {helperText ? (
+            <Text style={s.rowHint}>{helperText}</Text>
+          ) : null}
+          <View style={{ flexDirection: "row" as const, alignItems: "center" as const, gap: 10, marginTop: 8 }}>
+            {currentUrl ? (
+              <View style={{ width: 48, height: 48, borderRadius: 5, backgroundColor: pal.graphite, overflow: "hidden" as const, borderWidth: 1, borderColor: pal.line }}>
+                <ExpoImage source={{ uri: currentUrl }} style={{ width: "100%", height: "100%" }} />
+              </View>
             ) : (
-              <Text style={s.saveBtnText}>{currentUrl ? "Change" : "Upload"}</Text>
+              <View style={{ width: 48, height: 48, borderRadius: 5, backgroundColor: pal.blueSoft, alignItems: "center" as const, justifyContent: "center" as const, borderWidth: 1, borderColor: pal.line }}>
+                <Camera color={pal.muted} size={22} />
+              </View>
             )}
-          </Pressable>
+            <Pressable
+              onPress={onPress}
+              disabled={uploading}
+              style={({ pressed }) => [
+                s.saveBtn,
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              {uploading ? (
+                <ActivityIndicator color={pal.text} size="small" />
+              ) : (
+                <Text style={s.saveBtnText}>{currentUrl ? "Change" : "Upload"}</Text>
+              )}
+            </Pressable>
+          </View>
         </View>
       </View>
-    </View>
+
+      <Modal
+        visible={showInfo}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowInfo(false)}
+      >
+        <Pressable
+          onPress={() => setShowInfo(false)}
+          style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "center", alignItems: "center", padding: 24 }}
+        >
+          <Pressable onPress={(e) => e.stopPropagation()}>
+            <View style={{
+              backgroundColor: pal.panel,
+              borderRadius: 5,
+              borderWidth: 1,
+              borderColor: pal.line,
+              padding: 18,
+              maxWidth: 320,
+              width: "100%" as const,
+              gap: 12,
+            }}>
+              <View style={{ flexDirection: "row" as const, alignItems: "center" as const, gap: 8 }}>
+                <Info color={pal.cyan} size={18} />
+                <Text style={{ color: pal.text, fontSize: 15, fontWeight: "900" as const, flex: 1 }}>
+                  {infoTitle ?? label}
+                </Text>
+                <Pressable
+                  onPress={() => setShowInfo(false)}
+                  hitSlop={8}
+                  style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1 }]}
+                >
+                  <X color={pal.muted} size={18} />
+                </Pressable>
+              </View>
+              {infoBody ? (
+                <Text style={{ color: pal.muted, fontSize: 13, fontWeight: "600" as const, lineHeight: 20 }}>
+                  {infoBody}
+                </Text>
+              ) : null}
+              <Pressable
+                onPress={() => setShowInfo(false)}
+                style={({ pressed }) => [s.saveBtn, { alignSelf: "flex-end" as const }, pressed && { opacity: 0.7 }]}
+              >
+                <Text style={s.saveBtnText}>Got it</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
   );
 });
 
@@ -1407,18 +1479,52 @@ export default function SettingsScreen(): JSX.Element {
         quality: 0.8,
       });
       if (result.canceled || !result.assets?.[0]) return;
-      setUploading(true);
       const asset = result.assets[0];
-      const ext = asset.uri.split(".").pop()?.split("?")[0] ?? "jpg";
+
+      // ── Format validation ──────────────────────────────────────────
+      const ext = (asset.uri.split(".").pop()?.split("?")[0] ?? "jpg").toLowerCase();
+      const allowedFormats = ["jpg", "jpeg", "png"];
+      if (!allowedFormats.includes(ext)) {
+        Alert.alert(
+          "Unsupported Format",
+          `Please select a PNG or JPG image. "${ext.toUpperCase()}" files are not supported.`,
+        );
+        return;
+      }
+
+      // ── File size validation ───────────────────────────────────────
+      const maxBytes = type === "avatar" ? 3 * 1024 * 1024 : 5 * 1024 * 1024;
+      const maxLabel = type === "avatar" ? "3 MB" : "5 MB";
+      if (asset.fileSize && asset.fileSize > maxBytes) {
+        const fileSizeMB = (asset.fileSize / (1024 * 1024)).toFixed(1);
+        Alert.alert(
+          "File Too Large",
+          `This image is ${fileSizeMB} MB. ${type === "avatar" ? "Profile images" : "Banners"} must be under ${maxLabel}. Please select a smaller image or resize it before uploading.`,
+        );
+        return;
+      }
+
+      setUploading(true);
       const fileName = `${user.id}/${type}_${Date.now()}.${ext}`;
       const response = await fetch(asset.uri);
       const blob = await response.blob();
+
+      // ── Double-check blob size (belt-and-suspenders) ────────────────
+      if (blob.size > maxBytes) {
+        const blobSizeMB = (blob.size / (1024 * 1024)).toFixed(1);
+        Alert.alert(
+          "File Too Large",
+          `This image is ${blobSizeMB} MB after processing. ${type === "avatar" ? "Profile images" : "Banners"} must be under ${maxLabel}. Please select a smaller image.`,
+        );
+        return;
+      }
+
       const { error: uploadError } = await supabase.storage
         .from("user-profile-media")
         .upload(fileName, blob, { upsert: true, contentType: `image/${ext === "png" ? "png" : "jpeg"}` });
       if (uploadError) {
         console.warn("[settings] upload failed", uploadError.message);
-        Alert.alert("Upload Failed", uploadError.message);
+        Alert.alert("Upload Failed", "Could not upload image. The service may be temporarily unavailable. Please try again.");
         return;
       }
       const { data: urlData } = supabase.storage.from("user-profile-media").getPublicUrl(fileName);
@@ -1430,7 +1536,7 @@ export default function SettingsScreen(): JSX.Element {
       }
     } catch (err: unknown) {
       console.warn(`[settings] ${type} upload error`, err);
-      Alert.alert("Upload Failed", "Could not upload image. Please try again.");
+      Alert.alert("Upload Failed", "Could not upload image. Please check your connection and try again.");
     } finally {
       setUploading(false);
     }
@@ -1499,6 +1605,9 @@ export default function SettingsScreen(): JSX.Element {
             icon: <User color={pal.muted} size={18} />,
             onPress: handleAvatarUpload,
             uploading: uploadingAvatar,
+            helperText: "Recommended: 800 × 800 px. PNG or JPG. Max 3 MB.",
+            infoTitle: "Profile Image Tips",
+            infoBody: "Recommended size: 800 × 800 px.\nUse a square image for best results.",
           },
           {
             kind: "imageUpload" as const,
@@ -1507,6 +1616,9 @@ export default function SettingsScreen(): JSX.Element {
             icon: <ImageIcon color={pal.muted} size={18} />,
             onPress: handleBannerUpload,
             uploading: uploadingBanner,
+            helperText: "Recommended: 1500 × 500 px (3:1 ratio). PNG or JPG. Max 5 MB.",
+            infoTitle: "Banner Tips",
+            infoBody: "Recommended size: 1500 × 500 px.\nImages may be cropped on smaller devices.\nKeep important content centered.",
           },
         ],
       },

@@ -12,7 +12,7 @@ import { useWindowDimensions } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useHaptics } from "@/hooks/useHaptics";
 import { useRouter } from "expo-router";
-import { Award, BrainCircuit, Coins, Cpu, Crown, Flame, FlaskConical, Layers3, LogOut, Swords, Sparkles, Shield, Ticket, Trophy, TrendingUp, Wrench, Zap } from "lucide-react-native";
+import { Award, BrainCircuit, Coins, Cpu, Crown, Flame, FlaskConical, Layers3, LogOut, Swords, Sparkles, Shield, Ticket, Trophy, TrendingUp, Zap } from "lucide-react-native";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -31,11 +31,10 @@ import {
 import { getUserRankings, type LeaderboardEntry } from "@/services/leaderboards";
 
 type LabTone = "cyan" | "gold" | "violet" | "ember" | "success";
-type ProfileSection = { id: string; kind: "hero" | "stats" | "identity" | "testMode" | "settings" };
+type ProfileSection = { id: string; kind: "hero" | "stats" | "identity" | "settings" };
 type Stat = { label: string; value: string; detail: string; tone: LabTone };
 
 const sections: ProfileSection[] = [
-  ...(__DEV__ ? [{ id: "testMode", kind: "testMode" as const }] : []),
   { id: "hero", kind: "hero" },
   { id: "stats", kind: "stats" },
   { id: "identity", kind: "identity" },
@@ -160,7 +159,7 @@ export default function ProfileScreen(): JSX.Element {
   const h = useHaptics();
   const { user, signOut, signOutState } = useAuth();
   const { eagohs } = useEagohs();
-  const { profile, setTestTier, effectiveSubscriptionTier, isAdminOverrideActive } = useProfile();
+  const { profile, effectiveSubscriptionTier, isAdminOverrideActive } = useProfile();
   const { palette: pal } = useAppTheme();
   const router = useRouter();
   const handleSignOut = useCallback((): void => {
@@ -236,10 +235,6 @@ export default function ProfileScreen(): JSX.Element {
   }, [reputation]);
 
   const currentTier = effectiveSubscriptionTier;
-  const handleSetTestTier = useCallback((tier: SubscriptionTier): void => {
-    h.medium();
-    setTestTier(tier).catch((err: unknown) => console.warn("[testMode] setTestTier failed", err));
-  }, [setTestTier, h]);
 
   const handleSettingsPress = useCallback((): void => {
     h.selection();
@@ -474,52 +469,8 @@ export default function ProfileScreen(): JSX.Element {
         </View>
       );
     }
-    if (item.kind === "testMode") {
-      const tiers: { tier: SubscriptionTier; label: string; edge: number; tone: LabTone }[] = [
-        { tier: "free", label: "Free", edge: 0, tone: "cyan" },
-        { tier: "pro", label: "Pro", edge: 600, tone: "cyan" },
-        { tier: "oracle_elite", label: "Oracle Elite", edge: 1400, tone: "gold" },
-        { tier: "syndicate", label: "Syndicate", edge: 3700, tone: "violet" },
-      ];
-      return (
-        <View style={styles.testPanel}>
-          <LinearGradient colors={["rgba(255,107,53,0.14)", "rgba(10,18,30,0.90)", "rgba(3,6,11,0.98)"]} style={StyleSheet.absoluteFill} />
-          <View style={styles.testBanner}>
-            <Wrench color={palette.gold} size={16} />
-            <Text style={styles.testBannerText}>Subscription Test Mode</Text>
-          </View>
-          <Text style={styles.testHint}>Dev-Only Test Mode</Text>
-          <View style={styles.testButtonGrid}>
-            {tiers.map((t) => {
-              const isActive = currentTier === t.tier;
-              const accent = toneColor(t.tone);
-              const handlePress = (): void => handleSetTestTier(t.tier);
-              return (
-                <Pressable
-                  key={t.tier}
-                  onPress={handlePress}
-                  style={({ pressed }) => [
-                    styles.testButton,
-                    { borderColor: isActive ? accent : palette.line },
-                    isActive && { backgroundColor: `${accent}18` },
-                    pressed && { opacity: 0.8 },
-                  ]}
-                >
-                  <Text style={[styles.testButtonLabel, { color: accent }]}>{t.label}</Text>
-                  <Text style={styles.testButtonEdge}>{t.edge} Neurons</Text>
-                  {isActive && <View style={[styles.testActiveDot, { backgroundColor: accent }]} />}
-                </Pressable>
-              );
-            })}
-          </View>
-          <Text style={styles.testCurrentLabel}>
-            Current: <Text style={{ fontWeight: "900", color: palette.text }}>{currentTier.replace("_", " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}</Text>
-          </Text>
-        </View>
-      );
-    }
     return <></>;
-  }, [handleSignOut, reputationStats, reputation, currentTier, handleSetTestTier, handleSettingsPress, isAdminOverrideActive, eagohs, displayAlias, aggregatedDna, aggregatedTeams, aggregatedDomains, userRankings, signOutState]);
+  }, [handleSignOut, reputationStats, reputation, currentTier, handleSettingsPress, isAdminOverrideActive, eagohs, displayAlias, aggregatedDna, aggregatedTeams, aggregatedDomains, userRankings, signOutState]);
 
   return (
     <View style={[styles.root, { backgroundColor: pal.void }]}>
@@ -630,15 +581,5 @@ const styles = StyleSheet.create({
   rankChangeRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8, paddingVertical: 6 },
   rankChangeText: { color: palette.text, fontSize: 12, fontWeight: "700" as const, flex: 1 },
   rankChangeDate: { color: palette.muted, fontSize: 10 },
-  // Subscription Test Mode
-  testPanel: { borderRadius: 5, padding: 14, backgroundColor: "rgba(10,18,30,0.88)", borderWidth: 1, borderColor: "rgba(255,77,109,0.28)", gap: 12, overflow: "hidden" as const },
-  testBanner: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
-  testBannerText: { color: palette.gold, fontSize: 14, fontWeight: "900" as const, letterSpacing: 1 },
-  testHint: { color: palette.ember, fontSize: 10, fontWeight: "800" as const, letterSpacing: 1.2, textTransform: "uppercase" as const },
-  testButtonGrid: { flexDirection: "row" as const, gap: 8 },
-  testButton: { flex: 1, paddingVertical: 13, paddingHorizontal: 6, borderRadius: 5, borderWidth: 1, alignItems: "center" as const, gap: 6, backgroundColor: "rgba(16,27,42,0.62)", minHeight: 88, position: "relative" as const },
-  testButtonLabel: { fontSize: 11, fontWeight: "900" as const, letterSpacing: 0.8, textTransform: "uppercase" as const },
-  testButtonEdge: { color: palette.muted, fontSize: 10, fontWeight: "800" as const },
-  testActiveDot: { position: "absolute" as const, top: 6, right: 6, width: 8, height: 8, borderRadius: 4 },
-  testCurrentLabel: { color: palette.muted, fontSize: 11, fontWeight: "800" as const, marginTop: 2 },
+
 });

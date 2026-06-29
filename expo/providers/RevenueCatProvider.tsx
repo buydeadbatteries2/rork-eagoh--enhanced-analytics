@@ -318,7 +318,6 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
       neuronPackCount: allNeuronPackages.length,
       activeSubscriptions,
       derivedTier: revenueCatTier,
-      testModeEnabled: process.env.EXPO_PUBLIC_ENABLE_SUBSCRIPTION_TEST_MODE === "true",
       mockPurchasesEnabled: process.env.EXPO_PUBLIC_ENABLE_MOCK_NEURON_PURCHASES === "true",
     };
   }, [

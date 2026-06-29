@@ -10,7 +10,6 @@ import {
   setSelectedEagohs as setSelectedEagohsService,
   setSelectedLabs as setSelectedLabsService,
   setSubscriptionTier as setSubscriptionTierService,
-  setTestTier as setTestTierService,
   updateProfile as updateProfileService,
   type ProfilePreferences,
   type ProfileUpdate,
@@ -71,14 +70,6 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     mutationFn: (tier: SubscriptionTier): Promise<UserProfile> => {
       if (!userId) throw new Error("Not signed in");
       return setSubscriptionTierService(userId, tier);
-    },
-    onSuccess: (next) => queryClient.setQueryData(profileKey(userId), next),
-  });
-
-  const setTestTierMutation = useMutation({
-    mutationFn: (tier: SubscriptionTier): Promise<UserProfile> => {
-      if (!userId) throw new Error("Not signed in");
-      return setTestTierService(userId, tier);
     },
     onSuccess: (next) => queryClient.setQueryData(profileKey(userId), next),
   });
@@ -157,7 +148,6 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
 
     updateProfile: (patch: ProfileUpdate) => updateMutation.mutateAsync(patch),
     setSubscriptionTier: (tier: SubscriptionTier) => setTierMutation.mutateAsync(tier),
-    setTestTier: (tier: SubscriptionTier) => setTestTierMutation.mutateAsync(tier),
     setSelectedLabs: (labs: string[]) => setLabsMutation.mutateAsync(labs),
     setSelectedEagohs: (eagohs: string[]) => setEagohsMutation.mutateAsync(eagohs),
     setPreferences: (preferences: ProfilePreferences) => setPreferencesMutation.mutateAsync(preferences),

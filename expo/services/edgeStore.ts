@@ -1,5 +1,5 @@
 /**
- * Edge Store service — EdgeCoin pack definitions and mock purchase logic.
+ * Edge Store service — Neuron pack definitions and mock purchase logic.
  *
  * Future: replace `mockPurchasePack` with RevenueCat purchase handlers.
  * Product IDs and pack definitions are structured so the UI can be reused
@@ -24,11 +24,11 @@ export const EDGE_PRODUCT_IDS = [
 ] as const;
 export type EdgeProductId = (typeof EDGE_PRODUCT_IDS)[number];
 
-/** An EdgeCoin pack definition shown in the store UI. */
+/** A Neuron pack definition shown in the store UI. */
 export type EdgePack = {
   /** RevenueCat product ID (placeholder for future). */
   productId: EdgeProductId;
-  /** EdgeCoins awarded on purchase. */
+  /** Neurons awarded on purchase. */
   edgeAmount: number;
   /** USD price displayed in the UI. */
   priceUsd: number;
@@ -40,7 +40,7 @@ export type EdgePack = {
   sortKey: number;
 };
 
-/** All EdgeCoin packs — single source of truth. */
+/** All Neuron packs — single source of truth. */
 export const EDGE_PACKS: EdgePack[] = [
   {
     productId: "edge_250",

@@ -1,7 +1,7 @@
 /**
- * Edge Store — Premium cybernetic screen for purchasing EdgeCoins.
+ * Edge Store — Premium cybernetic screen for purchasing Neurons.
  *
- * Displays current balances (subscription, purchased, total), EdgeCoin
+ * Displays current balances (subscription, purchased, total), Neuron
  * packs from RevenueCat offerings, and a real purchase flow with
  * confirmation modal. Uses RevenueCat for purchase verification and
  * Supabase for edge wallet crediting.
@@ -329,7 +329,7 @@ function BalanceCell({
   );
 }
 
-/** Single EdgeCoin pack card powered by RevenueCat. */
+/** Single Neuron pack card powered by RevenueCat. */
 function PackCard({
   pack,
   rcPackage,
@@ -564,7 +564,7 @@ export default function EdgeStoreScreen(): JSX.Element {
         {/* Pack header */}
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <Coins color={palette.gold} size={18} />
-          <Text style={{ color: palette.text, fontSize: 16, fontWeight: "900" as const }}>EdgeCoin Packs</Text>
+          <Text style={{ color: palette.text, fontSize: 16, fontWeight: "900" as const }}>Neuron Packs</Text>
         </View>
 
         {/* Pack cards */}

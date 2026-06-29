@@ -230,6 +230,62 @@ const styles = StyleSheet.create({
   successText: { color: palette.success, fontSize: 13, fontWeight: "800" as const, flex: 1 },
 });
 
+// ── Sub-component: Preview Tier Card (Expo Go / preview) ──────────────────
+
+function PreviewTierCard({ tier }: { tier: Exclude<SubscriptionTier, "free"> }): JSX.Element {
+  const c = TIER_ACCENTS[tier];
+  const label = TIER_LABELS[tier];
+  const allocation = TIER_MONTHLY_ALLOCATION[tier];
+  const maxEagohs = TIER_MAX_EAGOHS[tier];
+  const benefits = TIER_BENEFITS[tier];
+
+  return (
+    <View style={[styles.tierCard, { borderColor: c.border }]}>
+      <LinearGradient colors={c.gradient} style={styles.tierGradient} />
+      <View style={styles.tierBody}>
+        <View style={styles.tierHeader}>
+          <View style={styles.tierNameRow}>
+            <Crown color={c.accent} size={20} />
+            <Text style={[styles.tierName, { color: c.accent }]}>{label}</Text>
+          </View>
+          <Text style={[styles.tierPrice, { color: palette.muted }]}>Preview</Text>
+        </View>
+        <View style={styles.tierDivider} />
+        <View style={styles.tierAllocations}>
+          <View style={[styles.tierAllocationChip, { backgroundColor: c.soft, borderColor: c.border }]}>
+            <Zap color={c.accent} size={13} />
+            <View>
+              <Text style={[styles.tierAllocationLabel, { color: palette.muted }]}>NEURONS/MO</Text>
+              <Text style={[styles.tierAllocationValue, { color: c.accent }]}>{allocation.toLocaleString()}</Text>
+            </View>
+          </View>
+          <View style={[styles.tierAllocationChip, { backgroundColor: c.soft, borderColor: c.border }]}>
+            <BrainCircuit color={c.accent} size={13} />
+            <View>
+              <Text style={[styles.tierAllocationLabel, { color: palette.muted }]}>MAX EAGOHS</Text>
+              <Text style={[styles.tierAllocationValue, { color: c.accent }]}>{maxEagohs}</Text>
+            </View>
+          </View>
+        </View>
+        <View style={styles.tierBenefits}>
+          {benefits.map((benefit) => (
+            <View key={benefit} style={styles.tierBenefitRow}>
+              <Star color={c.accent} size={12} />
+              <Text style={styles.tierBenefitText}>{benefit}</Text>
+            </View>
+          ))}
+        </View>
+        <Pressable
+          disabled
+          style={[styles.subscribeBtn, { backgroundColor: "rgba(255,255,255,0.03)", borderColor: palette.line }]}
+        >
+          <Text style={[styles.subscribeBtnText, { color: palette.muted }]}>Available in TestFlight</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 // ── Sub-component: Tier Card ───────────────────────────────────────────────
 
 function TierCard({
@@ -374,6 +430,8 @@ export default function SubscriptionScreen(): JSX.Element {
     isRestoring,
     revenueCatTier,
     refreshAll,
+    runtimeMode,
+    canRealPurchase,
   } = useRevenueCat();
 
   const [purchasingTier, setPurchasingTier] = useState<SubscriptionTier | null>(null);
@@ -499,9 +557,10 @@ export default function SubscriptionScreen(): JSX.Element {
     );
   }
 
-  // ── Not configured — configuration error ───────────────────────────────
+  // ── Not configured — show preview cards in Expo Go / preview; error otherwise ─
 
   if (!rcConfigured) {
+    const isPreview = runtimeMode === "expo-go-disabled" || runtimeMode === "web-disabled";
     return (
       <SafeAreaView edges={["top"]} style={styles.safe}>
         <View style={styles.header}>
@@ -510,17 +569,44 @@ export default function SubscriptionScreen(): JSX.Element {
           </Pressable>
           <Text style={styles.headerTitle}>Subscription</Text>
         </View>
-        <View style={styles.statusCenter}>
-          <Coins color={palette.muted} size={40} />
-          <Text style={styles.statusTitle}>App Store Unavailable</Text>
-          <Text style={styles.statusSubtitle}>
-            Subscriptions require the iOS App Store. This feature is not available in the current build environment.
-          </Text>
-          <Pressable onPress={handleRetry} style={({ pressed }) => [styles.retryBtn, pressed && { opacity: 0.7 }]}>
-            <RefreshCw color={palette.cyan} size={16} />
-            <Text style={styles.retryBtnText}>Retry</Text>
-          </Pressable>
-        </View>
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          {/* Hero card */}
+          <View style={styles.heroCard}>
+            <LinearGradient colors={["rgba(255,184,77,0.10)", "rgba(10,18,30,0.84)", "rgba(3,6,11,0.96)"]} style={styles.heroGradient} />
+            <View style={styles.heroBody}>
+              <View style={styles.heroIconWrap}>
+                <Crown color={palette.gold} size={28} />
+              </View>
+              <Text style={styles.heroTitle}>Choose Your Plan</Text>
+              <Text style={styles.heroSubtitle}>
+                {isPreview
+                  ? "Store purchases require a development build or TestFlight. Previewing subscription tiers below."
+                  : "Unlock the full power of EAGOH intelligence. All plans include a monthly Neuron allocation, EAGOH slots, and exclusive features."}
+              </Text>
+            </View>
+          </View>
+
+          {/* Preview tier cards (disabled) */}
+          {isPreview ? (
+            <>
+              <PreviewTierCard tier="pro" />
+              <PreviewTierCard tier="oracle_elite" />
+              <PreviewTierCard tier="syndicate" />
+            </>
+          ) : (
+            <View style={styles.statusCenter}>
+              <Coins color={palette.muted} size={40} />
+              <Text style={styles.statusTitle}>App Store Unavailable</Text>
+              <Text style={styles.statusSubtitle}>
+                Subscriptions require the iOS App Store. This feature is not available in the current build environment.
+              </Text>
+              <Pressable onPress={handleRetry} style={({ pressed }) => [styles.retryBtn, pressed && { opacity: 0.7 }]}>
+                <RefreshCw color={palette.cyan} size={16} />
+                <Text style={styles.retryBtnText}>Retry</Text>
+              </Pressable>
+            </View>
+          )}
+        </ScrollView>
       </SafeAreaView>
     );
   }

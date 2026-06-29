@@ -4,24 +4,29 @@
  * Exposes offerings, customer info, active entitlements, purchase/restore
  * functions, and a login/logout bridge for cross-device purchase sync.
  *
+ * RevenueCat is configured lazily in a useEffect — NOT at module import time.
+ * This avoids crashing Expo Go (which lacks native StoreKit).
+ *
  * Automatically calls Purchases.logIn / logOut when the auth user changes.
  * Registers a CustomerInfoUpdateListener to keep state in sync.
- *
- * The underlying Purchases SDK is configured at module level in
- * services/revenuecat.ts when this provider is first imported.
  */
 
 import createContextHook from "@nkzw/create-context-hook";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Platform } from "react-native";
 import { useAuth } from "@/providers/AuthProvider";
 import {
   addCustomerInfoListener,
+  configureRevenueCat,
   getCustomerInfo,
   getNeuronPackagesFromAllOfferings,
   getOfferings,
+  getRevenueCatConfigError,
   getRevenueCatKeyMode,
+  getRevenueCatRuntimeMode,
   getRevenueCatSubscriptionTier,
+  isExpoGoRuntime,
   isRevenueCatConfigured,
   logInRevenueCat,
   logOutRevenueCat,
@@ -29,6 +34,7 @@ import {
   purchasePackage,
   restorePurchases,
   type RevenueCatKeyMode,
+  type RevenueCatRuntimeMode,
 } from "@/services/revenuecat";
 import type { SubscriptionTier } from "@/services/tiers";
 import { TIER_MONTHLY_ALLOCATION } from "@/services/tiers";
@@ -49,11 +55,56 @@ const customerInfoKey = ["revenuecat", "customerInfo"] as const;
 export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const configured = isRevenueCatConfigured();
-  const keyMode: RevenueCatKeyMode = getRevenueCatKeyMode();
+
+  // ── Lazy configuration state ────────────────────────────────────────────
+  const [rcState, setRcState] = useState<{
+    configured: boolean;
+    runtimeMode: RevenueCatRuntimeMode;
+    keyMode: RevenueCatKeyMode;
+    configError: string | null;
+    initialized: boolean;
+  }>({
+    configured: isRevenueCatConfigured(),
+    runtimeMode: getRevenueCatRuntimeMode(),
+    keyMode: getRevenueCatKeyMode(),
+    configError: getRevenueCatConfigError(),
+    initialized: false,
+  });
+
+  const { configured, runtimeMode, keyMode, configError } = rcState;
+
+  // Safe guards for whether RevenueCat operations can proceed
+  const isAvailable = configured;
+  const canRealPurchase = configured && runtimeMode !== "test-store" && runtimeMode !== "unconfigured";
 
   // Track previous user ID to detect login/logout transitions
   const prevUserId = useRef<string | null>(null);
+
+  // ── Lazy configure on mount ─────────────────────────────────────────
+
+  useEffect(() => {
+    if (rcState.initialized) return;
+
+    console.log("[RevenueCat] ── Diagnostics ──");
+    console.log("[RevenueCat] Platform:", Platform.OS);
+    console.log("[RevenueCat] Expo Go:", isExpoGoRuntime());
+    console.log("[RevenueCat] Test Store enabled:", process.env.EXPO_PUBLIC_REVENUECAT_USE_TEST_STORE === "true");
+
+    const result = configureRevenueCat();
+    console.log("[RevenueCat] Runtime mode:", result.runtimeMode);
+    console.log("[RevenueCat] Configured:", result.configured);
+    if (result.error) {
+      console.log("[RevenueCat] Config error:", result.error);
+    }
+
+    setRcState({
+      configured: result.configured,
+      runtimeMode: result.runtimeMode,
+      keyMode: result.keyMode,
+      configError: result.error,
+      initialized: true,
+    });
+  }, [rcState.initialized]);
 
   // ── Offerings ────────────────────────────────────────────────────────
 
@@ -139,9 +190,10 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
 
   const syncTier = useCallback(
     (tier: SubscriptionTier): void => {
+      if (!configured) return;
       syncTierMutation.mutate(tier);
     },
-    [syncTierMutation],
+    [syncTierMutation, configured],
   );
 
   // ── CustomerInfoUpdateListener ───────────────────────────────────────
@@ -220,9 +272,12 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
       transactionIdentifier: string;
       productIdentifier: string;
     }> => {
+      if (!configured) {
+        throw new Error("RevenueCat is not configured. Purchases are not available in this build.");
+      }
       return purchaseMutation.mutateAsync(pkg);
     },
-    [purchaseMutation],
+    [purchaseMutation, configured],
   );
 
   // ── Restore ──────────────────────────────────────────────────────────
@@ -237,29 +292,39 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
   });
 
   const restore = useCallback((): Promise<CustomerInfo> => {
+    if (!configured) {
+      throw new Error("RevenueCat is not configured. Restore is not available in this build.");
+    }
     return restoreMutation.mutateAsync();
-  }, [restoreMutation]);
+  }, [restoreMutation, configured]);
 
   // ── Login / Logout (manual — also done automatically via effect) ────
 
   const logIn = useCallback(
-    (uid: string): Promise<CustomerInfo> =>
-      logInRevenueCat(uid).then((info) => {
+    (uid: string): Promise<CustomerInfo> => {
+      if (!configured) {
+        console.warn("[RevenueCat] logIn skipped — RC not configured");
+        return Promise.resolve(null as unknown as CustomerInfo);
+      }
+      return logInRevenueCat(uid).then((info) => {
         queryClient.setQueryData(customerInfoKey, info);
         const tier = getRevenueCatSubscriptionTier(info);
         syncTier(tier);
         return info;
-      }),
-    [queryClient, syncTier],
+      });
+    },
+    [queryClient, syncTier, configured],
   );
 
-  const logOut = useCallback((): Promise<CustomerInfo> =>
-    logOutRevenueCat().then((info) => {
+  const logOut = useCallback((): Promise<CustomerInfo> => {
+    if (!configured) {
+      return Promise.resolve(null as unknown as CustomerInfo);
+    }
+    return logOutRevenueCat().then((info) => {
       queryClient.setQueryData(customerInfoKey, info);
       return info;
-    }),
-    [queryClient],
-  );
+    });
+  }, [queryClient, configured]);
 
   // ── Derived state ───────────────────────────────────────────────────
 
@@ -299,9 +364,12 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
   const diagnostics = useMemo(() => {
     if (!__DEV__) return null;
     return {
-      platform: require("react-native").Platform.OS,
+      platform: Platform.OS,
+      expoGoDetected: isExpoGoRuntime(),
+      runtimeMode,
       configured,
       keyMode,
+      configError,
       rcUserId: customerInfo?.originalAppUserId ?? null,
       supabaseUserId: user?.id ?? null,
       rcMatchesSupabase: customerInfo?.originalAppUserId === user?.id,
@@ -319,10 +387,14 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
       activeSubscriptions,
       derivedTier: revenueCatTier,
       mockPurchasesEnabled: process.env.EXPO_PUBLIC_ENABLE_MOCK_NEURON_PURCHASES === "true",
+      canRealPurchase,
+      isAvailable,
     };
   }, [
+    runtimeMode,
     configured,
     keyMode,
+    configError,
     customerInfo,
     user?.id,
     currentOffering,
@@ -331,6 +403,8 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
     allNeuronPackages,
     activeSubscriptions,
     revenueCatTier,
+    canRealPurchase,
+    isAvailable,
   ]);
 
   if (__DEV__ && diagnostics) {
@@ -342,6 +416,14 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
     configured,
     /** The active key mode for diagnostics. */
     keyMode,
+    /** The resolved runtime mode. */
+    runtimeMode,
+    /** Whether RevenueCat is available for operations (configured + not errored). */
+    isAvailable,
+    /** Whether real (native App Store / Play Store) purchases are available. */
+    canRealPurchase,
+    /** Configuration error message, if any. */
+    configError,
     /** The current offering with its packages. */
     currentOffering,
     /** All available offerings. */

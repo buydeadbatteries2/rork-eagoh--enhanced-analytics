@@ -415,6 +415,8 @@ export default function EdgeStoreScreen(): JSX.Element {
     isPurchasing,
     isRestoring,
     diagnostics,
+    runtimeMode,
+    canRealPurchase,
   } = useRevenueCat();
 
   const [confirmPack, setConfirmPack] = useState<EdgePack | null>(null);
@@ -626,7 +628,14 @@ export default function EdgeStoreScreen(): JSX.Element {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* RevenueCat / Test Mode status banner */}
         <View style={styles.statusBanner}>
-          {usingFallbackPacks ? (
+          {runtimeMode === "expo-go-disabled" || runtimeMode === "web-disabled" ? (
+            <>
+              <WifiOff color={palette.muted} size={16} />
+              <Text style={[styles.statusBannerText, { color: palette.muted }]}>
+                Store purchases require a development build or TestFlight.
+              </Text>
+            </>
+          ) : usingFallbackPacks ? (
             <>
               <AlertTriangle color={palette.gold} size={16} />
               <Text style={[styles.statusBannerText, { color: palette.gold }]}>
@@ -711,7 +720,7 @@ export default function EdgeStoreScreen(): JSX.Element {
                   } as PurchasesPackage["product"],
                 } as unknown as PurchasesPackage}
                 onPress={() => handleSelectPack(edgePack, rcPackage)}
-                disabled={disabled}
+                disabled={disabled || !canRealPurchase}
               />
             ))}
           </View>
@@ -740,7 +749,7 @@ export default function EdgeStoreScreen(): JSX.Element {
       </ScrollView>
 
       {/* Confirmation modal */}
-      {confirmPack && (
+      {confirmPack && canRealPurchase && (
         <View style={styles.overlay}>
           <Pressable style={StyleSheet.absoluteFill} onPress={handleCancelConfirm} />
           <View style={styles.confirmCard}>

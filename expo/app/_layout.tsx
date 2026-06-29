@@ -11,8 +11,6 @@ import { EagohProvider } from "@/providers/EagohProvider";
 import { EdgeProvider } from "@/providers/EdgeProvider";
 import { ForgeProvider } from "@/providers/ForgeProvider";
 import { RevenueCatProvider } from "@/providers/RevenueCatProvider";
-// Import triggers module-level Purchases.configure() in services/revenuecat.ts
-import "@/services/revenuecat";
 import { palette } from "@/constants/colors";
 
 SplashScreen.preventAutoHideAsync();
@@ -94,15 +92,15 @@ export default function RootLayout(): JSX.Element {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <ProfileProvider>
-          <EdgeProvider>
           <RevenueCatProvider>
-          <EagohProvider>
-          <ForgeProvider>
-            <ThemedRoot />
-          </ForgeProvider>
-          </EagohProvider>
+            <EdgeProvider>
+              <EagohProvider>
+                <ForgeProvider>
+                  <ThemedRoot />
+                </ForgeProvider>
+              </EagohProvider>
+            </EdgeProvider>
           </RevenueCatProvider>
-          </EdgeProvider>
         </ProfileProvider>
       </AuthProvider>
     </QueryClientProvider>

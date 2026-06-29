@@ -1,18 +1,19 @@
 /**
- * RevenueCat service — module-level Purchases configuration and helpers.
+ * RevenueCat service — lazy Purchases configuration and helpers.
  *
- * Configured at the top level so it runs once when the module is first imported.
- * The React Query provider in providers/RevenueCatProvider.tsx wraps the async
- * fetches for offerings and customer info.
+ * No Purchases.configure() runs at module import — RevenueCatProvider calls
+ * configureRevenueCat() in a useEffect guarded by runtime detection.
+ * This avoids crashing Expo Go (which lacks native StoreKit).
  *
  * Key selection rules:
- *  - iOS native builds → EXPO_PUBLIC_REVENUECAT_IOS_API_KEY
- *  - Android native builds → EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY
+ *  - iOS native builds (not Expo Go) → EXPO_PUBLIC_REVENUECAT_IOS_API_KEY
+ *  - Android native builds (not Expo Go) → EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY
  *  - Test store only when EXPO_PUBLIC_REVENUECAT_USE_TEST_STORE === "true"
- *  - Web / unknown platform → no key (test-store fallback if flag is set)
+ *  - Expo Go, Rork preview, or Web → skip configuration (graceful preview mode)
  */
 
 import { Platform } from "react-native";
+import Constants from "expo-constants";
 import Purchases, {
   type CustomerInfo,
   type PurchasesOffering,
@@ -21,78 +22,195 @@ import Purchases, {
 import type { SubscriptionTier } from "@/services/tiers";
 import { SUBSCRIPTION_PRODUCT_IDS } from "@/services/tiers";
 
-// ── API Key selection ──────────────────────────────────────────────────────
+// ── Runtime detection ───────────────────────────────────────────────────────
+
+/** The overarching runtime category for RevenueCat behaviour. */
+export type RevenueCatRuntimeMode =
+  | "ios-store"
+  | "android-store"
+  | "test-store"
+  | "expo-go-disabled"
+  | "web-disabled"
+  | "unconfigured";
 
 export type RevenueCatKeyMode = "ios" | "android" | "test-store" | "unavailable";
 
-/** Pick the correct RevenueCat API key based on the runtime environment. */
-function getRevenueCatApiKey(): { apiKey: string; mode: RevenueCatKeyMode } {
-  const useTestStore = process.env.EXPO_PUBLIC_REVENUECAT_USE_TEST_STORE === "true";
+/** True when running inside Expo Go (or Rork's Expo Go-based preview). */
+export function isExpoGoRuntime(): boolean {
+  try {
+    // executionEnvironment is "storeClient" inside Expo Go
+    const env = (Constants as { executionEnvironment?: string }).executionEnvironment;
+    return env === "storeClient";
+  } catch {
+    return false;
+  }
+}
 
-  if (useTestStore) {
+/** True when running on a native build that has the App Store / Play Store environment. */
+export function isNativeStoreRuntime(): boolean {
+  if (Platform.OS === "web") return false;
+  return !isExpoGoRuntime();
+}
+
+/** True when the RevenueCat Test Store is explicitly enabled via env flag. */
+export function isRevenueCatTestStoreEnabled(): boolean {
+  return process.env.EXPO_PUBLIC_REVENUECAT_USE_TEST_STORE === "true";
+}
+
+// ── Configuration state (set by configureRevenueCat) ────────────────────────
+
+let _apiKey = "";
+let _keyMode: RevenueCatKeyMode = "unavailable";
+let _runtimeMode: RevenueCatRuntimeMode = "unconfigured";
+let _configured = false;
+let _configurationError: string | null = null;
+
+/** Pick the correct RevenueCat API key and runtime mode based on the current environment. */
+function resolveRevenueCatConfig(): {
+  apiKey: string;
+  keyMode: RevenueCatKeyMode;
+  runtimeMode: RevenueCatRuntimeMode;
+} {
+  // Web — never use native RevenueCat
+  if (Platform.OS === "web") {
+    if (isRevenueCatTestStoreEnabled()) {
+      const testKey = process.env.EXPO_PUBLIC_REVENUECAT_TEST_API_KEY ?? "";
+      if (testKey) {
+        if (__DEV__) console.log("[RevenueCat] key mode: test-store (web, test store enabled)");
+        return { apiKey: testKey, keyMode: "test-store", runtimeMode: "test-store" };
+      }
+    }
+    if (__DEV__) console.log("[RevenueCat] web — RevenueCat disabled");
+    return { apiKey: "", keyMode: "unavailable", runtimeMode: "web-disabled" };
+  }
+
+  const expoGo = isExpoGoRuntime();
+
+  // Test Store explicitly enabled — allowed in any environment including Expo Go
+  if (isRevenueCatTestStoreEnabled()) {
     const testKey = process.env.EXPO_PUBLIC_REVENUECAT_TEST_API_KEY ?? "";
     if (testKey) {
       if (__DEV__) {
-        console.log("[RevenueCat] key mode: test-store (EXPO_PUBLIC_REVENUECAT_USE_TEST_STORE=true)");
+        console.log("[RevenueCat] key mode: test-store (env flag)");
       }
-      return { apiKey: testKey, mode: "test-store" };
+      return { apiKey: testKey, keyMode: "test-store", runtimeMode: "test-store" };
     }
+    if (__DEV__) {
+      console.warn("[RevenueCat] Test Store flag set but no test API key — disabled");
+    }
+    return { apiKey: "", keyMode: "unavailable", runtimeMode: "unconfigured" };
   }
 
-  // Native platforms — use their production/sandbox keys
+  // Expo Go / Rork preview — cannot use native StoreKit
+  if (expoGo) {
+    if (__DEV__) {
+      console.warn("[RevenueCat] Expo Go detected — native purchases unavailable, preview mode only");
+    }
+    return { apiKey: "", keyMode: "unavailable", runtimeMode: "expo-go-disabled" };
+  }
+
+  // iOS native build (custom dev build or TestFlight)
   if (Platform.OS === "ios") {
     const iosKey = process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY ?? "";
     if (iosKey) {
-      if (__DEV__) {
-        console.log("[RevenueCat] key mode: ios");
-      }
-      return { apiKey: iosKey, mode: "ios" };
+      if (__DEV__) console.log("[RevenueCat] key mode: ios (native build)");
+      return { apiKey: iosKey, keyMode: "ios", runtimeMode: "ios-store" };
     }
+    if (__DEV__) console.warn("[RevenueCat] iOS native build but no iOS API key — unconfigured");
+    return { apiKey: "", keyMode: "unavailable", runtimeMode: "unconfigured" };
   }
 
+  // Android native build
   if (Platform.OS === "android") {
     const androidKey = process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY ?? "";
     if (androidKey) {
-      if (__DEV__) {
-        console.log("[RevenueCat] key mode: android");
-      }
-      return { apiKey: androidKey, mode: "android" };
+      if (__DEV__) console.log("[RevenueCat] key mode: android (native build)");
+      return { apiKey: androidKey, keyMode: "android", runtimeMode: "android-store" };
     }
+    if (__DEV__) console.warn("[RevenueCat] Android native build but no Android API key — unconfigured");
+    return { apiKey: "", keyMode: "unavailable", runtimeMode: "unconfigured" };
   }
 
-  // Fallback to test key only on web or when no platform key is set
-  const testKey = process.env.EXPO_PUBLIC_REVENUECAT_TEST_API_KEY ?? "";
-  if (testKey) {
-    if (__DEV__) {
-      console.log("[RevenueCat] key mode: test-store (fallback — no platform key set)");
-    }
-    return { apiKey: testKey, mode: "test-store" };
-  }
-
-  console.warn("[RevenueCat] No API key configured — RevenueCat disabled");
-  return { apiKey: "", mode: "unavailable" };
+  // Unknown platform
+  if (__DEV__) console.warn("[RevenueCat] Unknown platform — RevenueCat disabled");
+  return { apiKey: "", keyMode: "unavailable", runtimeMode: "unconfigured" };
 }
 
-// ── Configure at module level ──────────────────────────────────────────────
-
-const { apiKey, mode: keyMode } = getRevenueCatApiKey();
-
-if (apiKey) {
-  Purchases.configure({ apiKey });
-  if (__DEV__) {
-    console.log("[RevenueCat] Purchases.configure() called with key mode:", keyMode);
-    console.log("[RevenueCat] Runtime platform:", Platform.OS);
-    console.log("[RevenueCat] Configured:", !!apiKey);
+/**
+ * Configure the RevenueCat Purchases SDK.
+ *
+ * MUST be called once, lazily (e.g. from a useEffect), NOT at module import time.
+ * Returns the resolved runtime mode and configuration status.
+ */
+export function configureRevenueCat(): {
+  runtimeMode: RevenueCatRuntimeMode;
+  keyMode: RevenueCatKeyMode;
+  configured: boolean;
+  error: string | null;
+} {
+  // Only configure once
+  if (_configured || _configurationError) {
+    return {
+      runtimeMode: _runtimeMode,
+      keyMode: _keyMode,
+      configured: _configured,
+      error: _configurationError,
+    };
   }
-} else {
-  console.warn("[RevenueCat] Purchases NOT configured — no valid API key");
+
+  const config = resolveRevenueCatConfig();
+  _runtimeMode = config.runtimeMode;
+  _keyMode = config.keyMode;
+  _apiKey = config.apiKey;
+
+  if (!config.apiKey) {
+    _configured = false;
+    if (__DEV__) {
+      console.log("[RevenueCat] Not configured — runtime mode:", config.runtimeMode);
+    }
+    return { runtimeMode: config.runtimeMode, keyMode: config.keyMode, configured: false, error: null };
+  }
+
+  try {
+    Purchases.configure({ apiKey: config.apiKey });
+    _configured = true;
+    if (__DEV__) {
+      console.log("[RevenueCat] Purchases.configure() succeeded — key mode:", config.keyMode, "| runtime:", config.runtimeMode);
+    }
+    return { runtimeMode: config.runtimeMode, keyMode: config.keyMode, configured: true, error: null };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    _configured = false;
+    _configurationError = msg;
+    // Use console.warn for expected unsupported-runtime conditions
+    if (config.runtimeMode === "expo-go-disabled" || config.runtimeMode === "web-disabled") {
+      console.warn("[RevenueCat] Configuration skipped — unsupported runtime:", config.runtimeMode);
+    } else {
+      console.warn("[RevenueCat] Configuration failed:", msg);
+    }
+    return { runtimeMode: config.runtimeMode, keyMode: config.keyMode, configured: false, error: msg };
+  }
 }
 
 /** Whether RevenueCat has been configured with a valid API key. */
-export const isRevenueCatConfigured = (): boolean => !!apiKey;
+export function isRevenueCatConfigured(): boolean {
+  return _configured;
+}
 
 /** The active key mode for diagnostics. */
-export const getRevenueCatKeyMode = (): RevenueCatKeyMode => keyMode;
+export function getRevenueCatKeyMode(): RevenueCatKeyMode {
+  return _keyMode;
+}
+
+/** The resolved runtime mode for diagnostics. */
+export function getRevenueCatRuntimeMode(): RevenueCatRuntimeMode {
+  return _runtimeMode;
+}
+
+/** The configuration error message, if any. */
+export function getRevenueCatConfigError(): string | null {
+  return _configurationError;
+}
 
 // ── Tier derivation from CustomerInfo ──────────────────────────────────────
 
@@ -159,7 +277,7 @@ export async function getOfferings(): Promise<{
   offering: PurchasesOffering | null;
   allOfferings: PurchasesOffering[];
 }> {
-  if (!apiKey) return { offering: null, allOfferings: [] };
+  if (!_configured) return { offering: null, allOfferings: [] };
 
   const offerings = await Purchases.getOfferings();
 
@@ -273,7 +391,7 @@ export async function getCustomerInfo(): Promise<CustomerInfo> {
 
 /** Log the current user into RevenueCat for cross-device purchase sync. */
 export async function logInRevenueCat(userId: string): Promise<CustomerInfo> {
-  if (!apiKey) {
+  if (!_configured) {
     if (__DEV__) {
       console.log("[RevenueCat] logIn skipped — RC not configured");
     }
@@ -288,7 +406,7 @@ export async function logInRevenueCat(userId: string): Promise<CustomerInfo> {
 
 /** Log out the current RevenueCat user. */
 export async function logOutRevenueCat(): Promise<CustomerInfo> {
-  if (!apiKey) {
+  if (!_configured) {
     return Purchases.getCustomerInfo();
   }
   if (__DEV__) {

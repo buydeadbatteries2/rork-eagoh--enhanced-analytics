@@ -11,8 +11,10 @@ import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   ActivityIndicator,
+  Animated,
   BackHandler,
   Dimensions,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -35,7 +37,8 @@ import {
   X,
   Zap,
 } from "lucide-react-native";
-import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   getPublicProfile,
   getPublicSocialAccounts,
@@ -92,6 +95,10 @@ async function getPublicVendorStats(userId: string): Promise<{
 
 const { height: SCREEN_HEIGHT } = Dimensions.get("window");
 
+// ── Swipe dismiss threshold ───────────────────────────────────────────
+const DISMISS_THRESHOLD = 130;
+const DISMISS_VELOCITY_THRESHOLD = 0.55;
+
 const styles = StyleSheet.create({
   overlay: {
     position: "absolute",
@@ -99,12 +106,19 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(3,6,11,0.88)",
-    justifyContent: "flex-end",
     zIndex: 9999,
     elevation: 9999,
   },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(3,6,11,0.88)",
+    zIndex: 1,
+  },
   sheet: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
     height: SCREEN_HEIGHT * 0.92,
     borderTopLeftRadius: 5,
     borderTopRightRadius: 5,
@@ -113,15 +127,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(54,245,255,0.14)",
     borderBottomWidth: 0,
+    zIndex: 2,
+    elevation: 2,
+  },
+  handleArea: {
+    alignItems: "center" as const,
+    paddingTop: 10,
+    paddingBottom: 4,
   },
   handle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
+    width: 40,
+    height: 5,
+    borderRadius: 3,
     backgroundColor: palette.line,
-    alignSelf: "center" as const,
-    marginTop: 10,
-    marginBottom: 6,
   },
   header: {
     flexDirection: "row" as const,
@@ -131,7 +149,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: palette.line,
-    backgroundColor: "rgba(10,20,38,0.92)",
+    backgroundColor: "rgba(10,20,38,0.95)",
+    zIndex: 100,
+    elevation: 100,
   },
   headerTitle: {
     color: palette.text,
@@ -140,8 +160,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   closeBtn: {
-    width: 32,
-    height: 32,
+    width: 44,
+    height: 44,
     borderRadius: 5,
     alignItems: "center" as const,
     justifyContent: "center" as const,
@@ -655,6 +675,67 @@ export default function PublicProfileModal({
     ? repRankColor(vendorStats.rank as Parameters<typeof repRankColor>[0])
     : palette.muted;
 
+  // ── Safe area insets ──────────────────────────────────────────────
+  const insets = useSafeAreaInsets();
+
+  // ── Swipe-down dismissal ──────────────────────────────────────────
+  const translateY = useRef(new Animated.Value(0)).current;
+  const isDismissing = useRef(false);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_evt, gestureState) => {
+        // Only capture downward vertical gestures that are clearly vertical
+        return gestureState.dy > 8 && Math.abs(gestureState.dx) < Math.abs(gestureState.dy) * 0.5;
+      },
+      onPanResponderGrant: () => {
+        isDismissing.current = false;
+      },
+      onPanResponderMove: (_evt, gestureState) => {
+        if (gestureState.dy > 0) {
+          translateY.setValue(gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (_evt, gestureState) => {
+        if (gestureState.dy > DISMISS_THRESHOLD || gestureState.vy > DISMISS_VELOCITY_THRESHOLD) {
+          isDismissing.current = true;
+          Animated.timing(translateY, {
+            toValue: SCREEN_HEIGHT,
+            duration: 220,
+            useNativeDriver: true,
+          }).start(() => {
+            translateY.setValue(0);
+            isDismissing.current = false;
+            onClose();
+          });
+        } else {
+          Animated.spring(translateY, {
+            toValue: 0,
+            useNativeDriver: true,
+            bounciness: 4,
+            speed: 14,
+          }).start();
+        }
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(translateY, {
+          toValue: 0,
+          useNativeDriver: true,
+          bounciness: 4,
+          speed: 14,
+        }).start();
+      },
+    }),
+  ).current;
+
+  // Reset translateY when modal opens/closes
+  useEffect(() => {
+    if (visible) {
+      translateY.setValue(0);
+    }
+  }, [visible, translateY]);
+
   // ── Android back button ────────────────────────────────────────────
   useEffect(() => {
     if (!visible) return;
@@ -665,53 +746,89 @@ export default function PublicProfileModal({
     return () => sub.remove();
   }, [visible, onClose]);
 
+  // ── Close handler (for X button and backdrop) ──────────────────────
+  const handleCloseWithAnimation = useCallback(() => {
+    if (isDismissing.current) return;
+    isDismissing.current = true;
+    Animated.timing(translateY, {
+      toValue: SCREEN_HEIGHT,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => {
+      translateY.setValue(0);
+      isDismissing.current = false;
+      onClose();
+    });
+  }, [translateY, onClose]);
+
   if (!visible) return <></>;
 
   return (
     <View style={styles.overlay}>
-      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      {/* Backdrop — zIndex 1, absolutely positioned. Receives taps outside the sheet. */}
+      <Pressable
+        style={styles.backdrop}
+        onPress={handleCloseWithAnimation}
+      />
 
-        <View style={styles.sheet}>
-          <View style={styles.handle} />
-
-          {/* Header */}
-          <View style={styles.header}>
-            <Text style={styles.headerTitle}>
-              {error ? "Profile Unavailable" : "Public Profile"}
-            </Text>
-            <Pressable
-              onPress={onClose}
-              style={({ pressed }) => [styles.closeBtn, pressed && { opacity: 0.7 }]}
-              accessibilityLabel="Close public profile"
-            >
-              <X color={palette.muted} size={18} />
-            </Pressable>
+      {/* Sheet — zIndex 2 (above backdrop). Absolutely positioned at bottom. */}
+      <Animated.View
+        style={[
+          styles.sheet,
+          { transform: [{ translateY }] },
+        ]}
+      >
+        {/* Drag handle + dismiss area */}
+        <View {...panResponder.panHandlers}>
+          <View style={styles.handleArea}>
+            <View style={styles.handle} />
           </View>
+        </View>
 
-          {/* Content */}
-          {loading ? (
-            <View style={styles.centerWrap}>
-              <ActivityIndicator color={palette.cyan} size="large" />
+        {/* Fixed header — z-elevated above content, never overlapped by ScrollView */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>
+            {error ? "Profile Unavailable" : "Public Profile"}
+          </Text>
+          <Pressable
+            onPress={handleCloseWithAnimation}
+            style={({ pressed }) => [
+              styles.closeBtn,
+              pressed && { opacity: 0.7, backgroundColor: "rgba(54,245,255,0.1)" },
+            ]}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            accessibilityRole="button"
+            accessibilityLabel="Close public profile"
+          >
+            <X color={palette.muted} size={22} />
+          </Pressable>
+        </View>
+
+        {/* Content */}
+        {loading ? (
+          <View style={styles.centerWrap}>
+            <ActivityIndicator color={palette.cyan} size="large" />
+          </View>
+        ) : error ? (
+          <View style={styles.centerWrap}>
+            <Shield color={palette.ember} size={36} />
+            <Text style={styles.errorText}>{error}</Text>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <Pressable onPress={handleRetry} style={styles.retryBtn}>
+                <Text style={styles.retryBtnText}>Retry</Text>
+              </Pressable>
+              <Pressable onPress={handleCloseWithAnimation} style={[styles.retryBtn, { borderColor: palette.line, backgroundColor: "transparent" }]}>
+                <Text style={[styles.retryBtnText, { color: palette.muted }]}>Close</Text>
+              </Pressable>
             </View>
-          ) : error ? (
-            <View style={styles.centerWrap}>
-              <Shield color={palette.ember} size={36} />
-              <Text style={styles.errorText}>{error}</Text>
-              <View style={{ flexDirection: "row", gap: 10 }}>
-                <Pressable onPress={handleRetry} style={styles.retryBtn}>
-                  <Text style={styles.retryBtnText}>Retry</Text>
-                </Pressable>
-                <Pressable onPress={onClose} style={[styles.retryBtn, { borderColor: palette.line, backgroundColor: "transparent" }]}>
-                  <Text style={[styles.retryBtnText, { color: palette.muted }]}>Close</Text>
-                </Pressable>
-              </View>
-            </View>
-          ) : profile ? (
-            <ScrollView
-              style={styles.scroll}
-              contentContainerStyle={styles.scrollContent}
-              showsVerticalScrollIndicator={false}
-            >
+          </View>
+        ) : profile ? (
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
               {/* Banner */}
               <View style={styles.banner}>
                 {profile.bannerUrl ? (
@@ -968,7 +1085,7 @@ export default function PublicProfileModal({
               </View>
             </ScrollView>
           ) : null}
-        </View>
+      </Animated.View>
     </View>
   );
 }

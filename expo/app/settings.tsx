@@ -62,6 +62,7 @@ import {
   type UserVerificationStatus,
 } from "@/services/socialVerification";
 import * as ImagePicker from "expo-image-picker";
+import { File as ExpoFile } from "expo-file-system";
 import { supabase } from "@/lib/supabase";
 
 type P = typeof palette;
@@ -1100,6 +1101,7 @@ export default function SettingsScreen(): JSX.Element {
         allowsEditing: true,
         aspect: type === "avatar" ? [1, 1] : [3, 1],
         quality: 0.8,
+        base64: true,
       });
       if (result.canceled || !result.assets?.[0]) return;
       const asset = result.assets[0];
@@ -1167,37 +1169,86 @@ export default function SettingsScreen(): JSX.Element {
       }
 
       setUploading(true);
-      const fileName = `${user.id}/${type}_${Date.now()}.${ext}`;
-      const response = await fetch(asset.uri);
-      const blob = await response.blob();
 
-      // ── Double-check blob size (belt-and-suspenders) ────────────────
-      if (blob.size > maxBytes) {
-        const blobSizeMB = (blob.size / (1024 * 1024)).toFixed(1);
+      // ── Read file bytes via expo-file-system File API ──────────────
+      // Uses native file reading that works with file://, ph://, content:// URIs
+      let fileBytes: ArrayBuffer;
+      try {
+        const expoFile = new ExpoFile(asset.uri);
+        fileBytes = await expoFile.arrayBuffer();
+      } catch (_fsError) {
+        // Fallback: use ImagePicker's built-in base64 when File API unavailable
+        if (asset.base64) {
+          const binaryString = atob(asset.base64);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          fileBytes = bytes.buffer;
+        } else {
+          Alert.alert("Upload Failed", "Unable to read selected image on this device.");
+          return;
+        }
+      }
+
+      // ── Dev log: file diagnostics ──────────────────────────────────
+      if (__DEV__) {
+        console.log("[settings] upload file", {
+          byteLength: fileBytes.byteLength,
+          maxBytes,
+          contentType,
+          uri: asset.uri,
+          mimeType: asset.mimeType ?? "(none)",
+        });
+      }
+
+      // ── Double-check byte size ─────────────────────────────────────
+      if (fileBytes.byteLength > maxBytes) {
+        const sizeMB = (fileBytes.byteLength / (1024 * 1024)).toFixed(1);
         Alert.alert(
           "File Too Large",
-          `This image is ${blobSizeMB} MB after processing. ${type === "avatar" ? "Profile images" : "Banners"} must be under ${maxLabel}. Please select a smaller image.`,
+          `This image is ${sizeMB} MB after processing. ${type === "avatar" ? "Profile images" : "Banners"} must be under ${maxLabel}. Please select a smaller image.`,
         );
         return;
       }
 
+      // ── Upload path: {userId}/{type}/{type}-{timestamp}.{ext} ──────
+      const timestamp = Date.now();
+      const storagePath = `${user.id}/${type}/${type}-${timestamp}.${ext}`;
+
+      if (__DEV__) {
+        console.log("[settings] upload storage", { storagePath, contentType });
+      }
+
       const { error: uploadError } = await supabase.storage
         .from("user-profile-media")
-        .upload(fileName, blob, { upsert: true, contentType });
+        .upload(storagePath, fileBytes, { upsert: true, contentType });
       if (uploadError) {
-        console.warn("[settings] upload failed", uploadError.message);
+        console.warn("[settings] upload error", uploadError.message);
         Alert.alert("Upload Failed", "Could not upload image. The service may be temporarily unavailable. Please try again.");
         return;
       }
-      const { data: urlData } = supabase.storage.from("user-profile-media").getPublicUrl(fileName);
+
+      const { data: urlData } = supabase.storage.from("user-profile-media").getPublicUrl(storagePath);
       const publicUrl = urlData?.publicUrl;
+
+      if (__DEV__) {
+        console.log("[settings] upload publicUrl", publicUrl);
+      }
+
       if (publicUrl) {
         const field = type === "avatar" ? { avatar_url: publicUrl } : { banner_url: publicUrl };
-        await updateProfile(field);
-        h.success();
+        try {
+          await updateProfile(field);
+          h.success();
+        } catch (profileErr) {
+          console.warn("[settings] profile update error", profileErr);
+          Alert.alert("Upload Succeeded", "Image saved to storage but profile update failed. Your image should appear shortly.");
+        }
       }
     } catch (err: unknown) {
-      console.warn(`[settings] ${type} upload error`, err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[settings] ${type} upload error`, msg);
       Alert.alert("Upload Failed", "Could not upload image. Please check your connection and try again.");
     } finally {
       setUploading(false);

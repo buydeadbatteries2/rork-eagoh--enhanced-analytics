@@ -1077,8 +1077,9 @@ export default function SettingsScreen(): JSX.Element {
   }, []);
 
   const handleManageSubscription = useCallback((): void => {
-    Alert.alert("Manage Subscription", "RevenueCat integration coming soon.");
-  }, []);
+    h.selection();
+    router.push("/subscription" as never);
+  }, [router, h]);
 
   const navigateTo = useCallback(
     (route: string) => (): void => {
@@ -1396,17 +1397,17 @@ export default function SettingsScreen(): JSX.Element {
             : []),
           {
             kind: "link",
+            label: "Manage Subscription",
+            icon: <Crown color={pal.gold} size={18} />,
+            onPress: () => { h.selection(); router.push("/subscription" as never); },
+          },
+          {
+            kind: "link",
             label: "Neuron Store",
             icon: <Coins color={pal.gold} size={18} />,
             onPress: navigateTo("/edge-store"),
           },
-          {
-            kind: "button",
-            label: "Manage Subscription",
-            variant: "primary",
-            icon: <Sliders color={pal.gold} size={18} />,
-            onPress: handleManageSubscription,
-          },
+
         ],
       },
       {

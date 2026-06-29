@@ -4,23 +4,33 @@
  * Exposes offerings, customer info, active entitlements, purchase/restore
  * functions, and a login/logout bridge for cross-device purchase sync.
  *
+ * Automatically calls Purchases.logIn / logOut when the auth user changes.
+ * Registers a CustomerInfoUpdateListener to keep state in sync.
+ *
  * The underlying Purchases SDK is configured at module level in
  * services/revenuecat.ts when this provider is first imported.
  */
 
 import createContextHook from "@nkzw/create-context-hook";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useAuth } from "@/providers/AuthProvider";
 import {
+  addCustomerInfoListener,
   getCustomerInfo,
   getOfferings,
+  getRevenueCatKeyMode,
+  getRevenueCatSubscriptionTier,
   isRevenueCatConfigured,
   logInRevenueCat,
   logOutRevenueCat,
   purchasePackage,
   restorePurchases,
+  type RevenueCatKeyMode,
 } from "@/services/revenuecat";
+import type { SubscriptionTier } from "@/services/tiers";
+import { TIER_MONTHLY_ALLOCATION } from "@/services/tiers";
+import { supabase } from "@/lib/supabase";
 import type {
   CustomerInfo,
   PurchasesOffering,
@@ -38,16 +48,26 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const configured = isRevenueCatConfigured();
+  const keyMode: RevenueCatKeyMode = getRevenueCatKeyMode();
+
+  // Track previous user ID to detect login/logout transitions
+  const prevUserId = useRef<string | null>(null);
 
   // ── Offerings ────────────────────────────────────────────────────────
 
-  const offeringsQuery = useQuery<PurchasesOffering | null>({
+  const offeringsQuery = useQuery<{
+    offering: PurchasesOffering | null;
+    allOfferings: PurchasesOffering[];
+  }>({
     queryKey: offeringsKey,
     queryFn: getOfferings,
     staleTime: 5 * 60 * 1000,
+    enabled: configured,
   });
 
-  const currentOffering: PurchasesOffering | null = offeringsQuery.data ?? null;
+  const currentOffering: PurchasesOffering | null = offeringsQuery.data?.offering ?? null;
+  const allOfferings: PurchasesOffering[] = offeringsQuery.data?.allOfferings ?? [];
+
   const packages: PurchasesPackage[] = useMemo(
     () => currentOffering?.availablePackages ?? [],
     [currentOffering],
@@ -59,9 +79,15 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
     queryKey: customerInfoKey,
     queryFn: getCustomerInfo,
     staleTime: 60 * 1000,
+    enabled: configured,
   });
 
   const customerInfo: CustomerInfo | null = customerInfoQuery.data ?? null;
+
+  const activeSubscriptions: string[] = useMemo(
+    () => customerInfo?.activeSubscriptions ?? [],
+    [customerInfo],
+  );
 
   const activeEntitlements: string[] = useMemo(
     () => customerInfo?.entitlements.active
@@ -69,6 +95,15 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
       : [],
     [customerInfo],
   );
+
+  // ── Derived tier ─────────────────────────────────────────────────────
+
+  const revenueCatTier: SubscriptionTier = useMemo(
+    () => getRevenueCatSubscriptionTier(customerInfo),
+    [customerInfo],
+  );
+
+  const monthlyAllocation: number = TIER_MONTHLY_ALLOCATION[revenueCatTier] ?? 0;
 
   // ── Invalidate helpers ───────────────────────────────────────────────
 
@@ -85,16 +120,98 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
     invalidateCustomerInfo();
   }, [invalidateOfferings, invalidateCustomerInfo]);
 
+  // ── Supabase tier sync ───────────────────────────────────────────────
+
+  const syncTierMutation = useMutation({
+    mutationFn: async (tier: SubscriptionTier): Promise<void> => {
+      if (!user?.id) return;
+      const { error } = await supabase
+        .from("profiles")
+        .update({ subscription_tier: tier, updated_at: new Date().toISOString() })
+        .eq("id", user.id);
+      if (error) {
+        console.warn("[RevenueCat] Failed to sync tier to Supabase:", error.message);
+      }
+    },
+  });
+
+  const syncTier = useCallback(
+    (tier: SubscriptionTier): void => {
+      syncTierMutation.mutate(tier);
+    },
+    [syncTierMutation],
+  );
+
+  // ── CustomerInfoUpdateListener ───────────────────────────────────────
+
+  useEffect(() => {
+    if (!configured) return;
+
+    const listener = addCustomerInfoListener((newInfo) => {
+      if (__DEV__) {
+        console.log("[RevenueCat] CustomerInfo updated — active subs:", newInfo.activeSubscriptions);
+      }
+      queryClient.setQueryData(customerInfoKey, newInfo);
+      const tier = getRevenueCatSubscriptionTier(newInfo);
+      syncTier(tier);
+    });
+
+    return () => {
+      listener.remove();
+    };
+  }, [configured, queryClient, syncTier]);
+
+  // ── Auto login/logout when auth user changes ─────────────────────────
+
+  useEffect(() => {
+    const currentUserId = user?.id ?? null;
+    const previousUserId = prevUserId.current;
+
+    // Skip if no change
+    if (currentUserId === previousUserId) return;
+    prevUserId.current = currentUserId;
+
+    if (!configured) return;
+
+    if (currentUserId) {
+      // User logged in or switched — log into RevenueCat
+      logInRevenueCat(currentUserId)
+        .then((info) => {
+          queryClient.setQueryData(customerInfoKey, info);
+          const tier = getRevenueCatSubscriptionTier(info);
+          syncTier(tier);
+          queryClient.invalidateQueries({ queryKey: offeringsKey });
+          if (__DEV__) {
+            console.log("[RevenueCat] Logged in — tier:", tier);
+          }
+        })
+        .catch((err: unknown) => {
+          console.warn("[RevenueCat] logIn failed:", err);
+        });
+    } else if (previousUserId) {
+      // User logged out
+      logOutRevenueCat()
+        .then((info) => {
+          queryClient.setQueryData(customerInfoKey, info);
+        })
+        .catch((err: unknown) => {
+          console.warn("[RevenueCat] logOut failed:", err);
+        });
+    }
+  }, [user?.id, configured, queryClient, syncTier]);
+
   // ── Purchase ─────────────────────────────────────────────────────────
 
   const purchaseMutation = useMutation({
     mutationFn: (pkg: PurchasesPackage) => purchasePackage(pkg),
-    onSuccess: () => {
-      invalidateCustomerInfo();
+    onSuccess: (result) => {
+      queryClient.setQueryData(customerInfoKey, result.customerInfo);
+      const tier = getRevenueCatSubscriptionTier(result.customerInfo);
+      syncTier(tier);
     },
   });
 
-  /** Purchase a package. Handles user-cancelled without throwing. */
+  /** Purchase a package. Returns the updated CustomerInfo. */
   const purchase = useCallback(
     async (pkg: PurchasesPackage): Promise<CustomerInfo> => {
       return purchaseMutation.mutateAsync(pkg).then((r) => r.customerInfo);
@@ -106,8 +223,10 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
 
   const restoreMutation = useMutation({
     mutationFn: restorePurchases,
-    onSuccess: () => {
-      invalidateCustomerInfo();
+    onSuccess: (info) => {
+      queryClient.setQueryData(customerInfoKey, info);
+      const tier = getRevenueCatSubscriptionTier(info);
+      syncTier(tier);
     },
   });
 
@@ -115,38 +234,120 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
     return restoreMutation.mutateAsync();
   }, [restoreMutation]);
 
-  // ── Login / Logout sync ──────────────────────────────────────────────
+  // ── Login / Logout (manual — also done automatically via effect) ────
 
-  const loginMutation = useMutation({
-    mutationFn: (uid: string) => logInRevenueCat(uid),
-    onSuccess: () => refreshAll(),
-  });
+  const logIn = useCallback(
+    (uid: string): Promise<CustomerInfo> =>
+      logInRevenueCat(uid).then((info) => {
+        queryClient.setQueryData(customerInfoKey, info);
+        const tier = getRevenueCatSubscriptionTier(info);
+        syncTier(tier);
+        return info;
+      }),
+    [queryClient, syncTier],
+  );
 
-  const logoutMutation = useMutation({
-    mutationFn: logOutRevenueCat,
-    onSuccess: () => refreshAll(),
-  });
+  const logOut = useCallback((): Promise<CustomerInfo> =>
+    logOutRevenueCat().then((info) => {
+      queryClient.setQueryData(customerInfoKey, info);
+      return info;
+    }),
+    [queryClient],
+  );
 
   // ── Derived state ───────────────────────────────────────────────────
 
-  const isSubscribed = activeEntitlements.length > 0;
+  const isSubscribed = revenueCatTier !== "free";
   const isLoading = offeringsQuery.isLoading || customerInfoQuery.isLoading;
+
+  // ── Subscription/consumable package filtering ────────────────────────
+
+  const subscriptionPackages: PurchasesPackage[] = useMemo(
+    () =>
+      packages.filter((p) => {
+        const pid = p.product.identifier;
+        return pid === "pro_sub" || pid === "oracle_elite_sub" || pid === "syndicate_sub";
+      }),
+    [packages],
+  );
+
+  const consumablePackages: PurchasesPackage[] = useMemo(
+    () =>
+      packages.filter((p) => {
+        const pid = p.product.identifier;
+        return pid.startsWith("store_edge_");
+      }),
+    [packages],
+  );
+
+  // ── Diagnostics (dev only) ───────────────────────────────────────────
+
+  const diagnostics = useMemo(() => {
+    if (!__DEV__) return null;
+    return {
+      platform: require("react-native").Platform.OS,
+      configured,
+      keyMode,
+      rcUserId: customerInfo?.originalAppUserId ?? null,
+      supabaseUserId: user?.id ?? null,
+      rcMatchesSupabase: customerInfo?.originalAppUserId === user?.id,
+      offeringId: currentOffering?.identifier ?? null,
+      subscriptionProductIds: subscriptionPackages.map((p) => p.product.identifier),
+      consumableProductIds: consumablePackages.map((p) => p.product.identifier),
+      activeSubscriptions,
+      derivedTier: revenueCatTier,
+      testModeEnabled: process.env.EXPO_PUBLIC_ENABLE_SUBSCRIPTION_TEST_MODE === "true",
+      mockPurchasesEnabled: process.env.EXPO_PUBLIC_ENABLE_MOCK_NEURON_PURCHASES === "true",
+    };
+  }, [
+    configured,
+    keyMode,
+    customerInfo,
+    user?.id,
+    currentOffering,
+    subscriptionPackages,
+    consumablePackages,
+    activeSubscriptions,
+    revenueCatTier,
+  ]);
+
+  if (__DEV__ && diagnostics) {
+    console.log("[RevenueCat] Diagnostics:", JSON.stringify(diagnostics, null, 2));
+  }
 
   return {
     /** Whether the RevenueCat SDK is configured with a valid API key. */
     configured,
+    /** The active key mode for diagnostics. */
+    keyMode,
     /** The current offering with its packages. */
     currentOffering,
+    /** All available offerings. */
+    allOfferings,
     /** Available packages in the current offering. */
     packages,
+    /** Subscription packages only (pro_sub, oracle_elite_sub, syndicate_sub). */
+    subscriptionPackages,
+    /** Consumable Neuron packages only (store_edge_*). */
+    consumablePackages,
     /** The latest customer info from RevenueCat. */
     customerInfo,
+    /** Active subscription product identifiers. */
+    activeSubscriptions,
     /** Active entitlement identifiers. */
     activeEntitlements,
-    /** Whether the user has at least one active entitlement. */
+    /** The subscription tier derived from RevenueCat. */
+    revenueCatTier,
+    /** Monthly Neuron allocation for the derived tier. */
+    monthlyAllocation,
+    /** Whether the user has at least one paid subscription. */
     isSubscribed,
     /** Whether offerings or customer info are still loading. */
     isLoading,
+    /** Offerings query loading state. */
+    isOfferingsLoading: offeringsQuery.isLoading,
+    /** CustomerInfo query loading state. */
+    isCustomerInfoLoading: customerInfoQuery.isLoading,
     /** Refetch offerings and customer info. */
     refreshAll,
 
@@ -155,13 +356,19 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
     /** Restore previous purchases — returns the latest CustomerInfo. */
     restore,
     /** Log the current auth user into RevenueCat for cross-device sync. */
-    logIn: (uid: string) => loginMutation.mutateAsync(uid),
+    logIn,
     /** Log out the current RevenueCat user. */
-    logOut: () => logoutMutation.mutateAsync(),
+    logOut,
 
     /** Whether a purchase is in flight. */
     isPurchasing: purchaseMutation.isPending,
     /** Whether a restore is in flight. */
     isRestoring: restoreMutation.isPending,
+
+    /** Sync tier to Supabase. */
+    syncTier,
+
+    /** Dev-only diagnostics object. */
+    diagnostics,
   };
 });

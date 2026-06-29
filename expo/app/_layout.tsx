@@ -75,6 +75,10 @@ function ThemedRoot(): JSX.Element {
             name="public-profile"
             options={{ presentation: "modal", headerShown: false }}
           />
+          <Stack.Screen
+            name="subscription"
+            options={{ presentation: "modal", headerShown: false }}
+          />
         </Stack>
       </View>
     </GestureHandlerRootView>

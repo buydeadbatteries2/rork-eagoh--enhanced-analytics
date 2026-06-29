@@ -1058,6 +1058,37 @@ insert into storage.buckets (id, name, public)
   values ('eagoh-renders', 'eagoh-renders', true)
   on conflict (id) do nothing;
 
+-- =============================================================================
+-- SUBSCRIPTION ALLOCATIONS (idempotent monthly Neuron grants)
+-- =============================================================================
+create table if not exists public.subscription_allocations (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  product_id text not null,
+  entitlement_period_start timestamptz not null,
+  entitlement_period_end timestamptz,
+  neurons_granted int not null default 0,
+  revenuecat_transaction_id text,
+  stable_key text not null,
+  created_at timestamptz default now(),
+  unique(user_id, stable_key)
+);
+
+create index if not exists sa_user_id_idx on public.subscription_allocations(user_id, created_at desc);
+create index if not exists sa_stable_key_idx on public.subscription_allocations(stable_key);
+
+alter table public.subscription_allocations enable row level security;
+
+drop policy if exists "sa_self_select" on public.subscription_allocations;
+drop policy if exists "sa_self_insert" on public.subscription_allocations;
+
+create policy "sa_self_select" on public.subscription_allocations
+  for select using (auth.uid() = user_id);
+
+create policy "sa_self_insert" on public.subscription_allocations
+  for insert with check (auth.uid() = user_id);
+
+-- =============================================================================
 -- Storage policies for eagoh-renders bucket
 -- Authenticated users can read all renders (bucket is public)
 create policy "eagoh_renders_select_authenticated"

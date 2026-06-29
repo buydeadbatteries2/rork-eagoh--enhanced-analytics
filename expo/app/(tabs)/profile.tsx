@@ -12,7 +12,7 @@ import { useWindowDimensions } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useHaptics } from "@/hooks/useHaptics";
 import { useRouter } from "expo-router";
-import { Award, BrainCircuit, Coins, Cpu, Crown, Flame, FlaskConical, Layers3, LogOut, Swords, Sparkles, Shield, Trophy, TrendingUp, Wrench, Zap } from "lucide-react-native";
+import { Award, BrainCircuit, Coins, Cpu, Crown, Flame, FlaskConical, Layers3, LogOut, Swords, Sparkles, Shield, Ticket, Trophy, TrendingUp, Wrench, Zap } from "lucide-react-native";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -451,6 +451,16 @@ export default function ProfileScreen(): JSX.Element {
             </View>
             <Cpu color={palette.muted} size={16} />
           </Pressable>
+          <Pressable onPress={() => { h.selection(); router.push("/subscription" as never); }} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
+            <View style={[styles.featureIconWrap, { borderColor: "rgba(255,184,77,0.35)" }]}>
+              <Crown color={palette.gold} size={20} />
+            </View>
+            <View style={styles.featureInfo}>
+              <Text style={styles.featureTitle}>Subscription</Text>
+              <Text style={styles.featureDesc}>Manage your plan and subscription tier</Text>
+            </View>
+            <Cpu color={palette.muted} size={16} />
+          </Pressable>
           <Pressable onPress={handleSettingsPress} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
             <View style={[styles.featureIconWrap, { borderColor: "rgba(120,180,255,0.35)" }]}>
               <Crown color={palette.text} size={20} />
@@ -478,7 +488,7 @@ export default function ProfileScreen(): JSX.Element {
             <Wrench color={palette.gold} size={16} />
             <Text style={styles.testBannerText}>Subscription Test Mode</Text>
           </View>
-          <Text style={styles.testHint}>RevenueCat not connected</Text>
+          <Text style={styles.testHint}>Dev-Only Test Mode</Text>
           <View style={styles.testButtonGrid}>
             {tiers.map((t) => {
               const isActive = currentTier === t.tier;

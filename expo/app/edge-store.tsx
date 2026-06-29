@@ -14,7 +14,7 @@ import { useAuth } from "@/providers/AuthProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useRevenueCat } from "@/providers/RevenueCatProvider";
-import { EDGE_PACKS, type EdgePack } from "@/services/edgeStore";
+import { EDGE_PACKS, type EdgePack, isMockPurchaseAllowed } from "@/services/edgeStore";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import {
@@ -315,9 +315,9 @@ const styles = StyleSheet.create({
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-/** Map a RevenueCat package identifier directly to our local EdgePack metadata. */
-function findEdgePack(pkgIdentifier: string): EdgePack | undefined {
-  return EDGE_PACKS.find((p) => p.productId === pkgIdentifier);
+/** Map a RevenueCat package to our local EdgePack using product.identifier (NOT package identifier). */
+function findEdgePack(rcPkg: PurchasesPackage): EdgePack | undefined {
+  return EDGE_PACKS.find((p) => p.productId === rcPkg.product.identifier);
 }
 
 /** Format a RevenueCat price string (e.g. "$4.99") for display. */
@@ -426,15 +426,15 @@ export default function EdgeStoreScreen(): JSX.Element {
       console.log("[NeuronStore] RC package identifiers:", rcPackages.map((p) => p.identifier));
     }
 
-    // Attempt to match RC packages against local EDGE_PACKS
+    // Attempt to match RC packages against local EDGE_PACKS using product.identifier
     const mapped: { edgePack: EdgePack; rcPackage: PurchasesPackage }[] = [];
     for (const rcPkg of rcPackages) {
-      const ep = findEdgePack(rcPkg.identifier);
+      const ep = findEdgePack(rcPkg);
       if (ep) {
-        console.log("[NeuronStore] Matched RC package", rcPkg.identifier, "→", ep.productId);
+        console.log("[NeuronStore] Matched RC product", rcPkg.product.identifier, "(package:", rcPkg.identifier, ") →", ep.productId);
         mapped.push({ edgePack: ep, rcPackage: rcPkg });
       } else {
-        console.log("[NeuronStore] No local match for RC package:", rcPkg.identifier);
+        console.log("[NeuronStore] No local match for RC product:", rcPkg.product.identifier, "(package:", rcPkg.identifier, ")");
       }
     }
 
@@ -481,12 +481,16 @@ export default function EdgeStoreScreen(): JSX.Element {
         setConfirmPack(null);
         setConfirmRcPkg(null);
         Alert.alert("Purchase Successful", `${confirmPack.edgeAmount.toLocaleString()} Neurons added to your wallet.`);
-      } else {
-        // Fallback: RevenueCat not configured — use direct Supabase credit
+      } else if (isMockPurchaseAllowed()) {
+        // Mock purchase: RevenueCat not available in dev — use direct Supabase credit
         await creditEdge(confirmPack.edgeAmount, `Neuron purchase: ${confirmPack.label}`);
         setConfirmPack(null);
         setConfirmRcPkg(null);
         Alert.alert("Purchase Successful", `${confirmPack.edgeAmount.toLocaleString()} Neurons added to your wallet.`);
+      } else {
+        Alert.alert("Purchase Unavailable", "Neuron purchases are not available in this build. For testing, enable EXPO_PUBLIC_ENABLE_MOCK_NEURON_PURCHASES=true.");
+        setConfirmPack(null);
+        setConfirmRcPkg(null);
       }
     } catch (err: unknown) {
       // Check if the user cancelled the purchase

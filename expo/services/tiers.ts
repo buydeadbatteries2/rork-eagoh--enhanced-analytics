@@ -10,7 +10,7 @@ export type SubscriptionTier = "free" | "pro" | "oracle_elite" | "syndicate";
 /** Admin override tier — mirrors SubscriptionTier but also allows null (no override). */
 export type AdminOverrideTier = SubscriptionTier | null;
 
-/** Monthly subscription Edge allocations per tier. Free tier is dormant (no allocation). */
+/** Monthly subscription Neuron allocations per tier. */
 export const TIER_MONTHLY_ALLOCATION: Record<SubscriptionTier, number> = {
   free: 0,
   pro: 600,
@@ -26,7 +26,7 @@ export const TIER_MAX_EAGOHS: Record<SubscriptionTier, number> = {
   syndicate: 5,
 };
 
-/** Edge efficiency multiplier per tier. */
+/** Neuron efficiency multiplier per tier. */
 export const TIER_MULTIPLIER: Record<SubscriptionTier, number> = {
   free: 0,
   pro: 1.0,
@@ -48,3 +48,40 @@ export function subscriptionTierFromProductId(productId: string): SubscriptionTi
   }
   return null;
 }
+
+/** Display labels for each tier. */
+export const TIER_LABELS: Record<SubscriptionTier, string> = {
+  free: "Free",
+  pro: "Pro",
+  oracle_elite: "Oracle Elite",
+  syndicate: "Syndicate",
+};
+
+/** Feature benefit descriptions per tier. */
+export const TIER_BENEFITS: Record<Exclude<SubscriptionTier, "free">, string[]> = {
+  pro: [
+    "600 monthly Neurons",
+    "Up to 2 EAGOHs",
+    "1.0x Neuron efficiency",
+    "Full Intelligence Domain access",
+    "Marketplace access",
+    "Faction Network access",
+  ],
+  oracle_elite: [
+    "1,400 monthly Neurons",
+    "Up to 3 EAGOHs",
+    "1.2x Neuron efficiency",
+    "Priority analyst processing",
+    "Advanced Marketplace tools",
+    "Faction Network leadership",
+  ],
+  syndicate: [
+    "3,700 monthly Neurons",
+    "Up to 5 EAGOHs",
+    "1.5x Neuron efficiency",
+    "Maximum analyst processing",
+    "Full Marketplace suite",
+    "Faction Network command",
+    "Sponsored Banner discounts",
+  ],
+};

@@ -1,18 +1,28 @@
 /**
- * Edge Store service — Neuron pack definitions and mock purchase logic.
+ * Edge Store service — Neuron pack definitions and purchase logic.
  *
- * Future: replace `mockPurchasePack` with RevenueCat purchase handlers.
- * Product IDs and pack definitions are structured so the UI can be reused
- * with minimal changes once RevenueCat is integrated.
+ * Product IDs and pack definitions are shared between the UI and the
+ * RevenueCat integration layer.
+ *
+ * Mock/fake purchases are only allowed when BOTH:
+ *  1. __DEV__ === true
+ *  2. EXPO_PUBLIC_ENABLE_MOCK_NEURON_PURCHASES === "true"
+ *
+ * In TestFlight and production, only real RevenueCat purchases credit Neurons.
  *
  * Rules:
- *  - Purchased Edge never expires and always rolls over 100%.
- *  - Subscription Edge is always spent first, purchased Edge second.
+ *  - Purchased Neurons never expire and always roll over 100%.
+ *  - Subscription Neurons are always spent first, purchased second.
  *  - The service layer enforces the spend priority; mutations log transactions.
  */
 
 import { addPurchasedEdge } from "@/services/edge";
 import type { UserProfile } from "@/services/profile";
+
+/** Whether mock/fake Neuron purchases are allowed in the current environment. */
+export const isMockPurchaseAllowed = (): boolean => {
+  return __DEV__ && process.env.EXPO_PUBLIC_ENABLE_MOCK_NEURON_PURCHASES === "true";
+};
 
 /** RevenueCat product identifiers for Neuron packs. */
 export const EDGE_PRODUCT_IDS = [
@@ -26,13 +36,13 @@ export type EdgeProductId = (typeof EDGE_PRODUCT_IDS)[number];
 
 /** A Neuron pack definition shown in the store UI. */
 export type EdgePack = {
-  /** RevenueCat product ID (placeholder for future). */
+  /** RevenueCat product ID. */
   productId: EdgeProductId;
   /** Neurons awarded on purchase. */
   edgeAmount: number;
   /** USD price displayed in the UI. */
   priceUsd: number;
-  /** Display label (e.g. "250 Edge"). */
+  /** Display label (e.g. "250 Neurons"). */
   label: string;
   /** Optional badge shown on the pack card (e.g. "Best Value"). */
   badge: string | null;
@@ -87,16 +97,99 @@ export const EDGE_PACKS: EdgePack[] = [
 /**
  * Execute a mock purchase for the given pack.
  *
- * In test mode this directly adds Edge to `edge_purchased` with a
- * descriptive transaction note.  When RevenueCat is integrated,
- * replace this call with a RevenueCat purchase handler that calls
- * `addPurchasedEdge` after verification.
+ * ONLY call when isMockPurchaseAllowed() returns true.
+ * This directly adds Neurons to `edge_purchased` with a descriptive
+ * transaction note for testing purposes.
  */
 export async function mockPurchasePack(
   userId: string,
   profile: UserProfile,
   pack: EdgePack,
 ): Promise<UserProfile> {
-  const note = `Mock Edge purchase: ${pack.label} (${pack.productId})`;
+  const note = `Mock Neuron purchase: ${pack.label} (${pack.productId})`;
   return addPurchasedEdge(userId, profile, pack.edgeAmount, note);
+}
+
+// ── Subscription allocation tracking ──────────────────────────────────────
+
+import { supabase } from "@/lib/supabase";
+
+export type SubscriptionAllocation = {
+  id: string;
+  user_id: string;
+  product_id: string;
+  entitlement_period_start: string;
+  entitlement_period_end: string | null;
+  neurons_granted: number;
+  revenuecat_transaction_id: string | null;
+  created_at: string;
+};
+
+/**
+ * Check if a subscription allocation already exists for a given
+ * RevenueCat transaction ID or billing-period identifier.
+ * Idempotency prevents duplicate Neuron grants across restarts/refreshes.
+ */
+export async function hasAllocationBeenGranted(
+  userId: string,
+  stableKey: string,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("subscription_allocations")
+    .select("id")
+    .eq("user_id", userId)
+    .or(`revenuecat_transaction_id.eq.${stableKey},stable_key.eq.${stableKey}`)
+    .limit(1);
+
+  if (error) {
+    console.warn("[edgeStore] hasAllocationBeenGranted error:", error.message);
+    return false;
+  }
+
+  return (data?.length ?? 0) > 0;
+}
+
+/**
+ * Record a subscription Neuron allocation so it is never granted twice.
+ *
+ * @param userId - The authenticated user's UUID
+ * @param productId - RevenueCat product identifier (pro_sub, oracle_elite_sub, syndicate_sub)
+ * @param periodStart - ISO date of the entitlement period start
+ * @param periodEnd - ISO date of the entitlement period end (null if ongoing)
+ * @param neuronsGranted - Number of Neurons granted (600, 1400, or 3700)
+ * @param transactionId - RevenueCat transaction ID or stable event key for idempotency
+ */
+export async function recordSubscriptionAllocation(
+  userId: string,
+  productId: string,
+  periodStart: string,
+  periodEnd: string | null,
+  neuronsGranted: number,
+  transactionId: string | null,
+): Promise<void> {
+  // Generate a stable key from the product + period start for idempotency
+  const stableKey = transactionId ?? `${productId}_${periodStart}`;
+
+  const { error } = await supabase
+    .from("subscription_allocations")
+    .insert({
+      user_id: userId,
+      product_id: productId,
+      entitlement_period_start: periodStart,
+      entitlement_period_end: periodEnd,
+      neurons_granted: neuronsGranted,
+      revenuecat_transaction_id: transactionId,
+      stable_key: stableKey,
+    });
+
+  if (error) {
+    // Unique constraint violation → already granted (expected, not an error)
+    if (error.code === "23505") {
+      if (__DEV__) {
+        console.log("[edgeStore] Allocation already recorded — idempotent skip:", stableKey);
+      }
+      return;
+    }
+    console.warn("[edgeStore] Failed to record allocation:", error.message);
+  }
 }

@@ -18,6 +18,7 @@ import { EDGE_PACKS, type EdgePack } from "@/services/edgeStore";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import {
+  AlertTriangle,
   ArrowLeft,
   BadgeCheck,
   Coins,
@@ -291,13 +292,34 @@ const styles = StyleSheet.create({
   },
   confirmBuyText: { color: palette.void, fontSize: 14, fontWeight: "900" as const },
   disabledBtn: { opacity: 0.5 },
+
+  // Empty state
+  emptyState: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 16,
+    borderRadius: 5,
+    backgroundColor: "rgba(10,20,40,0.50)",
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  emptyStateText: {
+    color: palette.muted,
+    fontSize: 13,
+    fontWeight: "600" as const,
+    flex: 1,
+    lineHeight: 19,
+  },
 });
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-/** Map a RevenueCat package identifier to our local EdgePack metadata. */
+/** Map a RevenueCat package identifier to our local EdgePack metadata.
+ *  RevenueCat prefixes identifiers with "store_" — strip it before matching. */
 function findEdgePack(pkgIdentifier: string): EdgePack | undefined {
-  return EDGE_PACKS.find((p) => p.productId === pkgIdentifier);
+  const cleanId = pkgIdentifier.startsWith("store_") ? pkgIdentifier.slice(6) : pkgIdentifier;
+  return EDGE_PACKS.find((p) => p.productId === cleanId);
 }
 
 /** Format a RevenueCat price string (e.g. "$4.99") for display. */
@@ -399,7 +421,15 @@ export default function EdgeStoreScreen(): JSX.Element {
 
   // Map RevenueCat packages to local EdgePack metadata, sorted by sortKey
   const displayPacks = useMemo(() => {
+    // Dev log: diagnose pack visibility
+    console.log("[NeuronStore] RC configured:", rcConfigured);
+    console.log("[NeuronStore] RC packages count:", rcPackages.length);
+    if (rcPackages.length > 0) {
+      console.log("[NeuronStore] RC package identifiers:", rcPackages.map((p) => p.identifier));
+    }
+
     if (rcPackages.length === 0) {
+      console.log("[NeuronStore] Offerings not loaded — using fallback packs");
       // Fallback: show local packs sorted by price when RevenueCat isn't ready
       return EDGE_PACKS.map((ep) => ({ edgePack: ep, rcPackage: null }))
         .sort((a, b) => a.edgePack.sortKey - b.edgePack.sortKey);
@@ -408,12 +438,16 @@ export default function EdgeStoreScreen(): JSX.Element {
     for (const rcPkg of rcPackages) {
       const ep = findEdgePack(rcPkg.identifier);
       if (ep) {
+        console.log("[NeuronStore] Matched RC package", rcPkg.identifier, "→", ep.productId);
         mapped.push({ edgePack: ep, rcPackage: rcPkg });
+      } else {
+        console.log("[NeuronStore] No local match for RC package:", rcPkg.identifier);
       }
     }
+    console.log("[NeuronStore] Displayable packs:", mapped.length);
     mapped.sort((a, b) => a.edgePack.sortKey - b.edgePack.sortKey);
     return mapped;
-  }, [rcPackages]);
+  }, [rcPackages, rcConfigured]);
 
   const handleBack = useCallback((): void => {
     h.selection();
@@ -548,7 +582,7 @@ export default function EdgeStoreScreen(): JSX.Element {
             <View style={[styles.balanceTotal, { borderTopColor: palette.line }]}>
               <Zap color={palette.text} size={14} />
               <Text style={styles.balanceTotalLabel}>Total Neurons</Text>
-              <Text style={styles.balanceTotalValue}>{totalEdge} EC</Text>
+              <Text style={styles.balanceTotalValue}>{totalEdge}</Text>
             </View>
           </View>
         </View>
@@ -568,30 +602,37 @@ export default function EdgeStoreScreen(): JSX.Element {
         </View>
 
         {/* Pack cards */}
-        <View style={styles.packGrid}>
-          {displayPacks.map(({ edgePack, rcPackage }) => (
-            <PackCard
-              key={edgePack.productId}
-              pack={edgePack}
-              rcPackage={rcPackage ?? {
-                identifier: edgePack.productId,
-                offeringIdentifier: "default",
-                packageType: "CUSTOM" as const,
-                product: {
+        {displayPacks.length > 0 ? (
+          <View style={styles.packGrid}>
+            {displayPacks.map(({ edgePack, rcPackage }) => (
+              <PackCard
+                key={edgePack.productId}
+                pack={edgePack}
+                rcPackage={rcPackage ?? {
                   identifier: edgePack.productId,
-                  price: edgePack.priceUsd,
-                  priceString: `$${edgePack.priceUsd.toFixed(2)}`,
-                  currencyCode: "USD",
-                  title: edgePack.label,
-                  description: `${edgePack.edgeAmount} Neurons`,
-                  productCategory: "NON_SUBSCRIPTION" as const,
-                } as PurchasesPackage["product"],
-              } as unknown as PurchasesPackage}
-              onPress={() => handleSelectPack(edgePack, rcPackage)}
-              disabled={disabled}
-            />
-          ))}
-        </View>
+                  offeringIdentifier: "default",
+                  packageType: "CUSTOM" as const,
+                  product: {
+                    identifier: edgePack.productId,
+                    price: edgePack.priceUsd,
+                    priceString: `$${edgePack.priceUsd.toFixed(2)}`,
+                    currencyCode: "USD",
+                    title: edgePack.label,
+                    description: `${edgePack.edgeAmount} Neurons`,
+                    productCategory: "NON_SUBSCRIPTION" as const,
+                  } as PurchasesPackage["product"],
+                } as unknown as PurchasesPackage}
+                onPress={() => handleSelectPack(edgePack, rcPackage)}
+                disabled={disabled}
+              />
+            ))}
+          </View>
+        ) : (
+          <View style={styles.emptyState}>
+            <AlertTriangle color={palette.muted} size={20} />
+            <Text style={styles.emptyStateText}>Neuron packs could not be loaded. Please try again.</Text>
+          </View>
+        )}
 
         {/* Restore purchases */}
         <Pressable
@@ -619,7 +660,7 @@ export default function EdgeStoreScreen(): JSX.Element {
             <Text style={styles.confirmPackLabel}>{confirmPack.label}</Text>
             <View style={styles.confirmDetailRow}>
               <Text style={styles.confirmDetailLabel}>Neuron Amount</Text>
-              <Text style={[styles.confirmDetailValue, { color: palette.gold }]}>{confirmPack.edgeAmount.toLocaleString()} EC</Text>
+              <Text style={[styles.confirmDetailValue, { color: palette.gold }]}>{confirmPack.edgeAmount.toLocaleString()} Neurons</Text>
             </View>
             <View style={styles.confirmDetailRow}>
               <Text style={styles.confirmDetailLabel}>Price</Text>

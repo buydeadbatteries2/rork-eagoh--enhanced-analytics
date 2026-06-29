@@ -28,12 +28,12 @@ const DISCLAIMER_SECTIONS: { title: string; body: string }[] = [
     body: "EAGOH uses artificial intelligence models that may produce inaccurate, incomplete, or inconsistent results. AI-generated content should not be treated as factual without independent verification. The platform makes no warranty regarding the accuracy, reliability, or completeness of AI-generated outputs.",
   },
   {
-    title: "Edge Credits",
-    body: "Edge credits are virtual platform currency with no real-world monetary value. They cannot be exchanged for cash, transferred outside the EAGOH platform, or used as any form of financial instrument.",
+    title: "Neurons",
+    body: "Neurons are virtual platform currency with no real-world monetary value. They cannot be exchanged for cash, transferred outside the EAGOH platform, or used as any form of financial instrument.",
   },
   {
     title: "No Gambling",
-    body: "EAGOH is not a gambling platform. No feature within EAGOH constitutes betting, wagering, or gambling of any kind. Edge credits are not stakes and cannot be won or lost in games of chance.",
+    body: "EAGOH is not a gambling platform. No feature within EAGOH constitutes betting, wagering, or gambling of any kind. Neurons are not stakes and cannot be won or lost in games of chance.",
   },
   {
     title: "Third-Party Content",

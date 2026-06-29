@@ -437,17 +437,17 @@ export default function EdgeStoreScreen(): JSX.Element {
       if (rcConfigured && confirmRcPkg) {
         // Real RevenueCat purchase
         const customerInfo = await rcPurchase(confirmRcPkg);
-        // After successful purchase, credit the user's edge wallet
+        // After successful purchase, credit the user's neuron wallet
         await creditEdge(confirmPack.edgeAmount, `RevenueCat purchase: ${confirmPack.label}`);
         setConfirmPack(null);
         setConfirmRcPkg(null);
-        Alert.alert("Purchase Successful", `${confirmPack.edgeAmount.toLocaleString()} Edge added to your wallet.`);
+        Alert.alert("Purchase Successful", `${confirmPack.edgeAmount.toLocaleString()} Neurons added to your wallet.`);
       } else {
         // Fallback: RevenueCat not configured — use direct Supabase credit
-        await creditEdge(confirmPack.edgeAmount, `Edge purchase: ${confirmPack.label}`);
+        await creditEdge(confirmPack.edgeAmount, `Neuron purchase: ${confirmPack.label}`);
         setConfirmPack(null);
         setConfirmRcPkg(null);
-        Alert.alert("Purchase Successful", `${confirmPack.edgeAmount.toLocaleString()} Edge added to your wallet.`);
+        Alert.alert("Purchase Successful", `${confirmPack.edgeAmount.toLocaleString()} Neurons added to your wallet.`);
       }
     } catch (err: unknown) {
       // Check if the user cancelled the purchase
@@ -508,7 +508,7 @@ export default function EdgeStoreScreen(): JSX.Element {
         <Pressable onPress={handleBack} style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.7 }]}>
           <ArrowLeft color={palette.text} size={18} />
         </Pressable>
-        <Text style={styles.headerTitle}>Edge Store</Text>
+        <Text style={styles.headerTitle}>Neuron Store</Text>
         <Sparkles color={palette.gold} size={18} />
       </View>
 
@@ -517,7 +517,7 @@ export default function EdgeStoreScreen(): JSX.Element {
         <View style={styles.statusBanner}>
           <ShieldCheck color={palette.cyan} size={16} />
           <Text style={styles.statusBannerText}>
-            {rcConfigured ? "Purchases secured by RevenueCat" : "Edge Store — direct wallet credit"}
+            {rcConfigured ? "Purchases secured by RevenueCat" : "Neuron Store — direct wallet credit"}
           </Text>
         </View>
 
@@ -527,7 +527,7 @@ export default function EdgeStoreScreen(): JSX.Element {
           <View style={styles.balanceBody}>
             <View style={styles.balanceHeader}>
               <WalletCards color={palette.gold} size={18} />
-              <Text style={styles.balanceTitle}>Your Edge Wallet</Text>
+              <Text style={styles.balanceTitle}>Your Neuron Wallet</Text>
             </View>
             <View style={styles.balanceGrid}>
               <BalanceCell
@@ -547,7 +547,7 @@ export default function EdgeStoreScreen(): JSX.Element {
             </View>
             <View style={[styles.balanceTotal, { borderTopColor: palette.line }]}>
               <Zap color={palette.text} size={14} />
-              <Text style={styles.balanceTotalLabel}>Total Edge</Text>
+              <Text style={styles.balanceTotalLabel}>Total Neurons</Text>
               <Text style={styles.balanceTotalValue}>{totalEdge} EC</Text>
             </View>
           </View>
@@ -557,7 +557,7 @@ export default function EdgeStoreScreen(): JSX.Element {
         <View style={styles.infoNote}>
           <Infinity color={palette.success} size={14} />
           <Text style={styles.infoNoteText}>
-            Purchased Edge does not expire and rolls over 100%. Subscription Edge is always spent first, purchased Edge second.
+            Purchased Neurons do not expire. Subscription Neurons are always spent first, purchased Neurons second.
           </Text>
         </View>
 
@@ -583,7 +583,7 @@ export default function EdgeStoreScreen(): JSX.Element {
                   priceString: `$${edgePack.priceUsd.toFixed(2)}`,
                   currencyCode: "USD",
                   title: edgePack.label,
-                  description: `${edgePack.edgeAmount} EdgeCoins`,
+                  description: `${edgePack.edgeAmount} Neurons`,
                   productCategory: "NON_SUBSCRIPTION" as const,
                 } as PurchasesPackage["product"],
               } as unknown as PurchasesPackage}
@@ -618,7 +618,7 @@ export default function EdgeStoreScreen(): JSX.Element {
             <Text style={styles.confirmHeader}>Confirm Purchase</Text>
             <Text style={styles.confirmPackLabel}>{confirmPack.label}</Text>
             <View style={styles.confirmDetailRow}>
-              <Text style={styles.confirmDetailLabel}>Edge Amount</Text>
+              <Text style={styles.confirmDetailLabel}>Neuron Amount</Text>
               <Text style={[styles.confirmDetailValue, { color: palette.gold }]}>{confirmPack.edgeAmount.toLocaleString()} EC</Text>
             </View>
             <View style={styles.confirmDetailRow}>

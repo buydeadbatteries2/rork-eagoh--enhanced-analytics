@@ -265,7 +265,7 @@ export async function submitEntry(input: SubmitEntryInput): Promise<SubmitEntryR
   const edgeCost = ENTRY_TYPE_EDGE_COST[input.entryType];
   const totalEdge = (input.profile.edge_subscription ?? 0) + (input.profile.edge_purchased ?? 0);
   if (totalEdge < edgeCost) {
-    return { ok: false, error: `Insufficient Edge. Need ${edgeCost} Edge (have ${totalEdge}).`, edgeCost };
+    return { ok: false, error: `Insufficient Neurons. Need ${edgeCost} Neurons (have ${totalEdge}).`, edgeCost };
   }
 
   // Deduct Edge
@@ -284,7 +284,7 @@ export async function submitEntry(input: SubmitEntryInput): Promise<SubmitEntryR
       `OI ${input.entryType.replace(/_/g, " ")} · ${input.intelligenceDomain}`,
     );
   } catch (err) {
-    return { ok: false, error: "Edge deduction failed. Try again.", edgeCost };
+    return { ok: false, error: "Neuron deduction failed. Try again.", edgeCost };
   }
 
   // Compute quality
@@ -324,7 +324,7 @@ export async function submitEntry(input: SubmitEntryInput): Promise<SubmitEntryR
 
   if (error) {
     console.warn("[open-intelligence] insert failed", error.message);
-    return { ok: false, error: "Failed to save entry. Edge was deducted. Please contact support." };
+    return { ok: false, error: "Failed to save entry. Neurons were deducted. Please contact support." };
   }
 
   // Record recently used tags

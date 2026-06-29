@@ -67,7 +67,7 @@ const onboarding = [
 ];
 
 const stats = [
-  { label: "Edge", value: "12,480" },
+  { label: "Neurons", value: "12,480" },
   { label: "Trust", value: "94%" },
   { label: "Signals", value: "128" },
 ];
@@ -90,7 +90,7 @@ const homeSections: HomeSection[] = [
 
 const trendingEagohs: EagohItem[] = [
   { id: "t1", name: "Ghost Falcon", metric: "Trust 96", trend: "+18%", accent: "cyan" },
-  { id: "t2", name: "Iron Pulse", metric: "Edge 8.9K", trend: "+12%", accent: "ember" },
+  { id: "t2", name: "Iron Pulse", metric: "8.9K Neurons", trend: "+12%", accent: "ember" },
   { id: "t3", name: "Cinder Halo", metric: "Heat 72", trend: "+31%", accent: "gold" },
 ];
 
@@ -112,7 +112,7 @@ const favoriteTeams: TeamItem[] = [
   { id: "f3", team: "North End Loyal", status: "sentiment steady", heat: "74", accent: "success" },
 ];
 
-const quickChecks = ["Trust Scan", "Fraud Pulse", "Team Fit", "Value Edge"];
+const quickChecks = ["Trust Scan", "Fraud Pulse", "Team Fit", "Value Scan"];
 
 function toneColor(tone: CardTone): string {
   if (tone === "gold") return palette.gold;
@@ -240,7 +240,7 @@ const HeroSection = React.memo(function HeroSection({ onEdgePress }: { onEdgePre
       <View style={styles.statRow}>{stats.map((stat) => <View key={stat.label} style={styles.stat}><Text style={styles.statValue}>{stat.value}</Text><Text style={styles.statLabel}>{stat.label}</Text></View>)}</View>
       <Pressable onPress={onEdgePress} style={({ pressed }) => [styles.edgeBalance, pressed && { opacity: 0.8 }]}>
         <WalletCards color={palette.gold} size={20} />
-        <Text style={styles.edgeText}>Edge Balance</Text>
+        <Text style={styles.edgeText}>Neuron Balance</Text>
         <Text style={styles.edgeAmount}>{balances.total.toLocaleString()} EC</Text>
         <ChevronRight color={palette.gold} size={14} style={{ opacity: 0.6 }} />
       </Pressable>
@@ -349,7 +349,7 @@ const AnalystAccess = React.memo(function AnalystAccess(): JSX.Element {
       <SectionHeader eyebrow="ANALYST NODE" title="Quick analyst access" />
       <View style={styles.analystGrid}>
         <FuturisticCard title="Signal Brief" subtitle="One-tap mock analyst snapshot for EAGOH momentum." meta="LIVE" icon={<RadioTower color={palette.cyan} size={19} />} />
-        <FuturisticCard title="Edge Model" subtitle="Preview projected trust, heat, and fan alignment." meta="MOCK" tone="gold" icon={<BarChart3 color={palette.gold} size={19} />} />
+        <FuturisticCard title="Neuron Model" subtitle="Preview projected trust, heat, and fan alignment." meta="MOCK" tone="gold" icon={<BarChart3 color={palette.gold} size={19} />} />
       </View>
     </View>
   );
@@ -713,7 +713,7 @@ function HomeApp({ userId, onPromote }: { userId: string | null; onPromote: () =
         ListFooterComponent={
           <Pressable onPress={onPromote} style={styles.promoteBannerButton}>
             <Megaphone color={palette.cyan} size={18} />
-            <Text style={styles.promoteBannerText}>Promote Your EAGOH · From 250 EC/day</Text>
+            <Text style={styles.promoteBannerText}>Promote Your EAGOH · From 250 Neurons/day</Text>
           </Pressable>
         }
       />
@@ -818,14 +818,14 @@ function BannerPurchaseModal({
               style={[styles.locationChip, location === "home" && styles.locationChipActive]}
             >
               <Text style={[styles.locationChipText, location === "home" && styles.locationChipTextActive]}>Home Page</Text>
-              <Text style={[styles.locationPrice, location === "home" && styles.locationPriceActive]}>250 EC/day</Text>
+              <Text style={[styles.locationPrice, location === "home" && styles.locationPriceActive]}>250 Neurons/day</Text>
             </Pressable>
             <Pressable
               onPress={() => setLocation("marketplace")}
               style={[styles.locationChip, location === "marketplace" && styles.locationChipActive]}
             >
               <Text style={[styles.locationChipText, location === "marketplace" && styles.locationChipTextActive]}>Marketplace</Text>
-              <Text style={[styles.locationPrice, location === "marketplace" && styles.locationPriceActive]}>150 EC/day</Text>
+              <Text style={[styles.locationPrice, location === "marketplace" && styles.locationPriceActive]}>150 Neurons/day</Text>
             </Pressable>
           </View>
 
@@ -861,14 +861,14 @@ function BannerPurchaseModal({
               style={[styles.premiumChip, coloredBorder && styles.premiumChipActive]}
             >
               <Text style={[styles.premiumChipText, coloredBorder && styles.premiumChipTextActive]}>Colored Border</Text>
-              <Text style={[styles.premiumChipPrice, coloredBorder && styles.premiumChipPriceActive]}>+10 EC/day</Text>
+              <Text style={[styles.premiumChipPrice, coloredBorder && styles.premiumChipPriceActive]}>+10 Neurons/day</Text>
             </Pressable>
             <Pressable
               onPress={() => setHotBadge(!hotBadge)}
               style={[styles.premiumChip, hotBadge && styles.premiumChipActive]}
             >
               <Text style={[styles.premiumChipText, hotBadge && styles.premiumChipTextActive]}>Hot Badge</Text>
-              <Text style={[styles.premiumChipPrice, hotBadge && styles.premiumChipPriceActive]}>+15 EC/day</Text>
+              <Text style={[styles.premiumChipPrice, hotBadge && styles.premiumChipPriceActive]}>+15 Neurons/day</Text>
             </Pressable>
           </View>
 
@@ -877,7 +877,7 @@ function BannerPurchaseModal({
             <Text style={styles.totalLabel}>Total Cost</Text>
             <View style={styles.totalValueRow}>
               <Coins color={palette.gold} size={18} />
-              <Text style={styles.totalValue}>{totalCost} EC</Text>
+              <Text style={styles.totalValue}>{totalCost} Neurons</Text>
             </View>
           </View>
           <Text style={styles.totalBreakdown}>

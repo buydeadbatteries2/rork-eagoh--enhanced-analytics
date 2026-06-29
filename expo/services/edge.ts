@@ -142,7 +142,7 @@ export async function spendEdge(
   if (cost === 0) return profile;
 
   const { total, subscription, purchased } = getBalances(profile);
-  if (cost > total) throw new Error("Insufficient Edge balance");
+  if (cost > total) throw new Error("Insufficient Neuron balance");
 
   const fromSub = Math.min(subscription, cost);
   const fromPurchased = cost - fromSub;

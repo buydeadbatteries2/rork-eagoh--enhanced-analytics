@@ -1329,8 +1329,8 @@ export default function SettingsScreen(): JSX.Element {
           },
           {
             kind: "info",
-            label: "Current Edge Balance",
-            value: `${(profile?.edge_subscription ?? 0) + (profile?.edge_purchased ?? 0)} Edge`,
+            label: "Current Neuron Balance",
+            value: `${(profile?.edge_subscription ?? 0) + (profile?.edge_purchased ?? 0)} Neurons`,
             icon: <Zap color={pal.cyan} size={18} />,
           },
           ...(isAdminOverrideActive && profile
@@ -1345,7 +1345,7 @@ export default function SettingsScreen(): JSX.Element {
             : []),
           {
             kind: "link",
-            label: "Edge Store",
+            label: "Neuron Store",
             icon: <Coins color={pal.gold} size={18} />,
             onPress: navigateTo("/edge-store"),
           },

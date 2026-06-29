@@ -739,7 +739,7 @@ function PurchaseModal({
                   <View style={styles.detailIconWrap}>
                     <Coins color={palette.gold} size={14} />
                   </View>
-                  <Text style={styles.detailLabel}>Edge Earned</Text>
+                  <Text style={styles.detailLabel}>Neurons Earned</Text>
                   <Text style={styles.detailValue}>{listing.edge_earned_this_month} EC/mo</Text>
                 </View>
 

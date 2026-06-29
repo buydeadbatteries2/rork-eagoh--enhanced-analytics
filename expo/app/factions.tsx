@@ -459,7 +459,7 @@ function FactionDetail({
       if (!cost) return;
 
       if (!edge.canAfford(cost.cost)) {
-        Alert.alert("Insufficient Edge", `Need ${cost.cost} Edge for +${slots} slots.`);
+        Alert.alert("Insufficient Neurons", `Need ${cost.cost} Neurons for +${slots} slots.`);
         return;
       }
 

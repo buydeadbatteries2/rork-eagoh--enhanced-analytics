@@ -148,7 +148,7 @@ export function describeActivity(row: FactionActivityRow): string {
     case "role_changed":
       return `${details?.username ?? "Member"} promoted to ${details?.new_role ?? "new role"}`;
     case "slots_expanded":
-      return `Commander purchased +${details?.slots ?? "?"} slots (${details?.cost ?? "?"} Edge)`;
+      return `Commander purchased +${details?.slots ?? "?"} slots (${details?.cost ?? "?"} Neurons)`;
     case "member_dormant":
       return `${details?.username ?? "A member"} became dormant — subscription expired`;
     case "grace_period_started":
@@ -649,7 +649,7 @@ export async function purchaseFactionSlots(
 
   const totalEdge = (profile.edge_subscription ?? 0) + (profile.edge_purchased ?? 0);
   if (totalEdge < costEntry.cost) {
-    return { ok: false, error: `Need ${costEntry.cost} Edge for +${slotsToBuy} slots. You have ${totalEdge}.` };
+    return { ok: false, error: `Need ${costEntry.cost} Neurons for +${slotsToBuy} slots. You have ${totalEdge}.` };
   }
 
   const { data: faction } = await supabase
@@ -672,7 +672,7 @@ export async function purchaseFactionSlots(
       `+${slotsToBuy} slots for ${f.name}`,
     );
   } catch {
-    return { ok: false, error: "Edge deduction failed. Insufficient balance." };
+    return { ok: false, error: "Neuron deduction failed. Insufficient balance." };
   }
 
   const newMax = f.max_members + slotsToBuy;
@@ -685,7 +685,7 @@ export async function purchaseFactionSlots(
 
   if (updErr || !updated) {
     console.warn("[factions] slot expansion update failed after edge deduction", updErr?.message);
-    return { ok: false, error: "Slot expansion failed. Edge was deducted — contact support." };
+    return { ok: false, error: "Slot expansion failed. Neurons were deducted — contact support." };
   }
 
   await supabase.from("faction_slot_purchases").insert({

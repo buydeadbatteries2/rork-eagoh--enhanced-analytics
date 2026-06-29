@@ -197,9 +197,9 @@ export async function purchaseBanner(
       `${location} banner ${days} day(s) ${startDateStr}`,
     );
   } catch (err: unknown) {
-    const message = (err as Error).message ?? "Edge deduction failed";
+    const message = (err as Error).message ?? "Neuron deduction failed";
     if (message.toLowerCase().includes("insufficient")) {
-      return { ok: false, error: `Insufficient Edge. ${edgeCost} EC required.` };
+      return { ok: false, error: `Insufficient Neurons. ${edgeCost} Neurons required.` };
     }
     return { ok: false, error: message };
   }
@@ -224,7 +224,7 @@ export async function purchaseBanner(
   if (bannerErr) {
     console.warn("[sponsoredBanners] insert banner error", bannerErr.message);
     // Edge was already deducted — this is an inconsistent state but rare.
-    return { ok: false, error: "Failed to create banner. Edge was deducted — contact support." };
+    return { ok: false, error: "Failed to create banner. Neurons were deducted — contact support." };
   }
 
   // Insert purchase history

@@ -208,7 +208,7 @@ const EntryTypeRow = memo(function EntryTypeRow({
         <Text style={styles.entryTypeDetail}>{item.detail}</Text>
       </View>
       <Text style={[styles.entryTypeCost, { color: accent }]}>
-        {ENTRY_TYPE_EDGE_COST[item.id]} Edge
+        {ENTRY_TYPE_EDGE_COST[item.id]} Neurons
       </Text>
     </Pressable>
   );
@@ -812,7 +812,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
       setContent("");
       setSelectedSubtags([]);
       setCustomTags([]);
-      setSubmitSuccess(`Entry saved. ${result.edgeCost} Edge deducted.`);
+      setSubmitSuccess(`Entry saved. ${result.edgeCost} Neurons deducted.`);
       queryClient.invalidateQueries({ queryKey: ["oi", "feed", selectedEagohId] });
     } else {
       setSubmitError(result.error ?? "Submit failed.");
@@ -953,7 +953,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
               <View style={styles.submitCost}>
                 <Zap color={balances.total >= edgeCost ? palette.gold : palette.ember} size={16} />
                 <Text style={[styles.submitCostText, balances.total < edgeCost && { color: palette.ember }]}>
-                  {edgeCost} Edge
+                  {edgeCost} Neurons
                 </Text>
               </View>
               <Pressable
@@ -982,7 +982,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
 
             {balances.total < edgeCost ? (
               <Text style={styles.insufficientEdge}>
-                Insufficient Edge. Need {edgeCost} Edge (have {balances.total}).
+                Insufficient Neurons. Need {edgeCost} Neurons (have {balances.total}).
               </Text>
             ) : null}
           </View>

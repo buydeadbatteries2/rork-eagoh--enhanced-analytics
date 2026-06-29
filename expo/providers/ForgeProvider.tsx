@@ -104,7 +104,7 @@ export const [ForgeProvider, useForge] = createContextHook(() => {
       if (!pending) throw new Error("No forge pending confirmation.");
       if (!user?.id || !profile) throw new Error("Profile not loaded.");
       if (edgeTotal < pending.edgeCost) {
-        return { ok: false, reason: "persist", error: `Insufficient Edge. Need ${pending.edgeCost}.` };
+        return { ok: false, reason: "persist", error: `Insufficient Neurons. Need ${pending.edgeCost}.` };
       }
 
       // 1) Deduct Edge first \u2014 if image gen fails downstream, the wallet still
@@ -112,7 +112,7 @@ export const [ForgeProvider, useForge] = createContextHook(() => {
       try {
         await spend(pending.edgeCost, edgeReasonFor(pending.mode), `Forge ${pending.mode} \u00b7 ${pending.draft.name}`);
       } catch (error) {
-        return { ok: false, reason: "persist", error: error instanceof Error ? error.message : "Edge deduction failed." };
+        return { ok: false, reason: "persist", error: error instanceof Error ? error.message : "Neuron deduction failed." };
       }
 
       // 2) Run the image gen + persistence pipeline.

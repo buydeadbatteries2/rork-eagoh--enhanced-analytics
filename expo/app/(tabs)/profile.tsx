@@ -432,8 +432,8 @@ export default function ProfileScreen(): JSX.Element {
               <Coins color={palette.gold} size={20} />
             </View>
             <View style={styles.featureInfo}>
-              <Text style={styles.featureTitle}>Edge Store</Text>
-              <Text style={styles.featureDesc}>Purchase additional EdgeCoins</Text>
+              <Text style={styles.featureTitle}>Neuron Store</Text>
+              <Text style={styles.featureDesc}>Purchase additional Neurons</Text>
             </View>
             <Cpu color={palette.muted} size={16} />
           </Pressable>
@@ -482,7 +482,7 @@ export default function ProfileScreen(): JSX.Element {
                   ]}
                 >
                   <Text style={[styles.testButtonLabel, { color: accent }]}>{t.label}</Text>
-                  <Text style={styles.testButtonEdge}>{t.edge} Edge</Text>
+                  <Text style={styles.testButtonEdge}>{t.edge} Neurons</Text>
                   {isActive && <View style={[styles.testActiveDot, { backgroundColor: accent }]} />}
                 </Pressable>
               );

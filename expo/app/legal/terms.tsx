@@ -18,8 +18,8 @@ const SECTIONS: { title: string; body: string }[] = [
     body: "You are responsible for maintaining the confidentiality of your account credentials. You agree to notify us immediately of any unauthorized use. EAGOH reserves the right to suspend or terminate accounts that violate these Terms.",
   },
   {
-    title: "Subscriptions and Edge Credits",
-    body: "EAGOH offers subscription tiers (Free, Pro, Oracle Elite, Syndicate) that allocate monthly Edge credits for platform activities. Edge credits are virtual platform currency with no real-world cash value. They cannot be redeemed for money, transferred outside the platform, or exchanged for any financial instrument. Subscription Edge may be subject to rollover caps. Purchased Edge, when available through RevenueCat, is non-refundable except as required by applicable law.",
+    title: "Subscriptions and Neurons",
+    body: "EAGOH offers subscription tiers (Free, Pro, Oracle Elite, Syndicate) that allocate monthly Neurons for platform activities. Neurons are virtual platform currency with no real-world cash value. They cannot be redeemed for money, transferred outside the platform, or exchanged for any financial instrument. Subscription Neurons may be subject to rollover caps. Purchased Neurons, when available through RevenueCat, are non-refundable except as required by applicable law.",
   },
   {
     title: "User Content",
@@ -27,7 +27,7 @@ const SECTIONS: { title: string; body: string }[] = [
   },
   {
     title: "Marketplace and Factions",
-    body: "The EAGOH Marketplace enables mock intelligence sync transactions between users using Edge credits. Factions are voluntary analyst alliances for collaborative intelligence. EAGOH does not guarantee the accuracy, reliability, or value of any marketplace listing or faction intelligence. Users participate at their own discretion.",
+    body: "The EAGOH Marketplace enables mock intelligence sync transactions between users using Neurons. Factions are voluntary analyst alliances for collaborative intelligence. EAGOH does not guarantee the accuracy, reliability, or value of any marketplace listing or faction intelligence. Users participate at their own discretion.",
   },
   {
     title: "AI Generated Content",

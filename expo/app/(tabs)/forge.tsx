@@ -322,13 +322,13 @@ function ConfirmationSheet({
         </View>
         <View style={styles.confirmEdgeRow}>
           <Zap color={palette.gold} size={18} />
-          <Text style={styles.confirmEdgeCost}>{pending.edgeCost} Edge</Text>
+          <Text style={styles.confirmEdgeCost}>{pending.edgeCost} Neurons</Text>
         </View>
         {!canAfford ? (
           <View style={{ gap: 8 }}>
-            <Text style={styles.confirmError}>Insufficient Edge balance.</Text>
+            <Text style={styles.confirmError}>Insufficient Neuron balance.</Text>
             <Pressable onPress={onGetEdge} style={({ pressed }) => [styles.getEdgeBtn, pressed && { opacity: 0.8 }]}>
-              <Text style={styles.getEdgeBtnText}>Get Edge</Text>
+              <Text style={styles.getEdgeBtnText}>Get Neurons</Text>
             </Pressable>
           </View>
         ) : null}
@@ -927,7 +927,7 @@ export default function ForgeScreen(): JSX.Element {
       }
       // If no changes detected, don't charge or generate
       if (reforgeCost.changedSections.length === 0) {
-        setForgeError("No modifications detected. No Edge charged.");
+        setForgeError("No modifications detected. No Neurons charged.");
         return;
       }
       prepareForge(draft, "full_reforge", { eagohId: selectedEagohId, edgeCost: reforgeCost.edgeCost });
@@ -1793,19 +1793,19 @@ export default function ForgeScreen(): JSX.Element {
                     <Text style={styles.reforgeCostLabel}>Reforge Cost</Text>
                     <View style={styles.reforgeCostValueRow}>
                       <Zap color={palette.gold} size={14} />
-                      <Text style={styles.reforgeCostValueGold}>{reforgeCost.edgeCost} Edge</Text>
+                      <Text style={styles.reforgeCostValueGold}>{reforgeCost.edgeCost} Neurons</Text>
                     </View>
                   </View>
                 </>
               ) : (
-                <Text style={styles.reforgeNoChanges}>No modifications detected. No Edge charged.</Text>
+                <Text style={styles.reforgeNoChanges}>No modifications detected. No Neurons charged.</Text>
               )}
             </View>
           ) : (
             <View style={styles.costPreview}>
               <Zap color={palette.gold} size={16} />
               <Text style={styles.costPreviewLabel}>{isLastStep ? "Forge Cost" : "Final Forge Cost"}</Text>
-              <Text style={styles.costPreviewValue}>{forgeCost} Edge</Text>
+              <Text style={styles.costPreviewValue}>{forgeCost} Neurons</Text>
             </View>
           )}
 
@@ -1989,7 +1989,7 @@ export default function ForgeScreen(): JSX.Element {
             ) : (
               <>
                 <Text style={styles.renameMessage}>
-                  Renaming an EAGOH costs {RENAME_EDGE_COST} Edge and can only be performed once every 30 days. Marketplace listings, rankings, and faction records will automatically update.
+                  Renaming an EAGOH costs {RENAME_EDGE_COST} Neurons and can only be performed once every 30 days. Marketplace listings, rankings, and faction records will automatically update.
                 </Text>
                 <TextInput
                   value={renameNameInput}

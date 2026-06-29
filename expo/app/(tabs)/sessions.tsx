@@ -144,12 +144,12 @@ type SessionType = {
 };
 
 const sessionTypes: SessionType[] = [
-  { id: "quick-check", name: "Quick Check", description: "Rapid intelligence check", costRange: "1-3 Edge", minCost: 1, maxCost: 3, model: "Pulse-Lite", duration: "~2 min", tone: "cyan", active: true },
-  { id: "quick-analysis", name: "Quick Analysis", description: "Tactical strategic read", costRange: "10-15 Edge", minCost: 10, maxCost: 15, model: "Tactic-Core", duration: "~5 min", tone: "gold", active: true },
-  { id: "standard", name: "Standard Analysis", description: "Deep strategic assessment", costRange: "40-75 Edge", minCost: 40, maxCost: 75, model: "EAGOH Analyst", duration: "~8 min", tone: "success", active: true },
-  { id: "oracle", name: "Oracle Deep Dive", description: "Elite predictive modeling", costRange: "150-300 Edge", minCost: 150, maxCost: 300, model: "Oracle-Synapse", duration: "~15 min", tone: "violet", active: true },
-  { id: "premium-event", name: "Premium Event", description: "Event-focused intelligence", costRange: "75-150 Edge", minCost: 75, maxCost: 150, model: "Event-Lens Pro", duration: "~10 min", tone: "ember", active: true },
-  { id: "open-intelligence", name: "Open Intelligence", description: "Feed observations to your EAGOH", costRange: "10-25 Edge", minCost: 10, maxCost: 25, model: "Open Intel", duration: "Per entry", tone: "gold", active: true },
+  { id: "quick-check", name: "Quick Check", description: "Rapid intelligence check", costRange: "1-3 Neurons", minCost: 1, maxCost: 3, model: "Pulse-Lite", duration: "~2 min", tone: "cyan", active: true },
+  { id: "quick-analysis", name: "Quick Analysis", description: "Tactical strategic read", costRange: "10-15 Neurons", minCost: 10, maxCost: 15, model: "Tactic-Core", duration: "~5 min", tone: "gold", active: true },
+  { id: "standard", name: "Standard Analysis", description: "Deep strategic assessment", costRange: "40-75 Neurons", minCost: 40, maxCost: 75, model: "EAGOH Analyst", duration: "~8 min", tone: "success", active: true },
+  { id: "oracle", name: "Oracle Deep Dive", description: "Elite predictive modeling", costRange: "150-300 Neurons", minCost: 150, maxCost: 300, model: "Oracle-Synapse", duration: "~15 min", tone: "violet", active: true },
+  { id: "premium-event", name: "Premium Event", description: "Event-focused intelligence", costRange: "75-150 Neurons", minCost: 75, maxCost: 150, model: "Event-Lens Pro", duration: "~10 min", tone: "ember", active: true },
+  { id: "open-intelligence", name: "Open Intelligence", description: "Feed observations to your EAGOH", costRange: "10-25 Neurons", minCost: 10, maxCost: 25, model: "Open Intel", duration: "Per entry", tone: "gold", active: true },
   { id: "faction-network", name: "Faction Network", description: "Intelligence alliance network", costRange: "Free", minCost: 0, maxCost: 0, model: "Network View", duration: "Live", tone: "violet", active: true },
   { id: "my-rankings", name: "My Rankings", description: "Leaderboard positions & badges", costRange: "Free", minCost: 0, maxCost: 0, model: "Rankings View", duration: "Live", tone: "gold", active: true },
 ];
@@ -426,9 +426,9 @@ function SessionSetup({
       <View style={styles.setupFooter}>
         <View style={styles.setupCostRow}>
           <Zap color={palette.gold} size={16} />
-          <Text style={styles.setupCostLabel}>{cost} Edge</Text>
+          <Text style={styles.setupCostLabel}>{cost} Neurons</Text>
         </View>
-        {!canAfford ? <Text style={styles.errorText}>Insufficient Edge.</Text> : null}
+        {!canAfford ? <Text style={styles.errorText}>Insufficient Neurons.</Text> : null}
         <Pressable
           onPress={handleStart}
           disabled={!selectedEagohId || !prompt.trim() || !canAfford || !isDomainMatch}
@@ -580,7 +580,7 @@ function AnalystChatThread({
     // 2. Compute cost
     const cost = getSessionCost(currentSession.id as AnalystSessionType, prompt);
     if (currentEdgeTotal < cost) {
-      setError(`Insufficient Edge. Need ${cost} Edge (have ${currentEdgeTotal}).`);
+      setError(`Insufficient Neurons. Need ${cost} Neurons (have ${currentEdgeTotal}).`);
       setIsSending(false);
       setIsInitialising(false);
       return;
@@ -618,9 +618,9 @@ function AnalystChatThread({
         "premium-event": "premium_event",
       };
       try {
-        await spend(cost, reasonMap[currentSession.id] ?? "manual", `${currentSession.name} · ${cost} Edge`);
+        await spend(cost, reasonMap[currentSession.id] ?? "manual", `${currentSession.name} · ${cost} Neurons`);
       } catch {
-        setError("Edge deduction failed.");
+        setError("Neuron deduction failed.");
         setIsSending(false);
         setIsInitialising(false);
         return;
@@ -691,7 +691,7 @@ function AnalystChatThread({
 
     // Edge check
     if (edgeTotal < cost) {
-      setError(`Insufficient Edge. Need ${cost} Edge (have ${edgeTotal}).`);
+      setError(`Insufficient Neurons. Need ${cost} Neurons (have ${edgeTotal}).`);
       setInputText(text);
       setIsSending(false);
       return;
@@ -732,10 +732,10 @@ function AnalystChatThread({
       "premium-event": "premium_event",
     };
     try {
-      await spend(cost, reasonMap[session.id] ?? "manual", `${session.name} follow-up · ${cost} Edge`);
+      await spend(cost, reasonMap[session.id] ?? "manual", `${session.name} follow-up · ${cost} Neurons`);
     } catch {
       setMessages((prev) => [...prev, { id: `u-${Date.now()}`, sender: "user", text, cost }]);
-      setError("Edge deduction failed.");
+      setError("Neuron deduction failed.");
       setIsSending(false);
       return;
     }
@@ -868,7 +868,7 @@ function AnalystChatThread({
           <View key={msg.id} style={[styles.msgBubble, msg.sender === "analyst" ? styles.msgAnalyst : styles.msgUser]}>
             <Text style={msg.sender === "analyst" ? styles.msgAnalystText : styles.msgUserText}>{msg.text}</Text>
             {msg.confidence ? <Text style={styles.msgMeta}>Confidence {msg.confidence}%</Text> : null}
-            {msg.cost ? <Text style={styles.msgCost}>{msg.cost} Edge</Text> : null}
+            {msg.cost ? <Text style={styles.msgCost}>{msg.cost} Neurons</Text> : null}
           </View>
         ))}
         {isSending ? (
@@ -891,7 +891,7 @@ function AnalystChatThread({
           <View style={styles.composerCostRow}>
             <Zap color={canAfford ? palette.gold : palette.ember} size={12} />
             <Text style={[styles.composerCostText, !canAfford && { color: palette.ember }]}>
-              {estCost} Edge{!canAfford ? " (insufficient)" : ""}
+              {estCost} Neurons{!canAfford ? " (insufficient)" : ""}
             </Text>
           </View>
         ) : null}
@@ -919,7 +919,7 @@ function AnalystChatThread({
           </Pressable>
         </View>
         {!canAfford && inputText.trim() ? (
-          <Text style={styles.composerEdgeHint}>Insufficient Edge — visit Edge Store</Text>
+          <Text style={styles.composerEdgeHint}>Insufficient Neurons — visit Neuron Store</Text>
         ) : null}
       </View>
     </KeyboardAvoidingView>
@@ -1028,7 +1028,7 @@ function OpenIntelSession({
       setContent("");
       setSelectedTag("");
       setCustomTag("");
-      setSubmitSuccess(`Entry saved. ${result.edgeCost} Edge deducted.`);
+      setSubmitSuccess(`Entry saved. ${result.edgeCost} Neurons deducted.`);
       queryClient.invalidateQueries({ queryKey: ["oi", "feed", selectedEagohId] });
     } else {
       setSubmitError(result.error ?? "Submit failed.");
@@ -1317,7 +1317,7 @@ function OpenIntelSession({
             <View style={styles.oiSubmitCost}>
               <Zap color={balances.total >= edgeCost ? palette.gold : palette.ember} size={16} />
               <Text style={[styles.oiSubmitCostText, balances.total < edgeCost && { color: palette.ember }]}>
-                {edgeCost} Edge
+                {edgeCost} Neurons
               </Text>
             </View>
             <Pressable
@@ -1345,7 +1345,7 @@ function OpenIntelSession({
           </View>
           {balances.total < edgeCost ? (
             <Text style={styles.insufficientEdge}>
-              Insufficient Edge. Need {edgeCost} Edge (have {balances.total}).
+              Insufficient Neurons. Need {edgeCost} Neurons (have {balances.total}).
             </Text>
           ) : null}
         </View>

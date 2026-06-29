@@ -765,7 +765,7 @@ export async function purchaseSync(
   // Check buyer Edge
   const buyerTotal = (buyerProfile.edge_subscription ?? 0) + (buyerProfile.edge_purchased ?? 0);
   if (buyerTotal < totalCost) {
-    return { ok: false, error: `Insufficient Edge. Need ${totalCost} Edge (have ${buyerTotal}).` };
+    return { ok: false, error: `Insufficient Neurons. Need ${totalCost} Neurons (have ${buyerTotal}).` };
   }
 
   // Deduct Edge from buyer
@@ -779,7 +779,7 @@ export async function purchaseSync(
       `Sync purchase: ${syncLevel} for ${days} day(s)`,
     );
   } catch (err: unknown) {
-    return { ok: false, error: "Edge deduction failed. Please try again." };
+    return { ok: false, error: "Neuron deduction failed. Please try again." };
   }
 
   // Transfer Edge to vendor
@@ -834,7 +834,7 @@ export async function purchaseSync(
   if (pErr) {
     // Refund? For now just log
     console.warn("[marketplace] purchase record insert failed", pErr.message);
-    return { ok: false, error: "Failed to record purchase. Edge was deducted. Contact support." };
+    return { ok: false, error: "Failed to record purchase. Neurons were deducted. Contact support." };
   }
 
   // Update vendor stats

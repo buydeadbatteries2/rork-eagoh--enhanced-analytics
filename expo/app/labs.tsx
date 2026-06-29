@@ -133,10 +133,10 @@ const observationTypes: ObservationType[] = [
   { id: "fatigue", label: "Fatigue", tone: "gold" }, { id: "injury-concern", label: "Injury concern", tone: "ember" }, { id: "crowd-pressure", label: "Crowd pressure", tone: "violet" }, { id: "rivalry", label: "Rivalry", tone: "ember" }, { id: "momentum", label: "Momentum", tone: "success" }, { id: "coaching-decisions", label: "Coaching decisions", tone: "cyan" }, { id: "emotional-instability", label: "Emotional instability", tone: "violet" }, { id: "media-pressure", label: "Media pressure", tone: "gold" }, { id: "defensive-weakness", label: "Defensive weakness", tone: "ember" }, { id: "offensive-inconsistency", label: "Offensive inconsistency", tone: "cyan" }, { id: "weather-influence", label: "Weather influence", tone: "success" }, { id: "lineup-chemistry", label: "Lineup chemistry", tone: "gold" },
 ];
 const sessionTypes: SessionType[] = [
-  { id: "quick-check", name: "Quick Check", cost: "1-3 Edge", model: "Pulse-Lite", duration: "2 min", mood: "Alert + concise", tone: "cyan" },
-  { id: "quick-analytics", name: "Quick Analytics", cost: "12 Edge", model: "Tactic-Core", duration: "6 min", mood: "Tactical + calm", tone: "gold" },
-  { id: "standard", name: "Standard Session", cost: "20 Edge", model: "EAGOH Analyst", duration: "15 min", mood: "Emotionally aware", tone: "success" },
-  { id: "oracle", name: "Oracle Deep Dive", cost: "40 Edge", model: "Oracle-Synapse", duration: "30 min", mood: "Deep strategic", tone: "violet" },
+  { id: "quick-check", name: "Quick Check", cost: "1-3 Neurons", model: "Pulse-Lite", duration: "2 min", mood: "Alert + concise", tone: "cyan" },
+  { id: "quick-analytics", name: "Quick Analytics", cost: "12 Neurons", model: "Tactic-Core", duration: "6 min", mood: "Tactical + calm", tone: "gold" },
+  { id: "standard", name: "Standard Session", cost: "20 Neurons", model: "EAGOH Analyst", duration: "15 min", mood: "Emotionally aware", tone: "success" },
+  { id: "oracle", name: "Oracle Deep Dive", cost: "40 Neurons", model: "Oracle-Synapse", duration: "30 min", mood: "Deep strategic", tone: "violet" },
 ];
 const suggestedPrompts: string[] = ["Run a rivalry pressure read", "Explain the confidence shift", "What memory should I watch?", "Build a 5-day tactical forecast"];
 const memoryCards = [
@@ -436,7 +436,7 @@ export default function LabsScreen(): JSX.Element {
     if (selectedSession === "quick-check") {
       const cost = getQuickCheckCost(prompt);
       if (edgeTotal < cost) {
-        setAnalystError(`Insufficient Edge. Quick Check needs ${cost} Edge (have ${edgeTotal}).`);
+        setAnalystError(`Insufficient Neurons. Quick Check needs ${cost} Neurons (have ${edgeTotal}).`);
         return;
       }
       const kind = detectQuickCheckKind(prompt);
@@ -462,13 +462,13 @@ export default function LabsScreen(): JSX.Element {
 
       // Analyst succeeded — now deduct Edge
       try {
-        await deductQuickCheck(prompt, `Quick Check (${kind}) · ${cost} Edge`);
+        await deductQuickCheck(prompt, `Quick Check (${kind}) · ${cost} Neurons`);
       } catch (deductionErr) {
-        console.warn("Edge deduction failed after successful analyst call", deductionErr instanceof Error ? deductionErr.message : deductionErr);
+        console.warn("Neuron deduction failed after successful analyst call", deductionErr instanceof Error ? deductionErr.message : deductionErr);
         // Still show the reply — Edge deduction is a secondary concern
         setConnectedModel(result.model);
         setMessages((current) => [...current, { id: `a-${Date.now()}`, sender: "analyst", text: result.reply, confidence: result.confidence }]);
-        setAnalystError("Edge deduction failed, but here's your analysis.");
+        setAnalystError("Neuron deduction failed, but here's your analysis.");
         setIsAnalystTyping(false);
         return;
       }

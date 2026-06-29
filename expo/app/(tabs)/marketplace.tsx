@@ -2015,6 +2015,7 @@ export default function MarketplaceScreen(): JSX.Element {
       <PublicProfileModal
         visible={!!publicProfileVendorId}
         userId={publicProfileVendorId}
+        currentUserId={user?.id ?? null}
         onClose={() => setPublicProfileVendorId(null)}
       />
     </View>

@@ -495,6 +495,7 @@ export default function ProfileScreen(): JSX.Element {
       <PublicProfileModal
         visible={showPublicProfile}
         userId={user?.id ?? null}
+        currentUserId={user?.id ?? null}
         onClose={() => setShowPublicProfile(false)}
       />
     </View>

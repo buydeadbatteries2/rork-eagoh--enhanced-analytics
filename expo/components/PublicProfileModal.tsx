@@ -36,7 +36,6 @@ import {
   Zap,
 } from "lucide-react-native";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { useAuth } from "@/providers/AuthProvider";
 import {
   getPublicProfile,
   getPublicSocialAccounts,
@@ -57,6 +56,8 @@ import { Linking } from "react-native";
 export type PublicProfileModalProps = {
   visible: boolean;
   userId: string | null;
+  /** Authenticated user's ID, used to determine if profile belongs to self. Pass from caller to avoid consuming context inside React Native Modal. */
+  currentUserId?: string | null;
   onClose: () => void;
 };
 
@@ -479,10 +480,10 @@ const SectionHeader = memo(function SectionHeader({
 export default function PublicProfileModal({
   visible,
   userId,
+  currentUserId,
   onClose,
 }: PublicProfileModalProps): JSX.Element {
-  const { user } = useAuth();
-  const isSelf = !!(user && userId && user.id === userId);
+  const isSelf = !!(currentUserId && userId && currentUserId === userId);
 
   // Clear state when userId changes or modal opens
   const [profile, setProfile] = useState<PublicProfileData | null>(null);

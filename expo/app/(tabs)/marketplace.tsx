@@ -532,9 +532,10 @@ function PurchaseModal({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalSheet}>
+      <Pressable style={styles.modalOverlay} onPress={onClose}>
+        <Pressable style={styles.modalSheet} onPress={() => {}}>
           <LinearGradient colors={["#0A1628", "#050D18"]} style={StyleSheet.absoluteFill} />
+          {/* Fixed header */}
           <View style={styles.modalHandle} />
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Purchase Sync</Text>
@@ -543,6 +544,13 @@ function PurchaseModal({
             </Pressable>
           </View>
 
+          {/* Scrollable body */}
+          <ScrollView
+            style={styles.purchaseModalScroll}
+            contentContainerStyle={styles.purchaseModalScrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
           {/* EAGOH preview */}
           <View style={styles.modalEagohPreview}>
             <View style={styles.modalEagohImage}>
@@ -843,8 +851,9 @@ function PurchaseModal({
               </>
             )}
           </Pressable>
-        </View>
-      </View>
+          </ScrollView>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -2390,6 +2399,10 @@ const styles = StyleSheet.create({
   },
   modalSectionLabel: { color: palette.muted, fontSize: 11, fontWeight: "900", letterSpacing: 1, marginBottom: 4, marginTop: 12 },
   modalSectionDesc: { color: palette.text, fontSize: 12, fontWeight: "700", marginBottom: 8, lineHeight: 17 },
+
+  // Purchase modal scroll
+  purchaseModalScroll: { flex: 1 },
+  purchaseModalScrollContent: { paddingBottom: 24, gap: 0 },
 
   // Purchase modal specific
   modalEagohPreview: { flexDirection: "row", gap: 12, marginBottom: 8 },

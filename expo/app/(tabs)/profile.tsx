@@ -12,9 +12,10 @@ import { useWindowDimensions } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useHaptics } from "@/hooks/useHaptics";
 import { useRouter } from "expo-router";
-import { Award, BrainCircuit, Coins, Cpu, Crown, Flame, FlaskConical, Layers3, LogOut, Swords, Sparkles, Shield, Ticket, Trophy, TrendingUp, Zap } from "lucide-react-native";
+import { Award, BrainCircuit, Coins, Cpu, Crown, Eye, Flame, FlaskConical, Layers3, LogOut, Swords, Sparkles, Shield, Ticket, Trophy, TrendingUp, Zap } from "lucide-react-native";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
+import PublicProfileModal from "@/components/PublicProfileModal";
 import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/providers/AuthProvider";
@@ -162,6 +163,10 @@ export default function ProfileScreen(): JSX.Element {
   const { profile, effectiveSubscriptionTier, isAdminOverrideActive } = useProfile();
   const { palette: pal } = useAppTheme();
   const router = useRouter();
+
+  // Public profile self-preview state
+  const [showPublicProfile, setShowPublicProfile] = useState(false);
+
   const handleSignOut = useCallback((): void => {
     h.selection();
     signOut().catch((e) => console.warn("[auth] signOut failed", e));
@@ -456,6 +461,16 @@ export default function ProfileScreen(): JSX.Element {
             </View>
             <Cpu color={palette.muted} size={16} />
           </Pressable>
+          <Pressable onPress={() => { h.selection(); setShowPublicProfile(true); }} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
+            <View style={[styles.featureIconWrap, { borderColor: "rgba(54,245,255,0.35)" }]}>
+              <Eye color={palette.cyan} size={20} />
+            </View>
+            <View style={styles.featureInfo}>
+              <Text style={styles.featureTitle}>View My Public Profile</Text>
+              <Text style={styles.featureDesc}>Preview how other EAGOH users see your profile.</Text>
+            </View>
+            <Cpu color={palette.muted} size={16} />
+          </Pressable>
           <Pressable onPress={handleSettingsPress} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
             <View style={[styles.featureIconWrap, { borderColor: "rgba(120,180,255,0.35)" }]}>
               <Crown color={palette.text} size={20} />
@@ -477,6 +492,11 @@ export default function ProfileScreen(): JSX.Element {
       <SafeAreaView edges={["top"]} style={styles.safe}>
         <FlatList data={sections} keyExtractor={(item) => item.id} renderItem={renderSection} contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} {...LIST_PERFORMANCE_PROPS} />
       </SafeAreaView>
+      <PublicProfileModal
+        visible={showPublicProfile}
+        userId={user?.id ?? null}
+        onClose={() => setShowPublicProfile(false)}
+      />
     </View>
   );
 }

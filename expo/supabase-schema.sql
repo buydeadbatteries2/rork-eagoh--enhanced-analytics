@@ -915,6 +915,13 @@ alter table public.profiles add column if not exists banner_url text;
 alter table public.profiles add column if not exists public_display_title text;
 alter table public.profiles add column if not exists is_social_verified boolean default false;
 alter table public.profiles add column if not exists social_verified_platform text;
+alter table public.profiles add column if not exists bio text;
+alter table public.profiles add column if not exists display_name text;
+alter table public.profiles add column if not exists public_profile_enabled boolean default true;
+alter table public.profiles add column if not exists show_social_accounts boolean default true;
+alter table public.profiles add column if not exists show_credentials boolean default true;
+alter table public.profiles add column if not exists show_public_eagohs boolean default true;
+alter table public.profiles add column if not exists show_faction boolean default false;
 
 -- =============================================================================
 -- USER SOCIAL ACCOUNTS (connected social media verification)

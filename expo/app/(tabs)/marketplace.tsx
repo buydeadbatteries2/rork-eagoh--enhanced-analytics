@@ -34,6 +34,7 @@ import {
   X,
 } from "lucide-react-native";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
+import PublicProfileModal from "@/components/PublicProfileModal";
 import {
   ActivityIndicator,
   Alert,
@@ -304,11 +305,13 @@ const ListingCard = memo(function ListingCard({
   isPaid,
   onPurchase,
   reputation,
+  onViewVendorProfile,
 }: {
   item: EnrichedListing;
   isPaid: boolean;
   onPurchase: (listing: EnrichedListing) => void;
   reputation: ReputationRow | undefined;
+  onViewVendorProfile: (vendorId: string) => void;
 }): JSX.Element {
   const eagoh = item.eagoh;
   const domain = eagoh?.domain ?? eagoh?.sport ?? "Unknown";
@@ -424,7 +427,15 @@ const ListingCard = memo(function ListingCard({
 
         {/* Vendor strip */}
         <View style={styles.vendorStrip}>
-          <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: palette.graphite, overflow: "hidden" as const, borderWidth: 1, borderColor: palette.line }}>
+          <Pressable
+            onPress={() => onViewVendorProfile(item.vendor_id)}
+            accessibilityLabel={`Open vendor profile for ${item.vendor_username ?? "Anonymous"}`}
+            accessibilityRole="button"
+            style={({ pressed }) => [
+              { width: 22, height: 22, borderRadius: 11, backgroundColor: palette.graphite, overflow: "hidden" as const, borderWidth: 1, borderColor: palette.line },
+              pressed && { opacity: 0.7, borderColor: palette.cyan },
+            ]}
+          >
             {item.vendor_avatar_url ? (
               <Image source={{ uri: item.vendor_avatar_url }} style={{ width: "100%", height: "100%" }} />
             ) : (
@@ -432,7 +443,7 @@ const ListingCard = memo(function ListingCard({
                 <UserCheck color={palette.muted} size={10} />
               </View>
             )}
-          </View>
+          </Pressable>
           <Text style={styles.vendorText}>{item.vendor_username ?? "Anonymous"}</Text>
           {item.is_vendor_verified && (
             <BadgeCheck color={palette.cyan} size={12} />
@@ -489,6 +500,7 @@ function PurchaseModal({
   onToggleSourceInfo,
   purchasing,
   reputation,
+  onViewVendorProfile,
 }: {
   visible: boolean;
   listing: EnrichedListing | null;
@@ -498,6 +510,7 @@ function PurchaseModal({
   onToggleSourceInfo: () => void;
   purchasing: boolean;
   reputation: ReputationRow | undefined;
+  onViewVendorProfile: (vendorId: string) => void;
 }): JSX.Element {
   const [selectedLevel, setSelectedLevel] = useState<SyncLevel>("25%");
   const [selectedDays, setSelectedDays] = useState<number>(1);
@@ -577,7 +590,16 @@ function PurchaseModal({
                 </Pressable>
               </View>
               <Text style={styles.modalEagohDomain}>{domainLabel(eagoh?.domain ?? eagoh?.sport ?? "")}</Text>
-              <Text style={styles.modalVendor}>by {listing.vendor_username ?? "Anonymous"}</Text>
+              <Pressable
+                onPress={() => onViewVendorProfile(listing.vendor_id)}
+                accessibilityLabel={`Open vendor profile for ${listing.vendor_username ?? "Anonymous"}`}
+                accessibilityRole="link"
+                style={({ pressed }) => [pressed && { opacity: 0.7 }]}
+              >
+                <Text style={[styles.modalVendor, { textDecorationLine: "underline" as const }]}>
+                  by {listing.vendor_username ?? "Anonymous"}
+                </Text>
+              </Pressable>
             </View>
           </View>
 
@@ -1591,6 +1613,7 @@ export default function MarketplaceScreen(): JSX.Element {
   const [updating, setUpdating] = useState(false);
 
   const [showSourceInfo, setShowSourceInfo] = useState(false);
+  const [publicProfileVendorId, setPublicProfileVendorId] = useState<string | null>(null);
 
   const { effectiveSubscriptionTier } = useProfile();
   const isPaid = canTransact(effectiveSubscriptionTier);
@@ -1796,6 +1819,7 @@ export default function MarketplaceScreen(): JSX.Element {
                     isPaid={isPaid}
                     onPurchase={(l) => setPurchaseModal(l)}
                     reputation={repMap.get(item.eagoh_id)}
+                    onViewVendorProfile={(vendorId) => setPublicProfileVendorId(vendorId)}
                   />
                 ))}
               </ScrollView>
@@ -1973,6 +1997,7 @@ export default function MarketplaceScreen(): JSX.Element {
         onToggleSourceInfo={() => { console.log("[Exchange] Toggling source info, current:", showSourceInfo); setShowSourceInfo((v) => !v); }}
         purchasing={purchasing}
         reputation={repMap.get(purchaseModal?.eagoh_id ?? "")}
+        onViewVendorProfile={(vendorId) => setPublicProfileVendorId(vendorId)}
       />
       <CreateListingModal
         visible={createModal}
@@ -1986,6 +2011,11 @@ export default function MarketplaceScreen(): JSX.Element {
         onClose={() => setEditModal(null)}
         onUpdated={loadData}
         updating={updating}
+      />
+      <PublicProfileModal
+        visible={!!publicProfileVendorId}
+        userId={publicProfileVendorId}
+        onClose={() => setPublicProfileVendorId(null)}
       />
     </View>
   );

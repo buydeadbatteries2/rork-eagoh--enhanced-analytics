@@ -419,21 +419,16 @@ export default function EdgeStoreScreen(): JSX.Element {
   const [confirmRcPkg, setConfirmRcPkg] = useState<PurchasesPackage | null>(null);
   const [purchasing, setPurchasing] = useState(false);
 
-  // Map RevenueCat packages to local EdgePack metadata, sorted by sortKey
-  const displayPacks = useMemo(() => {
-    // Dev log: diagnose pack visibility
+  // Map RevenueCat packages to local EdgePack metadata, sorted by sortKey.
+  // Always falls back to local EDGE_PACKS when RC has no matching consumable packs.
+  const { displayPacks, usingFallbackPacks } = useMemo(() => {
     console.log("[NeuronStore] RC configured:", rcConfigured);
     console.log("[NeuronStore] RC packages count:", rcPackages.length);
     if (rcPackages.length > 0) {
       console.log("[NeuronStore] RC package identifiers:", rcPackages.map((p) => p.identifier));
     }
 
-    if (rcPackages.length === 0) {
-      console.log("[NeuronStore] Offerings not loaded — using fallback packs");
-      // Fallback: show local packs sorted by price when RevenueCat isn't ready
-      return EDGE_PACKS.map((ep) => ({ edgePack: ep, rcPackage: null }))
-        .sort((a, b) => a.edgePack.sortKey - b.edgePack.sortKey);
-    }
+    // Attempt to match RC packages against local EDGE_PACKS
     const mapped: { edgePack: EdgePack; rcPackage: PurchasesPackage }[] = [];
     for (const rcPkg of rcPackages) {
       const ep = findEdgePack(rcPkg.identifier);
@@ -444,9 +439,21 @@ export default function EdgeStoreScreen(): JSX.Element {
         console.log("[NeuronStore] No local match for RC package:", rcPkg.identifier);
       }
     }
-    console.log("[NeuronStore] Displayable packs:", mapped.length);
-    mapped.sort((a, b) => a.edgePack.sortKey - b.edgePack.sortKey);
-    return mapped;
+
+    if (mapped.length > 0) {
+      console.log("[NeuronStore] Displayable RC packs:", mapped.length);
+      console.log("[NeuronStore] usingFallbackPacks: false");
+      mapped.sort((a, b) => a.edgePack.sortKey - b.edgePack.sortKey);
+      return { displayPacks: mapped, usingFallbackPacks: false };
+    }
+
+    // Fallback: show local packs when RC has no matching consumable Neuron packs
+    console.log("[NeuronStore] No usable RC packs — using fallback EDGE_PACKS");
+    console.log("[NeuronStore] usingFallbackPacks: true");
+    console.log("[NeuronStore] Fallback pack count:", EDGE_PACKS.length);
+    const fallback = EDGE_PACKS.map((ep) => ({ edgePack: ep, rcPackage: null as PurchasesPackage | null }))
+      .sort((a, b) => a.edgePack.sortKey - b.edgePack.sortKey);
+    return { displayPacks: fallback, usingFallbackPacks: true };
   }, [rcPackages, rcConfigured]);
 
   const handleBack = useCallback((): void => {
@@ -547,12 +554,23 @@ export default function EdgeStoreScreen(): JSX.Element {
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* RevenueCat status banner */}
+        {/* RevenueCat / Test Mode status banner */}
         <View style={styles.statusBanner}>
-          <ShieldCheck color={palette.cyan} size={16} />
-          <Text style={styles.statusBannerText}>
-            {rcConfigured ? "Purchases secured by RevenueCat" : "Neuron Store — direct wallet credit"}
-          </Text>
+          {usingFallbackPacks ? (
+            <>
+              <AlertTriangle color={palette.gold} size={16} />
+              <Text style={[styles.statusBannerText, { color: palette.gold }]}>
+                Test Purchase Mode — RevenueCat packs not loaded.
+              </Text>
+            </>
+          ) : (
+            <>
+              <ShieldCheck color={palette.cyan} size={16} />
+              <Text style={styles.statusBannerText}>
+                Purchases secured by RevenueCat
+              </Text>
+            </>
+          )}
         </View>
 
         {/* Balance card */}
@@ -601,7 +619,7 @@ export default function EdgeStoreScreen(): JSX.Element {
           <Text style={{ color: palette.text, fontSize: 16, fontWeight: "900" as const }}>Neuron Packs</Text>
         </View>
 
-        {/* Pack cards */}
+        {/* Pack cards — empty state only as absolute last resort */}
         {displayPacks.length > 0 ? (
           <View style={styles.packGrid}>
             {displayPacks.map(({ edgePack, rcPackage }) => (
@@ -609,7 +627,7 @@ export default function EdgeStoreScreen(): JSX.Element {
                 key={edgePack.productId}
                 pack={edgePack}
                 rcPackage={rcPackage ?? {
-                  identifier: edgePack.productId,
+                  identifier: `store_${edgePack.productId}`,
                   offeringIdentifier: "default",
                   packageType: "CUSTOM" as const,
                   product: {

@@ -485,6 +485,7 @@ function PurchaseModal({
   listing,
   onClose,
   onConfirm,
+  onShowInfo,
   purchasing,
   reputation,
 }: {
@@ -492,42 +493,22 @@ function PurchaseModal({
   listing: EnrichedListing | null;
   onClose: () => void;
   onConfirm: (level: SyncLevel, days: number) => void;
+  onShowInfo: () => void;
   purchasing: boolean;
   reputation: ReputationRow | undefined;
 }): JSX.Element {
   const [selectedLevel, setSelectedLevel] = useState<SyncLevel>("25%");
   const [selectedDays, setSelectedDays] = useState<number>(1);
-  const [showDetails, setShowDetails] = useState(false);
-  const [credentials, setCredentials] = useState<EagohCredentialsRow | null>(null);
-  const [loadingCredentials, setLoadingCredentials] = useState(false);
 
   useEffect(() => {
     setSelectedLevel("25%");
     setSelectedDays(1);
-    setShowDetails(false);
-    setCredentials(null);
-    setLoadingCredentials(false);
   }, [listing?.id]);
-
-  const handleToggleDetails = useCallback(() => {
-    const next = !showDetails;
-    setShowDetails(next);
-    // Fetch vendor credentials when opening details
-    if (next && listing?.vendor_id && !credentials) {
-      setLoadingCredentials(true);
-      getPublicEagohCredentials(listing.eagoh_id)
-        .then((row) => { setCredentials(row); setLoadingCredentials(false); })
-        .catch(() => setLoadingCredentials(false));
-    }
-  }, [showDetails, listing?.vendor_id, credentials]);
 
   if (!listing) return <></>;
 
   const eagoh = listing.eagoh;
   const totalCost = computeTotalCost(listing, selectedLevel, selectedDays);
-  const eagohRank: RankTier = (reputation?.rank as RankTier) ?? "Dormant";
-  const rkColor = rankColor(eagohRank);
-  const repScore = reputation?.reputation_score ?? 0;
   const imageUrl = eagoh?.image_thumb_url ?? eagoh?.image_url ?? null;
 
   return (
@@ -553,14 +534,13 @@ function PurchaseModal({
               <View style={styles.modalEagohNameRow}>
                 <Text style={styles.modalEagohName}>{eagoh?.name}</Text>
                 <Pressable
-                  onPress={handleToggleDetails}
+                  onPress={onShowInfo}
                   style={({ pressed }) => [
                     styles.infoIconBtn,
                     pressed && styles.pressed,
-                    showDetails && styles.infoIconBtnActive,
                   ]}
                 >
-                  <Info color={showDetails ? palette.cyan : palette.muted} size={16} />
+                  <Info color={palette.muted} size={16} />
                 </Pressable>
               </View>
               <Text style={styles.modalEagohDomain}>{domainLabel(eagoh?.domain ?? eagoh?.sport ?? "")}</Text>
@@ -568,212 +548,7 @@ function PurchaseModal({
             </View>
           </View>
 
-          {/* EAGOH Details Panel */}
-          {showDetails && (
-            <View style={styles.detailsPanel}>
-              <LinearGradient colors={["rgba(0,20,40,0.60)", "rgba(5,15,30,0.85)"]} style={StyleSheet.absoluteFill} />
-              <ScrollView
-                style={styles.detailsPanelScroll}
-                showsVerticalScrollIndicator={true}
-                keyboardShouldPersistTaps="handled"
-              >
-                {/* Reputation */}
-                <View style={styles.detailRow}>
-                  <View style={styles.detailIconWrap}>
-                    <Award color={palette.gold} size={14} />
-                  </View>
-                  <Text style={styles.detailLabel}>Reputation</Text>
-                  <Text style={[styles.detailValue, { color: rkColor }]}>
-                    {rankEmoji(eagohRank)} {eagohRank} {repScore > 0 ? `· ${repScore}` : ""}
-                  </Text>
-                </View>
 
-                {/* Sync Success */}
-                <View style={styles.detailRow}>
-                  <View style={styles.detailIconWrap}>
-                    <Signal color={palette.success} size={14} />
-                  </View>
-                  <Text style={styles.detailLabel}>Sync Success</Text>
-                  <Text style={styles.detailValue}>{listing.sync_success_score}</Text>
-                </View>
-
-                {/* Quality Score */}
-                <View style={styles.detailRow}>
-                  <View style={styles.detailIconWrap}>
-                    <Sparkles color={palette.cyan} size={14} />
-                  </View>
-                  <Text style={styles.detailLabel}>Quality Score</Text>
-                  <Text style={styles.detailValue}>{listing.avg_quality_score}</Text>
-                </View>
-
-                {/* Edge Earned */}
-                <View style={styles.detailRow}>
-                  <View style={styles.detailIconWrap}>
-                    <Coins color={palette.gold} size={14} />
-                  </View>
-                  <Text style={styles.detailLabel}>Edge Earned</Text>
-                  <Text style={styles.detailValue}>{listing.edge_earned_this_month} EC/mo</Text>
-                </View>
-
-                {/* Vendor Rank */}
-                <View style={styles.detailRow}>
-                  <View style={styles.detailIconWrap}>
-                    <Crown color={palette.violet} size={14} />
-                  </View>
-                  <Text style={styles.detailLabel}>Vendor Rank</Text>
-                  <Text style={styles.detailValue}>{listing.vendor_rank}</Text>
-                </View>
-
-                {/* Market Trust */}
-                {reputation && (
-                  <View style={styles.detailRow}>
-                    <View style={styles.detailIconWrap}>
-                      <Shield color={rkColor} size={14} />
-                    </View>
-                    <Text style={styles.detailLabel}>Market Trust</Text>
-                    <Text style={[styles.detailValue, { color: rkColor }]}>{reputation.marketplace_trust}</Text>
-                  </View>
-                )}
-
-                {/* DNA Tags */}
-                {(eagoh?.dna ?? []).length > 0 && (
-                  <View style={styles.detailRowCol}>
-                    <View style={styles.detailIconWrap}>
-                      <Dna color={palette.violet} size={14} />
-                    </View>
-                    <Text style={styles.detailLabel}>DNA</Text>
-                    <View style={styles.detailDnaWrap}>
-                      {(eagoh!.dna ?? []).map((d) => (
-                        <View key={d} style={styles.detailDnaTag}>
-                          <Text style={styles.detailDnaTagText}>{d}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  </View>
-                )}
-
-                {/* Team Info */}
-                {(eagoh?.pro_team_focus_name || eagoh?.college_team_focus_name || listing.fanatic_teams.length > 0) && (
-                  <View style={styles.detailRow}>
-                    <View style={styles.detailIconWrap}>
-                      <Star color={palette.gold} size={14} />
-                    </View>
-                    <Text style={styles.detailLabel}>Teams</Text>
-                    <Text style={styles.detailValue} numberOfLines={2}>
-                      {[
-                        eagoh?.pro_team_focus_name,
-                        eagoh?.college_team_focus_name,
-                        ...listing.fanatic_teams.map((id: string) => getTeamById(id)?.display_name ?? id),
-                      ].filter(Boolean).join(" · ")}
-                    </Text>
-                  </View>
-                )}
-
-                {/* Source Credentials */}
-                {(credentials || listing.has_credentials || loadingCredentials) && (
-                  <View style={styles.sourceCredentialsSection}>
-                    <View style={styles.sourceCredentialsHeader}>
-                      <BookOpen color={palette.cyan} size={13} />
-                      <Text style={styles.sourceCredentialsTitle}>Source Credentials</Text>
-                    </View>
-                    <LinearGradient colors={["rgba(0,20,40,0.55)", "rgba(5,15,30,0.70)"]} style={StyleSheet.absoluteFill} />
-                    {loadingCredentials ? (
-                      <View style={{ padding: 12, alignItems: "center" }}>
-                        <ActivityIndicator color={palette.cyan} size="small" />
-                      </View>
-                    ) : credentials ? (
-                      <View style={styles.sourceCredentialsBody}>
-                        {/* Vendor username */}
-                        <View style={styles.sourceCredRow}>
-                          <View style={styles.detailIconWrap}>
-                            <UserCheck color={palette.muted} size={12} />
-                          </View>
-                          <Text style={styles.detailLabel}>Vendor</Text>
-                          <Text style={styles.detailValue}>{listing.vendor_username ?? "Anonymous"}</Text>
-                        </View>
-                        {/* Public display title */}
-                        {credentials.public_title ? (
-                          <View style={styles.sourceCredRow}>
-                            <View style={styles.detailIconWrap}>
-                              <Award color={palette.cyan} size={12} />
-                            </View>
-                            <Text style={styles.detailLabel}>Title</Text>
-                            <Text style={styles.detailValue}>{credentials.public_title}</Text>
-                          </View>
-                        ) : null}
-                        {/* Domain expertise */}
-                        {credentials.domain_expertise ? (
-                          <View style={styles.sourceCredRow}>
-                            <View style={styles.detailIconWrap}>
-                              <ScrollText color={palette.cyan} size={12} />
-                            </View>
-                            <Text style={styles.detailLabel}>Expertise</Text>
-                            <Text style={styles.detailValue}>{credentials.domain_expertise}</Text>
-                          </View>
-                        ) : null}
-                        {/* Experience summary */}
-                        {credentials.experience_summary ? (
-                          <View style={styles.sourceCredRowCol}>
-                            <View style={styles.detailIconWrap}>
-                              <BookOpen color={palette.cyan} size={12} />
-                            </View>
-                            <Text style={styles.detailLabel}>Experience</Text>
-                            <Text style={styles.sourceCredBodyText} numberOfLines={4}>
-                              {credentials.experience_summary}
-                            </Text>
-                          </View>
-                        ) : null}
-                        {/* Accolades */}
-                        {credentials.accolades ? (
-                          <View style={styles.sourceCredRowCol}>
-                            <View style={styles.detailIconWrap}>
-                              <Star color={palette.gold} size={12} />
-                            </View>
-                            <Text style={styles.detailLabel}>Achievements</Text>
-                            <Text style={styles.sourceCredBodyText} numberOfLines={3}>
-                              {credentials.accolades}
-                            </Text>
-                          </View>
-                        ) : null}
-                        {/* Years experience */}
-                        {credentials.years_experience ? (
-                          <View style={styles.sourceCredRow}>
-                            <View style={styles.detailIconWrap}>
-                              <Clock color={palette.muted} size={12} />
-                            </View>
-                            <Text style={styles.detailLabel}>Years</Text>
-                            <Text style={styles.detailValue}>{credentials.years_experience} years</Text>
-                          </View>
-                        ) : null}
-                        {/* Credibility tags */}
-                        {credentials.credibility_tags && credentials.credibility_tags.length > 0 ? (
-                          <View style={styles.sourceCredRowCol}>
-                            <View style={styles.detailIconWrap}>
-                              <Tag color={palette.cyan} size={12} />
-                            </View>
-                            <Text style={styles.detailLabel}>Tags</Text>
-                            <View style={styles.detailDnaWrap}>
-                              {credentials.credibility_tags.map((tag: string) => (
-                                <View key={tag} style={styles.detailDnaTag}>
-                                  <Text style={styles.detailDnaTagText}>{tag}</Text>
-                                </View>
-                              ))}
-                            </View>
-                          </View>
-                        ) : null}
-                      </View>
-                    ) : listing.has_credentials ? (
-                      <View style={styles.sourceCredentialsBody}>
-                        <Text style={styles.sourceCredPlaceholder}>
-                          No source credentials have been added for this EAGOH yet.
-                        </Text>
-                      </View>
-                    ) : null}
-                  </View>
-                )}
-              </ScrollView>
-            </View>
-          )}
 
           {/* Sync level */}
           <Text style={styles.modalSectionLabel}>Sync Level</Text>
@@ -850,6 +625,306 @@ function PurchaseModal({
           </Pressable>
         </Pressable>
       </Pressable>
+    </Modal>
+  );
+}
+
+// ── Source Info Modal ──────────────────────────────────────────────────
+
+function SourceInfoModal({
+  visible,
+  listing,
+  onClose,
+  reputation,
+}: {
+  visible: boolean;
+  listing: EnrichedListing | null;
+  onClose: () => void;
+  reputation: ReputationRow | undefined;
+}): JSX.Element {
+  const [credentials, setCredentials] = useState<EagohCredentialsRow | null>(null);
+  const [loadingCredentials, setLoadingCredentials] = useState(false);
+
+  useEffect(() => {
+    if (visible && listing) {
+      setCredentials(null);
+      setLoadingCredentials(true);
+      getPublicEagohCredentials(listing.eagoh_id)
+        .then((row) => { setCredentials(row); setLoadingCredentials(false); })
+        .catch(() => setLoadingCredentials(false));
+    }
+  }, [visible, listing?.eagoh_id]);
+
+  if (!listing) return <></>;
+
+  const eagoh = listing.eagoh;
+  const eagohRank: RankTier = (reputation?.rank as RankTier) ?? "Dormant";
+  const rkColor = rankColor(eagohRank);
+  const repScore = reputation?.reputation_score ?? 0;
+  const imageUrl = eagoh?.image_thumb_url ?? eagoh?.image_url ?? null;
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.infoOverlay}>
+        <View style={styles.infoContainer}>
+          <LinearGradient colors={["#0A1628", "#050D18"]} style={StyleSheet.absoluteFill} />
+
+          {/* Fixed header */}
+          <View style={styles.infoHeader}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <BookOpen color={palette.cyan} size={18} />
+              <Text style={styles.infoHeaderTitle}>Source Info</Text>
+            </View>
+            <Pressable onPress={onClose} style={styles.modalClose}>
+              <X color={palette.muted} size={20} />
+            </Pressable>
+          </View>
+
+          {/* Scrollable body */}
+          <ScrollView
+            style={styles.infoBody}
+            contentContainerStyle={styles.infoBodyContent}
+            showsVerticalScrollIndicator
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* EAGOH name + image preview */}
+            <View style={styles.infoEagohPreview}>
+              <View style={styles.modalEagohImage}>
+                <OptimizedEagohImage tone="cyan" label={eagoh?.name ?? "EAGOH"} size="banner" imageUrl={imageUrl} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalEagohName}>{eagoh?.name}</Text>
+                <Text style={styles.modalEagohDomain}>{domainLabel(eagoh?.domain ?? eagoh?.sport ?? "")}</Text>
+                <Text style={styles.modalVendor}>by {listing.vendor_username ?? "Anonymous"}</Text>
+                {listing.is_vendor_verified && (
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
+                    <BadgeCheck color={palette.cyan} size={12} />
+                    <Text style={{ color: palette.cyan, fontSize: 10, fontWeight: "800" }}>Verified</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+
+            {/* Divider */}
+            <View style={styles.infoDivider} />
+
+            {/* Reputation */}
+            <View style={styles.detailRow}>
+              <View style={styles.detailIconWrap}>
+                <Award color={palette.gold} size={14} />
+              </View>
+              <Text style={styles.detailLabel}>Reputation</Text>
+              <Text style={[styles.detailValue, { color: rkColor }]}>
+                {rankEmoji(eagohRank)} {eagohRank} {repScore > 0 ? `· ${repScore}` : ""}
+              </Text>
+            </View>
+
+            {/* Sync Success */}
+            <View style={styles.detailRow}>
+              <View style={styles.detailIconWrap}>
+                <Signal color={palette.success} size={14} />
+              </View>
+              <Text style={styles.detailLabel}>Sync Success</Text>
+              <Text style={styles.detailValue}>{listing.sync_success_score}</Text>
+            </View>
+
+            {/* Quality Score */}
+            <View style={styles.detailRow}>
+              <View style={styles.detailIconWrap}>
+                <Sparkles color={palette.cyan} size={14} />
+              </View>
+              <Text style={styles.detailLabel}>Quality Score</Text>
+              <Text style={styles.detailValue}>{listing.avg_quality_score}</Text>
+            </View>
+
+            {/* Edge Earned */}
+            <View style={styles.detailRow}>
+              <View style={styles.detailIconWrap}>
+                <Coins color={palette.gold} size={14} />
+              </View>
+              <Text style={styles.detailLabel}>Edge Earned</Text>
+              <Text style={styles.detailValue}>{listing.edge_earned_this_month} EC/mo</Text>
+            </View>
+
+            {/* Vendor Rank */}
+            <View style={styles.detailRow}>
+              <View style={styles.detailIconWrap}>
+                <Crown color={palette.violet} size={14} />
+              </View>
+              <Text style={styles.detailLabel}>Vendor Rank</Text>
+              <Text style={styles.detailValue}>{listing.vendor_rank}</Text>
+            </View>
+
+            {/* Market Trust */}
+            {reputation && (
+              <View style={styles.detailRow}>
+                <View style={styles.detailIconWrap}>
+                  <Shield color={rkColor} size={14} />
+                </View>
+                <Text style={styles.detailLabel}>Market Trust</Text>
+                <Text style={[styles.detailValue, { color: rkColor }]}>{reputation.marketplace_trust}</Text>
+              </View>
+            )}
+
+            {/* DNA Tags */}
+            {(eagoh?.dna ?? []).length > 0 && (
+              <View style={styles.detailRowCol}>
+                <View style={styles.detailIconWrap}>
+                  <Dna color={palette.violet} size={14} />
+                </View>
+                <Text style={styles.detailLabel}>DNA</Text>
+                <View style={styles.detailDnaWrap}>
+                  {(eagoh!.dna ?? []).map((d) => (
+                    <View key={d} style={styles.detailDnaTag}>
+                      <Text style={styles.detailDnaTagText}>{d}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {/* Team Info */}
+            {(eagoh?.pro_team_focus_name || eagoh?.college_team_focus_name || listing.fanatic_teams.length > 0) && (
+              <View style={styles.detailRow}>
+                <View style={styles.detailIconWrap}>
+                  <Star color={palette.gold} size={14} />
+                </View>
+                <Text style={styles.detailLabel}>Teams</Text>
+                <Text style={styles.detailValue} numberOfLines={3}>
+                  {[
+                    eagoh?.pro_team_focus_name,
+                    eagoh?.college_team_focus_name,
+                    ...listing.fanatic_teams.map((id: string) => getTeamById(id)?.display_name ?? id),
+                  ].filter(Boolean).join(" · ")}
+                </Text>
+              </View>
+            )}
+
+            {/* Divider before credentials */}
+            {(credentials || listing.has_credentials || loadingCredentials) && (
+              <View style={styles.infoDivider} />
+            )}
+
+            {/* Source Credentials */}
+            {(credentials || listing.has_credentials || loadingCredentials) && (
+              <View style={styles.sourceCredentialsSection}>
+                <View style={styles.sourceCredentialsHeader}>
+                  <BookOpen color={palette.cyan} size={13} />
+                  <Text style={styles.sourceCredentialsTitle}>Source Credentials</Text>
+                </View>
+                <LinearGradient colors={["rgba(0,20,40,0.55)", "rgba(5,15,30,0.70)"]} style={StyleSheet.absoluteFill} />
+                {loadingCredentials ? (
+                  <View style={{ padding: 16, alignItems: "center" }}>
+                    <ActivityIndicator color={palette.cyan} size="small" />
+                  </View>
+                ) : credentials ? (
+                  <View style={styles.sourceCredentialsBody}>
+                    {/* Vendor username */}
+                    <View style={styles.sourceCredRow}>
+                      <View style={styles.detailIconWrap}>
+                        <UserCheck color={palette.muted} size={12} />
+                      </View>
+                      <Text style={styles.detailLabel}>Vendor</Text>
+                      <Text style={styles.detailValue}>{listing.vendor_username ?? "Anonymous"}</Text>
+                    </View>
+                    {/* Public display title */}
+                    {credentials.public_title ? (
+                      <View style={styles.sourceCredRow}>
+                        <View style={styles.detailIconWrap}>
+                          <Award color={palette.cyan} size={12} />
+                        </View>
+                        <Text style={styles.detailLabel}>Title</Text>
+                        <Text style={styles.detailValue}>{credentials.public_title}</Text>
+                      </View>
+                    ) : null}
+                    {/* Domain expertise */}
+                    {credentials.domain_expertise ? (
+                      <View style={styles.sourceCredRow}>
+                        <View style={styles.detailIconWrap}>
+                          <ScrollText color={palette.cyan} size={12} />
+                        </View>
+                        <Text style={styles.detailLabel}>Expertise</Text>
+                        <Text style={styles.detailValue}>{credentials.domain_expertise}</Text>
+                      </View>
+                    ) : null}
+                    {/* Experience summary */}
+                    {credentials.experience_summary ? (
+                      <View style={styles.sourceCredRowCol}>
+                        <View style={styles.detailIconWrap}>
+                          <BookOpen color={palette.cyan} size={12} />
+                        </View>
+                        <Text style={styles.detailLabel}>Experience</Text>
+                        <Text style={styles.sourceCredBodyText} numberOfLines={10}>
+                          {credentials.experience_summary}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {/* Accolades */}
+                    {credentials.accolades ? (
+                      <View style={styles.sourceCredRowCol}>
+                        <View style={styles.detailIconWrap}>
+                          <Star color={palette.gold} size={12} />
+                        </View>
+                        <Text style={styles.detailLabel}>Achievements</Text>
+                        <Text style={styles.sourceCredBodyText} numberOfLines={6}>
+                          {credentials.accolades}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {/* Years experience */}
+                    {credentials.years_experience ? (
+                      <View style={styles.sourceCredRow}>
+                        <View style={styles.detailIconWrap}>
+                          <Clock color={palette.muted} size={12} />
+                        </View>
+                        <Text style={styles.detailLabel}>Years</Text>
+                        <Text style={styles.detailValue}>{credentials.years_experience} years</Text>
+                      </View>
+                    ) : null}
+                    {/* Credibility tags */}
+                    {credentials.credibility_tags && credentials.credibility_tags.length > 0 ? (
+                      <View style={styles.sourceCredRowCol}>
+                        <View style={styles.detailIconWrap}>
+                          <Tag color={palette.cyan} size={12} />
+                        </View>
+                        <Text style={styles.detailLabel}>Tags</Text>
+                        <View style={styles.detailDnaWrap}>
+                          {credentials.credibility_tags.map((tag: string) => (
+                            <View key={tag} style={styles.detailDnaTag}>
+                              <Text style={styles.detailDnaTagText}>{tag}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : listing.has_credentials ? (
+                  <View style={styles.sourceCredentialsBody}>
+                    <Text style={styles.sourceCredPlaceholder}>
+                      No source credentials have been added for this EAGOH yet.
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            )}
+          </ScrollView>
+
+          {/* Fixed footer */}
+          <View style={styles.infoFooter}>
+            <Pressable
+              onPress={onClose}
+              style={({ pressed }) => [
+                styles.confirmButton,
+                { marginTop: 0 },
+                pressed && styles.pressed,
+              ]}
+            >
+              <X color={palette.void} size={17} />
+              <Text style={styles.confirmButtonText}>Close</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
     </Modal>
   );
 }
@@ -1516,6 +1591,8 @@ export default function MarketplaceScreen(): JSX.Element {
   const [editModal, setEditModal] = useState<EnrichedListing | null>(null);
   const [updating, setUpdating] = useState(false);
 
+  const [sourceInfoListing, setSourceInfoListing] = useState<EnrichedListing | null>(null);
+
   const { effectiveSubscriptionTier } = useProfile();
   const isPaid = canTransact(effectiveSubscriptionTier);
 
@@ -1893,8 +1970,15 @@ export default function MarketplaceScreen(): JSX.Element {
         listing={purchaseModal}
         onClose={() => setPurchaseModal(null)}
         onConfirm={handlePurchaseConfirm}
+        onShowInfo={() => setSourceInfoListing(purchaseModal)}
         purchasing={purchasing}
         reputation={repMap.get(purchaseModal?.eagoh_id ?? "")}
+      />
+      <SourceInfoModal
+        visible={!!sourceInfoListing}
+        listing={sourceInfoListing}
+        onClose={() => setSourceInfoListing(null)}
+        reputation={repMap.get(sourceInfoListing?.eagoh_id ?? "")}
       />
       <CreateListingModal
         visible={createModal}
@@ -2396,9 +2480,53 @@ const styles = StyleSheet.create({
   modalSectionLabel: { color: palette.muted, fontSize: 11, fontWeight: "900", letterSpacing: 1, marginBottom: 4, marginTop: 12 },
   modalSectionDesc: { color: palette.text, fontSize: 12, fontWeight: "700", marginBottom: 8, lineHeight: 17 },
 
-  // Details panel scroll (for Source Credentials in Purchase modal)
-  detailsPanelScroll: {
-    maxHeight: SCREEN_HEIGHT * 0.35,
+  // ── Source Info Modal (separate full-screen modal) ───────────────
+  infoOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.75)",
+    justifyContent: "center" as const,
+    alignItems: "center" as const,
+    padding: 16,
+  },
+  infoContainer: {
+    width: "100%" as const,
+    maxHeight: SCREEN_HEIGHT * 0.80,
+    borderRadius: 5,
+    overflow: "hidden" as const,
+    borderWidth: 1,
+    borderColor: "rgba(54,245,255,0.16)",
+  },
+  infoHeader: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    justifyContent: "space-between" as const,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.line,
+    backgroundColor: "rgba(10,22,40,0.95)",
+  },
+  infoHeaderTitle: { color: palette.text, fontSize: 18, fontWeight: "900" as const },
+  infoBody: {
+    flexShrink: 1,
+  },
+  infoBodyContent: {
+    padding: 16,
+    paddingBottom: 24,
+    gap: 10,
+  },
+  infoFooter: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: palette.line,
+    backgroundColor: "rgba(10,22,40,0.95)",
+  },
+  infoEagohPreview: { flexDirection: "row" as const, gap: 12 },
+  infoDivider: {
+    height: 1,
+    backgroundColor: palette.line,
+    marginVertical: 4,
   },
 
   // Purchase modal specific
@@ -2423,17 +2551,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.line,
   },
-  infoIconBtnActive: { borderColor: palette.cyan, backgroundColor: palette.cyanSoft },
   modalEagohDomain: { color: palette.cyan, fontSize: 12, fontWeight: "800" },
   modalVendor: { color: palette.muted, fontSize: 12, fontWeight: "700" },
-
-  detailsPanel: {
-    borderRadius: 5,
-    borderWidth: 1,
-    borderColor: "rgba(54,245,255,0.14)",
-    overflow: "hidden",
-    marginBottom: 8,
-  },
 
   detailRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   detailRowCol: { gap: 6 },

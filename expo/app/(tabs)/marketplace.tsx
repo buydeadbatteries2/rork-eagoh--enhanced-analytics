@@ -38,6 +38,7 @@ import PublicProfileModal from "@/components/PublicProfileModal";
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   Dimensions,
   FlatList,
   Keyboard,
@@ -1008,9 +1009,22 @@ function CreateListingModal({
 
   const myEagohs = (eagohs ?? []).filter((e: EagohRecord) => e.user_id === user?.id);
 
+  useEffect(() => {
+    if (!visible) return;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      Keyboard.dismiss();
+      reset();
+      onClose();
+      return true;
+    });
+    return () => sub.remove();
+  }, [visible, onClose]);
+
+  if (!visible) return <></>;
+
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.modalOverlay} onPress={Keyboard.dismiss}>
+    <View style={styles.modalOverlayAbs}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={Keyboard.dismiss}>
         <Pressable style={[styles.modalSheet, styles.modalSheetCreate]} onPress={() => {}}>
           <LinearGradient colors={["#0A1628", "#050D18"]} style={StyleSheet.absoluteFill} />
           <View style={styles.modalHandle} />
@@ -1103,7 +1117,7 @@ function CreateListingModal({
           </KeyboardAvoidingView>
         </Pressable>
       </Pressable>
-    </Modal>
+    </View>
   );
 }
 
@@ -1159,9 +1173,21 @@ function EditListingModal({
 
   const eagoh = listing.eagoh;
 
+  useEffect(() => {
+    if (!visible) return;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      Keyboard.dismiss();
+      onClose();
+      return true;
+    });
+    return () => sub.remove();
+  }, [visible, onClose]);
+
+  if (!visible) return <></>;
+
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.modalOverlay} onPress={Keyboard.dismiss}>
+    <View style={styles.modalOverlayAbs}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={Keyboard.dismiss}>
         <Pressable style={[styles.modalSheet, styles.modalSheetCreate]} onPress={() => {}}>
           <LinearGradient colors={["#0A1628", "#050D18"]} style={StyleSheet.absoluteFill} />
           <View style={styles.modalHandle} />
@@ -1240,7 +1266,7 @@ function EditListingModal({
           </KeyboardAvoidingView>
         </Pressable>
       </Pressable>
-    </Modal>
+    </View>
   );
 }
 
@@ -2465,6 +2491,17 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.65)",
     justifyContent: "flex-end",
+  },
+  modalOverlayAbs: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    justifyContent: "flex-end",
+    zIndex: 9999,
+    elevation: 9999,
   },
   modalSheet: {
     maxHeight: "85%",

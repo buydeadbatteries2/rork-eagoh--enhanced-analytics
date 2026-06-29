@@ -11,8 +11,8 @@ import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   ActivityIndicator,
+  BackHandler,
   Dimensions,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -94,9 +94,15 @@ const { height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 const styles = StyleSheet.create({
   overlay: {
-    flex: 1,
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: "rgba(3,6,11,0.88)",
     justifyContent: "flex-end",
+    zIndex: 9999,
+    elevation: 9999,
   },
   sheet: {
     height: SCREEN_HEIGHT * 0.92,
@@ -649,16 +655,21 @@ export default function PublicProfileModal({
     ? repRankColor(vendorStats.rank as Parameters<typeof repRankColor>[0])
     : palette.muted;
 
+  // ── Android back button ────────────────────────────────────────────
+  useEffect(() => {
+    if (!visible) return;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      onClose();
+      return true;
+    });
+    return () => sub.remove();
+  }, [visible, onClose]);
+
+  if (!visible) return <></>;
+
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-      statusBarTranslucent
-    >
-      <View style={styles.overlay} pointerEvents="box-none">
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+    <View style={styles.overlay}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
 
         <View style={styles.sheet}>
           <View style={styles.handle} />
@@ -958,7 +969,6 @@ export default function PublicProfileModal({
             </ScrollView>
           ) : null}
         </View>
-      </View>
-    </Modal>
+    </View>
   );
 }

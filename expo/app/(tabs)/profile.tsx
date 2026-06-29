@@ -425,8 +425,22 @@ export default function ProfileScreen(): JSX.Element {
         h.selection();
         router.push("/edge-store" as never);
       };
+      const handleFactions = (): void => {
+        h.selection();
+        router.push("/factions" as never);
+      };
       return (
         <View style={{ gap: 10 }}>
+          <Pressable onPress={handleFactions} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
+            <View style={[styles.featureIconWrap, { borderColor: "rgba(138,92,255,0.35)" }]}>
+              <Shield color={palette.violet} size={20} />
+            </View>
+            <View style={styles.featureInfo}>
+              <Text style={styles.featureTitle}>Faction Network</Text>
+              <Text style={styles.featureDesc}>Build private intelligence networks with other EAGOH users.</Text>
+            </View>
+            <Cpu color={palette.muted} size={16} />
+          </Pressable>
           <Pressable onPress={handleEdgeStore} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
             <View style={[styles.featureIconWrap, { borderColor: "rgba(255,181,71,0.35)" }]}>
               <Coins color={palette.gold} size={20} />

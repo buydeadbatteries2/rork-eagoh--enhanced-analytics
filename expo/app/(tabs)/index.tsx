@@ -401,28 +401,27 @@ const LabsFeatureCard = React.memo(function LabsFeatureCard(): JSX.Element {
 });
 
 const FactionsFeatureCard = React.memo(function FactionsFeatureCard(): JSX.Element {
+  const h = useHaptics();
+  const router = useRouter();
   return (
     <View>
-      <SectionHeader eyebrow="FACTIONS" title="Intelligence alliances" action="Mock" />
-      <View style={styles.featureCard}>
+      <SectionHeader eyebrow="FACTIONS" title="Intelligence alliances" action="View all" />
+      <Pressable
+        onPress={() => {
+          h.selection();
+          router.push("/factions" as never);
+        }}
+        style={({ pressed }) => [styles.featureCard, pressed && styles.pressed]}
+      >
         <View style={[styles.featureIconWrap, { borderColor: "rgba(138,92,255,0.4)" }]}>
           <Shield color={palette.violet} size={24} />
         </View>
         <View style={styles.featureInfo}>
           <Text style={styles.featureTitle}>Faction Network</Text>
-          <Text style={styles.featureDesc}>Align with syndicates, pool observations, and climb the faction influence ladder.</Text>
+          <Text style={styles.featureDesc}>Build private intelligence networks with other EAGOH users.</Text>
         </View>
         <ChevronRight color={palette.violet} size={18} />
-      </View>
-      <View style={[styles.featureCard, { marginTop: 8 }]}>
-        <View style={[styles.featureIconWrap, { borderColor: "rgba(255,181,71,0.4)" }]}>
-          <Sword color={palette.gold} size={24} />
-        </View>
-        <View style={styles.featureInfo}>
-          <Text style={styles.featureTitle}>Faction Activity</Text>
-          <Text style={styles.featureDesc}>Track signal shares, reputation badges, and tactical rankings across mock syndicates.</Text>
-        </View>
-      </View>
+      </Pressable>
     </View>
   );
 });

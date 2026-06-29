@@ -45,31 +45,31 @@ import { SafeAreaView } from "react-native-safe-area-context";
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const PACK_COLORS: Record<string, { accent: string; soft: string; border: string; glow: string }> = {
-  edge_250: {
+  store_edge_250: {
     accent: palette.cyan,
     soft: "rgba(108,230,255,0.12)",
     border: "rgba(108,230,255,0.30)",
     glow: "rgba(108,230,255,0.16)",
   },
-  edge_750: {
+  store_edge_750: {
     accent: palette.cyan,
     soft: "rgba(108,230,255,0.12)",
     border: "rgba(108,230,255,0.30)",
     glow: "rgba(108,230,255,0.16)",
   },
-  edge_2000: {
+  store_edge_2000: {
     accent: palette.blue,
     soft: "rgba(61,165,255,0.14)",
     border: "rgba(61,165,255,0.36)",
     glow: "rgba(61,165,255,0.20)",
   },
-  edge_6000: {
+  store_edge_6000: {
     accent: palette.gold,
     soft: "rgba(255,181,71,0.12)",
     border: "rgba(255,181,71,0.40)",
     glow: "rgba(255,181,71,0.20)",
   },
-  edge_15000: {
+  store_edge_15000: {
     accent: palette.violet,
     soft: "rgba(138,92,255,0.12)",
     border: "rgba(138,92,255,0.40)",
@@ -315,11 +315,9 @@ const styles = StyleSheet.create({
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-/** Map a RevenueCat package identifier to our local EdgePack metadata.
- *  RevenueCat prefixes identifiers with "store_" — strip it before matching. */
+/** Map a RevenueCat package identifier directly to our local EdgePack metadata. */
 function findEdgePack(pkgIdentifier: string): EdgePack | undefined {
-  const cleanId = pkgIdentifier.startsWith("store_") ? pkgIdentifier.slice(6) : pkgIdentifier;
-  return EDGE_PACKS.find((p) => p.productId === cleanId);
+  return EDGE_PACKS.find((p) => p.productId === pkgIdentifier);
 }
 
 /** Format a RevenueCat price string (e.g. "$4.99") for display. */
@@ -627,7 +625,7 @@ export default function EdgeStoreScreen(): JSX.Element {
                 key={edgePack.productId}
                 pack={edgePack}
                 rcPackage={rcPackage ?? {
-                  identifier: `store_${edgePack.productId}`,
+                  identifier: edgePack.productId,
                   offeringIdentifier: "default",
                   packageType: "CUSTOM" as const,
                   product: {

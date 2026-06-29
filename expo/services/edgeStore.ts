@@ -14,13 +14,13 @@
 import { addPurchasedEdge } from "@/services/edge";
 import type { UserProfile } from "@/services/profile";
 
-/** RevenueCat-compatible product identifiers (placeholders for future integration). */
+/** RevenueCat product identifiers for Neuron packs. */
 export const EDGE_PRODUCT_IDS = [
-  "edge_250",
-  "edge_750",
-  "edge_2000",
-  "edge_6000",
-  "edge_15000",
+  "store_edge_250",
+  "store_edge_750",
+  "store_edge_2000",
+  "store_edge_6000",
+  "store_edge_15000",
 ] as const;
 export type EdgeProductId = (typeof EDGE_PRODUCT_IDS)[number];
 
@@ -43,7 +43,7 @@ export type EdgePack = {
 /** All Neuron packs — single source of truth. */
 export const EDGE_PACKS: EdgePack[] = [
   {
-    productId: "edge_250",
+    productId: "store_edge_250",
     edgeAmount: 250,
     priceUsd: 4.99,
     label: "250 Neurons",
@@ -51,7 +51,7 @@ export const EDGE_PACKS: EdgePack[] = [
     sortKey: 1,
   },
   {
-    productId: "edge_750",
+    productId: "store_edge_750",
     edgeAmount: 750,
     priceUsd: 9.99,
     label: "750 Neurons",
@@ -59,7 +59,7 @@ export const EDGE_PACKS: EdgePack[] = [
     sortKey: 2,
   },
   {
-    productId: "edge_2000",
+    productId: "store_edge_2000",
     edgeAmount: 2000,
     priceUsd: 19.99,
     label: "2,000 Neurons",
@@ -67,7 +67,7 @@ export const EDGE_PACKS: EdgePack[] = [
     sortKey: 3,
   },
   {
-    productId: "edge_6000",
+    productId: "store_edge_6000",
     edgeAmount: 6000,
     priceUsd: 49.99,
     label: "6,000 Neurons",
@@ -75,7 +75,7 @@ export const EDGE_PACKS: EdgePack[] = [
     sortKey: 4,
   },
   {
-    productId: "edge_15000",
+    productId: "store_edge_15000",
     edgeAmount: 15000,
     priceUsd: 99.99,
     label: "15,000 Neurons",

@@ -33,3 +33,18 @@ export const TIER_MULTIPLIER: Record<SubscriptionTier, number> = {
   oracle_elite: 1.2,
   syndicate: 1.5,
 };
+
+/** RevenueCat product IDs for each subscription tier. */
+export const SUBSCRIPTION_PRODUCT_IDS: Record<Exclude<SubscriptionTier, "free">, string> = {
+  pro: "pro_sub",
+  oracle_elite: "oracle_elite_sub",
+  syndicate: "syndicate_sub",
+};
+
+/** Map a RevenueCat product ID to its corresponding subscription tier. */
+export function subscriptionTierFromProductId(productId: string): SubscriptionTier | null {
+  for (const [tier, id] of Object.entries(SUBSCRIPTION_PRODUCT_IDS)) {
+    if (id === productId) return tier as SubscriptionTier;
+  }
+  return null;
+}

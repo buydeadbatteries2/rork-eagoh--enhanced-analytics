@@ -544,13 +544,6 @@ function PurchaseModal({
             </Pressable>
           </View>
 
-          {/* Scrollable body */}
-          <ScrollView
-            style={styles.purchaseModalScroll}
-            contentContainerStyle={styles.purchaseModalScrollContent}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-          >
           {/* EAGOH preview */}
           <View style={styles.modalEagohPreview}>
             <View style={styles.modalEagohImage}>
@@ -579,7 +572,11 @@ function PurchaseModal({
           {showDetails && (
             <View style={styles.detailsPanel}>
               <LinearGradient colors={["rgba(0,20,40,0.60)", "rgba(5,15,30,0.85)"]} style={StyleSheet.absoluteFill} />
-              <View style={styles.detailsPanelInner}>
+              <ScrollView
+                style={styles.detailsPanelScroll}
+                showsVerticalScrollIndicator={true}
+                keyboardShouldPersistTaps="handled"
+              >
                 {/* Reputation */}
                 <View style={styles.detailRow}>
                   <View style={styles.detailIconWrap}>
@@ -774,7 +771,7 @@ function PurchaseModal({
                     ) : null}
                   </View>
                 )}
-              </View>
+              </ScrollView>
             </View>
           )}
 
@@ -851,7 +848,6 @@ function PurchaseModal({
               </>
             )}
           </Pressable>
-          </ScrollView>
         </Pressable>
       </Pressable>
     </Modal>
@@ -2400,9 +2396,10 @@ const styles = StyleSheet.create({
   modalSectionLabel: { color: palette.muted, fontSize: 11, fontWeight: "900", letterSpacing: 1, marginBottom: 4, marginTop: 12 },
   modalSectionDesc: { color: palette.text, fontSize: 12, fontWeight: "700", marginBottom: 8, lineHeight: 17 },
 
-  // Purchase modal scroll
-  purchaseModalScroll: { flex: 1 },
-  purchaseModalScrollContent: { paddingBottom: 24, gap: 0 },
+  // Details panel scroll (for Source Credentials in Purchase modal)
+  detailsPanelScroll: {
+    maxHeight: SCREEN_HEIGHT * 0.35,
+  },
 
   // Purchase modal specific
   modalEagohPreview: { flexDirection: "row", gap: 12, marginBottom: 8 },
@@ -2437,7 +2434,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     marginBottom: 8,
   },
-  detailsPanelInner: { padding: 12, gap: 8 },
+
   detailRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   detailRowCol: { gap: 6 },
   detailIconWrap: {

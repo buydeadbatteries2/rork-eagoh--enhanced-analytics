@@ -14,7 +14,8 @@ import { useAuth } from "@/providers/AuthProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useRevenueCat } from "@/providers/RevenueCatProvider";
-import { EDGE_PACKS, type EdgePack, isMockPurchaseAllowed } from "@/services/edgeStore";
+import { NEURON_PRODUCT_AMOUNTS } from "@/services/revenuecat";
+import { EDGE_PACKS, type EdgePack, isMockPurchaseAllowed, recordNeuronPurchaseOnce } from "@/services/edgeStore";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import {
@@ -27,6 +28,7 @@ import {
   ShieldCheck,
   Sparkles,
   WalletCards,
+  WifiOff,
   Zap,
 } from "lucide-react-native";
 import type { PurchasesPackage } from "react-native-purchases";
@@ -34,6 +36,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -406,53 +409,71 @@ export default function EdgeStoreScreen(): JSX.Element {
   const { balances, purchase: creditEdge, isMutating } = useEdge();
   const {
     configured: rcConfigured,
-    packages: rcPackages,
+    allNeuronPackages: rcNeuronPackages,
     purchase: rcPurchase,
     restore: rcRestore,
     isPurchasing,
     isRestoring,
+    diagnostics,
   } = useRevenueCat();
 
   const [confirmPack, setConfirmPack] = useState<EdgePack | null>(null);
   const [confirmRcPkg, setConfirmRcPkg] = useState<PurchasesPackage | null>(null);
   const [purchasing, setPurchasing] = useState(false);
 
-  // Map RevenueCat packages to local EdgePack metadata, sorted by sortKey.
-  // Always falls back to local EDGE_PACKS when RC has no matching consumable packs.
+  // ── Dev diagnostics ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!__DEV__) return;
+    console.log("[NeuronStore] ── Diagnostics ──");
+    console.log("[NeuronStore] Platform:", Platform.OS);
+    console.log("[NeuronStore] RC configured:", rcConfigured);
+    if (diagnostics) {
+      console.log("[NeuronStore] RC key mode:", diagnostics.keyMode);
+      console.log("[NeuronStore] Offerings count:", diagnostics.allOfferingIds?.length ?? 0);
+      console.log("[NeuronStore] Matching Neuron packs:", diagnostics.neuronPackCount);
+      console.log("[NeuronStore] Mock purchases enabled:", diagnostics.mockPurchasesEnabled);
+    }
+    console.log("[NeuronStore] RC neuron packages from all offerings:", rcNeuronPackages.length);
+    if (rcNeuronPackages.length > 0) {
+      for (const p of rcNeuronPackages) {
+        const amount = NEURON_PRODUCT_AMOUNTS[p.product.identifier];
+        console.log(`[NeuronStore]   pkg: ${p.identifier} → product: ${p.product.identifier} (${p.product.productCategory ?? "?"}) ${p.product.priceString ?? `$${p.product.price}`} → ${amount != null ? amount + " Neurons" : "?"}`);
+      }
+    }
+  }, [rcConfigured, rcNeuronPackages, diagnostics]);
+
+  // Map RevenueCat neuron packages (from ALL offerings) to local EdgePack metadata.
+  // Falls back to local EDGE_PACKS only when RC is not configured or has zero matching packs.
   const { displayPacks, usingFallbackPacks } = useMemo(() => {
     console.log("[NeuronStore] RC configured:", rcConfigured);
-    console.log("[NeuronStore] RC packages count:", rcPackages.length);
-    if (rcPackages.length > 0) {
-      console.log("[NeuronStore] RC package identifiers:", rcPackages.map((p) => p.identifier));
-    }
+    console.log("[NeuronStore] RC neuron packages (all offerings):", rcNeuronPackages.length);
 
     // Attempt to match RC packages against local EDGE_PACKS using product.identifier
     const mapped: { edgePack: EdgePack; rcPackage: PurchasesPackage }[] = [];
-    for (const rcPkg of rcPackages) {
+    for (const rcPkg of rcNeuronPackages) {
       const ep = findEdgePack(rcPkg);
       if (ep) {
-        console.log("[NeuronStore] Matched RC product", rcPkg.product.identifier, "(package:", rcPkg.identifier, ") →", ep.productId);
+        console.log("[NeuronStore] Matched RC product", rcPkg.product.identifier, "(package:", rcPkg.identifier, ") →", ep.productId, "|", formatPrice(rcPkg));
         mapped.push({ edgePack: ep, rcPackage: rcPkg });
       } else {
-        console.log("[NeuronStore] No local match for RC product:", rcPkg.product.identifier, "(package:", rcPkg.identifier, ")");
+        console.log("[NeuronStore] No local EDGE_PACK match for RC product:", rcPkg.product.identifier);
       }
     }
 
     if (mapped.length > 0) {
-      console.log("[NeuronStore] Displayable RC packs:", mapped.length);
-      console.log("[NeuronStore] usingFallbackPacks: false");
+      console.log("[NeuronStore] usingFallbackPacks: false —", mapped.length, "live RC packs");
       mapped.sort((a, b) => a.edgePack.sortKey - b.edgePack.sortKey);
       return { displayPacks: mapped, usingFallbackPacks: false };
     }
 
     // Fallback: show local packs when RC has no matching consumable Neuron packs
-    console.log("[NeuronStore] No usable RC packs — using fallback EDGE_PACKS");
+    console.log("[NeuronStore] No usable RC Neuron packs — using fallback EDGE_PACKS");
     console.log("[NeuronStore] usingFallbackPacks: true");
     console.log("[NeuronStore] Fallback pack count:", EDGE_PACKS.length);
     const fallback = EDGE_PACKS.map((ep) => ({ edgePack: ep, rcPackage: null as PurchasesPackage | null }))
       .sort((a, b) => a.edgePack.sortKey - b.edgePack.sortKey);
     return { displayPacks: fallback, usingFallbackPacks: true };
-  }, [rcPackages, rcConfigured]);
+  }, [rcNeuronPackages, rcConfigured]);
 
   const handleBack = useCallback((): void => {
     h.selection();
@@ -472,39 +493,86 @@ export default function EdgeStoreScreen(): JSX.Element {
     if (!confirmPack || !user?.id || !profile) return;
     h.heavy();
     setPurchasing(true);
+
+    const neuronAmount = confirmPack.edgeAmount;
+    const productId = confirmPack.productId;
+
+    console.log("[NeuronStore] Purchase attempt — product:", productId, "|", neuronAmount, "Neurons | RC configured:", rcConfigured, "| has RC package:", !!confirmRcPkg);
+
     try {
       if (rcConfigured && confirmRcPkg) {
-        // Real RevenueCat purchase
-        const customerInfo = await rcPurchase(confirmRcPkg);
-        // After successful purchase, credit the user's neuron wallet
-        await creditEdge(confirmPack.edgeAmount, `RevenueCat purchase: ${confirmPack.label}`);
+        // ── Real RevenueCat purchase ──────────────────────────────────
+        console.log("[NeuronStore] Calling RevenueCat purchasePackage for:", confirmRcPkg.product.identifier);
+        const purchaseResult = await rcPurchase(confirmRcPkg);
+        console.log("[NeuronStore] RevenueCat purchase confirmed — tx:", purchaseResult.transactionIdentifier);
+
+        // Idempotency check — prevent double-crediting across restarts/refreshes
+        const isNew = await recordNeuronPurchaseOnce(
+          user.id,
+          productId,
+          purchaseResult.transactionIdentifier,
+          neuronAmount,
+        );
+
+        if (isNew) {
+          console.log("[NeuronStore] New purchase — crediting", neuronAmount, "Neurons");
+          await creditEdge(neuronAmount, `RevenueCat purchase: ${confirmPack.label} (${productId})`);
+        } else {
+          console.log("[NeuronStore] Duplicate purchase detected — skipping credit");
+        }
+
         setConfirmPack(null);
         setConfirmRcPkg(null);
-        Alert.alert("Purchase Successful", `${confirmPack.edgeAmount.toLocaleString()} Neurons added to your wallet.`);
+        Alert.alert("Purchase Successful", `${neuronAmount.toLocaleString()} Neurons added to your wallet.`);
+      } else if (rcConfigured && !confirmRcPkg) {
+        // RC is configured but the selected pack wasn't matched to an RC package.
+        // This happens when the store shows local packs but RC has no matching products.
+        console.warn("[NeuronStore] RC configured but no RC package for:", productId);
+        Alert.alert(
+          "Purchase Unavailable",
+          "Neuron packs were not returned by the App Store. Please try again.",
+        );
+        setConfirmPack(null);
+        setConfirmRcPkg(null);
       } else if (isMockPurchaseAllowed()) {
         // Mock purchase: RevenueCat not available in dev — use direct Supabase credit
-        await creditEdge(confirmPack.edgeAmount, `Neuron purchase: ${confirmPack.label}`);
+        console.log("[NeuronStore] Using mock purchase for:", productId, "|", neuronAmount, "Neurons");
+        await creditEdge(neuronAmount, `Mock Neuron purchase: ${confirmPack.label} (${productId})`);
         setConfirmPack(null);
         setConfirmRcPkg(null);
-        Alert.alert("Purchase Successful", `${confirmPack.edgeAmount.toLocaleString()} Neurons added to your wallet.`);
+        Alert.alert("Test Purchase", `${neuronAmount.toLocaleString()} Neurons added to your wallet (mock).`);
       } else {
-        Alert.alert("Purchase Unavailable", "Neuron purchases are not available in this build. For testing, enable EXPO_PUBLIC_ENABLE_MOCK_NEURON_PURCHASES=true.");
+        // RC not configured and mock not allowed — determine the actual reason
+        const isNative = Platform.OS === "ios" || Platform.OS === "android";
+        if (!isNative) {
+          Alert.alert(
+            "Purchase Unavailable",
+            "Purchases require an iOS or Android development build.",
+          );
+        } else {
+          Alert.alert(
+            "Store Unavailable",
+            "Purchases are temporarily unavailable because the store connection is not configured.",
+          );
+        }
         setConfirmPack(null);
         setConfirmRcPkg(null);
       }
     } catch (err: unknown) {
       // Check if the user cancelled the purchase
-      const msg = err instanceof Error ? err.message : "Purchase failed";
       if (
         typeof err === "object" &&
         err !== null &&
         "userCancelled" in err &&
         (err as { userCancelled?: boolean }).userCancelled
       ) {
-        // User cancelled — just close the modal quietly
+        console.log("[NeuronStore] Purchase cancelled by user");
+        // User cancelled — just close the modal quietly, no error
         setConfirmPack(null);
         setConfirmRcPkg(null);
       } else {
+        const msg = err instanceof Error ? err.message : "Purchase failed";
+        console.error("[NeuronStore] Purchase error:", msg);
         Alert.alert("Purchase Failed", msg);
       }
     } finally {

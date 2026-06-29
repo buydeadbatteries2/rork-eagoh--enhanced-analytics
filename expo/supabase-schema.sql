@@ -1089,6 +1089,33 @@ create policy "sa_self_insert" on public.subscription_allocations
   for insert with check (auth.uid() = user_id);
 
 -- =============================================================================
+-- NEURON PURCHASES (idempotent consumable purchase tracking)
+-- =============================================================================
+create table if not exists public.neuron_purchases (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  product_id text not null,
+  revenuecat_transaction_id text not null,
+  neurons_granted int not null default 0,
+  created_at timestamptz default now(),
+  unique(revenuecat_transaction_id)
+);
+
+create index if not exists np_user_id_idx on public.neuron_purchases(user_id, created_at desc);
+create index if not exists np_rc_tx_idx on public.neuron_purchases(revenuecat_transaction_id);
+
+alter table public.neuron_purchases enable row level security;
+
+drop policy if exists "np_self_select" on public.neuron_purchases;
+drop policy if exists "np_self_insert" on public.neuron_purchases;
+
+create policy "np_self_select" on public.neuron_purchases
+  for select using (auth.uid() = user_id);
+
+create policy "np_self_insert" on public.neuron_purchases
+  for insert with check (auth.uid() = user_id);
+
+-- =============================================================================
 -- Storage policies for eagoh-renders bucket
 -- Authenticated users can read all renders (bucket is public)
 create policy "eagoh_renders_select_authenticated"

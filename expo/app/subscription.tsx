@@ -423,8 +423,8 @@ export default function SubscriptionScreen(): JSX.Element {
       setPurchaseSuccess(false);
 
       try {
-        const customerInfo = await rcPurchase(pkg);
-        const activeSubs = customerInfo.activeSubscriptions;
+        const purchaseResult = await rcPurchase(pkg);
+        const activeSubs = purchaseResult.customerInfo.activeSubscriptions;
         if (__DEV__) {
           console.log("[Subscription] Purchase success — active subs:", activeSubs);
         }

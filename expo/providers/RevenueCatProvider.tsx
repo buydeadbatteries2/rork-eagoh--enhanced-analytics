@@ -18,12 +18,14 @@ import { useAuth } from "@/providers/AuthProvider";
 import {
   addCustomerInfoListener,
   getCustomerInfo,
+  getNeuronPackagesFromAllOfferings,
   getOfferings,
   getRevenueCatKeyMode,
   getRevenueCatSubscriptionTier,
   isRevenueCatConfigured,
   logInRevenueCat,
   logOutRevenueCat,
+  NEURON_PRODUCT_AMOUNTS,
   purchasePackage,
   restorePurchases,
   type RevenueCatKeyMode,
@@ -211,10 +213,14 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
     },
   });
 
-  /** Purchase a package. Returns the updated CustomerInfo. */
+  /** Purchase a package. Returns the full transaction result with transactionIdentifier for idempotency. */
   const purchase = useCallback(
-    async (pkg: PurchasesPackage): Promise<CustomerInfo> => {
-      return purchaseMutation.mutateAsync(pkg).then((r) => r.customerInfo);
+    async (pkg: PurchasesPackage): Promise<{
+      customerInfo: CustomerInfo;
+      transactionIdentifier: string;
+      productIdentifier: string;
+    }> => {
+      return purchaseMutation.mutateAsync(pkg);
     },
     [purchaseMutation],
   );
@@ -260,6 +266,13 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
   const isSubscribed = revenueCatTier !== "free";
   const isLoading = offeringsQuery.isLoading || customerInfoQuery.isLoading;
 
+  // ── Neuron packages — search ALL offerings, not just the current one ─
+
+  const allNeuronPackages: PurchasesPackage[] = useMemo(
+    () => getNeuronPackagesFromAllOfferings(currentOffering, allOfferings),
+    [currentOffering, allOfferings],
+  );
+
   // ── Subscription/consumable package filtering ────────────────────────
 
   const subscriptionPackages: PurchasesPackage[] = useMemo(
@@ -271,11 +284,12 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
     [packages],
   );
 
+  /** @deprecated — use allNeuronPackages for store display; this only scans the current offering */
   const consumablePackages: PurchasesPackage[] = useMemo(
     () =>
       packages.filter((p) => {
         const pid = p.product.identifier;
-        return pid.startsWith("store_edge_");
+        return pid in NEURON_PRODUCT_AMOUNTS;
       }),
     [packages],
   );
@@ -292,8 +306,16 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
       supabaseUserId: user?.id ?? null,
       rcMatchesSupabase: customerInfo?.originalAppUserId === user?.id,
       offeringId: currentOffering?.identifier ?? null,
+      allOfferingIds: allOfferings.map((o) => o.identifier),
       subscriptionProductIds: subscriptionPackages.map((p) => p.product.identifier),
-      consumableProductIds: consumablePackages.map((p) => p.product.identifier),
+      neuronProductIds: allNeuronPackages.map((p) => ({
+        packageId: p.identifier,
+        productId: p.product.identifier,
+        price: p.product.priceString ?? `$${p.product.price}`,
+        type: p.product.productCategory ?? "unknown",
+        amount: NEURON_PRODUCT_AMOUNTS[p.product.identifier] ?? 0,
+      })),
+      neuronPackCount: allNeuronPackages.length,
       activeSubscriptions,
       derivedTier: revenueCatTier,
       testModeEnabled: process.env.EXPO_PUBLIC_ENABLE_SUBSCRIPTION_TEST_MODE === "true",
@@ -305,8 +327,9 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
     customerInfo,
     user?.id,
     currentOffering,
+    allOfferings,
     subscriptionPackages,
-    consumablePackages,
+    allNeuronPackages,
     activeSubscriptions,
     revenueCatTier,
   ]);
@@ -328,8 +351,10 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
     packages,
     /** Subscription packages only (pro_sub, oracle_elite_sub, syndicate_sub). */
     subscriptionPackages,
-    /** Consumable Neuron packages only (store_edge_*). */
+    /** Consumable Neuron packages only (store_edge_*). @deprecated — use allNeuronPackages. */
     consumablePackages,
+    /** All Neuron packages across ALL offerings (not just current). The one to use for the store. */
+    allNeuronPackages,
     /** The latest customer info from RevenueCat. */
     customerInfo,
     /** Active subscription product identifiers. */

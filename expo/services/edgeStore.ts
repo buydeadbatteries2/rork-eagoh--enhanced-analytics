@@ -17,6 +17,7 @@
  */
 
 import { addPurchasedEdge } from "@/services/edge";
+import { supabase } from "@/lib/supabase";
 import type { UserProfile } from "@/services/profile";
 
 /** Whether mock/fake Neuron purchases are allowed in the current environment. */
@@ -110,9 +111,49 @@ export async function mockPurchasePack(
   return addPurchasedEdge(userId, profile, pack.edgeAmount, note);
 }
 
-// ── Subscription allocation tracking ──────────────────────────────────────
+// ── Idempotent Neuron purchase tracking (prevents double-crediting) ──────
 
-import { supabase } from "@/lib/supabase";
+/**
+ * Record a RevenueCat consumable purchase so it is never credited twice.
+ *
+ * Uses a UNIQUE constraint on `revenuecat_transaction_id` to guarantee
+ * idempotency. If the row already exists (code 23505), the purchase was
+ * already processed and we return false.
+ *
+ * @returns true if this is a new purchase (should credit), false if duplicate.
+ */
+export async function recordNeuronPurchaseOnce(
+  userId: string,
+  productId: string,
+  rcTransactionId: string,
+  neuronsAmount: number,
+): Promise<boolean> {
+  const { error } = await supabase
+    .from("neuron_purchases")
+    .insert({
+      user_id: userId,
+      product_id: productId,
+      revenuecat_transaction_id: rcTransactionId,
+      neurons_granted: neuronsAmount,
+    });
+
+  if (error) {
+    // Unique constraint violation → already credited (idempotent skip)
+    if (error.code === "23505") {
+      if (__DEV__) {
+        console.log("[edgeStore] Neuron purchase already recorded — idempotent skip:", rcTransactionId);
+      }
+      return false;
+    }
+    // Other errors → let the caller decide
+    console.warn("[edgeStore] Failed to record neuron purchase:", error.message);
+    throw error;
+  }
+
+  return true;
+}
+
+// ── Subscription allocation tracking ──────────────────────────────────────
 
 export type SubscriptionAllocation = {
   id: string;

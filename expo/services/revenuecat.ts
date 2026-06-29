@@ -137,8 +137,20 @@ export function isSubscriptionProduct(productId: string): boolean {
 
 /** Check if a product identifier is a known consumable Neuron product. */
 export function isNeuronProduct(productId: string): boolean {
-  return productId.startsWith("store_edge_");
+  return productId in NEURON_PRODUCT_AMOUNTS;
 }
+
+/**
+ * Map of known Neuron product identifiers to their Neuron amounts.
+ * Used both for filtering and for determining the credit amount after purchase.
+ */
+export const NEURON_PRODUCT_AMOUNTS: Record<string, number> = {
+  store_edge_250: 250,
+  store_edge_750: 750,
+  store_edge_2000: 2000,
+  store_edge_6000: 6000,
+  store_edge_15000: 15000,
+};
 
 // ── Async helpers ──────────────────────────────────────────────────────────
 
@@ -155,11 +167,11 @@ export async function getOfferings(): Promise<{
   const all: PurchasesOffering[] = [];
 
   if (offerings.all) {
-    for (const [id, offering] of Object.entries(offerings.all)) {
-      if (offering) {
-        all.push(offering);
+    for (const [id, off] of Object.entries(offerings.all)) {
+      if (off) {
+        all.push(off);
         if (__DEV__) {
-          console.log(`[RevenueCat] Offering "${id}":`, offering.identifier, `(${offering.availablePackages.length} packages)`);
+          console.log(`[RevenueCat] Offering "${id}":`, off.identifier, `(${off.availablePackages.length} packages)`);
         }
       }
     }
@@ -188,12 +200,65 @@ export async function getOfferings(): Promise<{
   return { offering, allOfferings: all };
 }
 
-/** Purchase a package. Returns the resulting CustomerInfo on success. */
+/**
+ * Search ALL available offerings for Neuron (consumable) packages.
+ *
+ * Uses NEURON_PRODUCT_AMOUNTS to identify matching products by their
+ * `product.identifier` (NOT `package.identifier`), which is the App Store
+ * product ID. Deduplicates by product identifier.
+ *
+ * This is the single source of truth for the Neuron Store — even if the
+ * current offering only contains subscriptions, this function finds Neuron
+ * packs in any offering.
+ */
+export function getNeuronPackagesFromAllOfferings(
+  currentOffering: PurchasesOffering | null,
+  allOfferings: PurchasesOffering[],
+): PurchasesPackage[] {
+  const seen = new Set<string>();
+  const result: PurchasesPackage[] = [];
+
+  // Collect all unique offerings (current first, then rest)
+  const offerings: PurchasesOffering[] = [];
+  if (currentOffering) offerings.push(currentOffering);
+  for (const off of allOfferings) {
+    if (off !== currentOffering) offerings.push(off);
+  }
+
+  for (const offering of offerings) {
+    for (const pkg of offering.availablePackages) {
+      const pid = pkg.product.identifier;
+      if (NEURON_PRODUCT_AMOUNTS[pid] !== undefined && !seen.has(pid)) {
+        seen.add(pid);
+        result.push(pkg);
+        if (__DEV__) {
+          console.log(`[RevenueCat] Neuron pack found: ${pkg.identifier} → product: ${pid} (${NEURON_PRODUCT_AMOUNTS[pid]} Neurons) ${pkg.product.priceString ?? `$${pkg.product.price}`}`);
+        }
+      }
+    }
+  }
+
+  if (__DEV__) {
+    console.log(`[RevenueCat] Total Neuron packs across all offerings: ${result.length}`);
+  }
+
+  return result;
+}
+
+/** Purchase a package. Returns the transaction result including transactionIdentifier for idempotency. */
 export async function purchasePackage(
   pkg: PurchasesPackage,
-): Promise<{ customerInfo: CustomerInfo }> {
+): Promise<{
+  customerInfo: CustomerInfo;
+  transactionIdentifier: string;
+  productIdentifier: string;
+}> {
   const result = await Purchases.purchasePackage(pkg);
-  return result;
+  return {
+    customerInfo: result.customerInfo,
+    transactionIdentifier: result.transaction.transactionIdentifier,
+    productIdentifier: result.productIdentifier,
+  };
 }
 
 /** Restore previous purchases. Returns the latest CustomerInfo. */

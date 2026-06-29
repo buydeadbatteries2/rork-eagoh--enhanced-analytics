@@ -36,6 +36,7 @@ drop policy if exists "profiles_self_select" on public.profiles;
 drop policy if exists "profiles_self_insert" on public.profiles;
 drop policy if exists "profiles_self_update" on public.profiles;
 drop policy if exists "profiles_marketplace_select" on public.profiles;
+drop policy if exists "profiles_public_profile_select" on public.profiles;
 
 -- Owner can read/write their own profile
 create policy "profiles_self_select"
@@ -58,6 +59,13 @@ create policy "profiles_marketplace_select" on public.profiles
       where ml.vendor_id = profiles.id and ml.active = true
     )
   );
+
+-- Public Profile: any authenticated user can read public profiles
+-- where public_profile_enabled is true (opt-in visibility)
+create policy "profiles_public_profile_select"
+  on public.profiles for select
+  to authenticated
+  using (public_profile_enabled = true);
 
 -- ---------------------------------------------------------------------------
 -- Trigger: auto-create public.profiles when a new auth.users row is inserted

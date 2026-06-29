@@ -41,6 +41,7 @@ import {
   getPublicSocialAccounts,
   getPublicEagohs,
   getPublicListings,
+  type PublicProfileLoadResult,
   type PublicProfileData,
   type PublicSocialAccount,
   type PublicEagohSummary,
@@ -498,10 +499,63 @@ export default function PublicProfileModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load data when modal opens with a new userId
+  // Shared profile loader — used by both useEffect and Retry
+  const loadProfile = useCallback(async (uid: string) => {
+    setLoading(true);
+    setError(null);
+
+    // Clear previous profile data immediately to avoid flash
+    setProfile(null);
+    setSocialAccounts([]);
+    setEagohs([]);
+    setListings([]);
+    setVendorStats(null);
+
+    try {
+      // Base profile query — REQUIRED; its result drives the UI state
+      const profileResult: PublicProfileLoadResult = await getPublicProfile(uid, isSelf);
+
+      // Launch optional queries in parallel (best-effort — failures don't block the profile)
+      const [socials, eagohData, listingData, vendorData] = await Promise.all([
+        getPublicSocialAccounts(uid).catch(() => [] as PublicSocialAccount[]),
+        getPublicEagohs(uid).catch(() => [] as PublicEagohSummary[]),
+        getPublicListings(uid).catch(() => [] as PublicListingSummary[]),
+        getPublicVendorStats(uid).catch(() => null),
+      ]);
+
+      // Always set optional data — it may be empty but won't block
+      setSocialAccounts(socials);
+      setEagohs(eagohData);
+      setListings(listingData);
+      setVendorStats(vendorData);
+
+      switch (profileResult.status) {
+        case "success":
+          setProfile(profileResult.profile);
+          break;
+        case "not_found":
+          setError("This public profile has not been created.");
+          break;
+        case "hidden":
+          setError("This user's public profile is private.");
+          break;
+        case "forbidden":
+          setError("This profile cannot be viewed.");
+          break;
+        case "error":
+          setError(profileResult.message);
+          break;
+      }
+    } catch {
+      setError("Public profile could not be loaded.");
+    } finally {
+      setLoading(false);
+    }
+  }, [isSelf]);
+
+  // Guard against stale state updates after close or userId change
   useEffect(() => {
     if (!visible || !userId) {
-      // Clear previous state when closing
       if (!visible) {
         setProfile(null);
         setSocialAccounts([]);
@@ -513,77 +567,67 @@ export default function PublicProfileModal({
       return;
     }
 
-    setLoading(true);
-    setError(null);
-    setProfile(null);
-    setSocialAccounts([]);
-    setEagohs([]);
-    setListings([]);
-    setVendorStats(null);
+    let cancelled = false;
 
     (async () => {
+      // Use the shared loader
+      setLoading(true);
+      setError(null);
+      setProfile(null);
+      setSocialAccounts([]);
+      setEagohs([]);
+      setListings([]);
+      setVendorStats(null);
+
       try {
-        const [profileData, socials, eagohData, listingData, vendorData] = await Promise.all([
-          getPublicProfile(userId).catch(() => null),
-          getPublicSocialAccounts(userId).catch(() => []),
-          getPublicEagohs(userId).catch(() => []),
-          getPublicListings(userId).catch(() => []),
+        const profileResult: PublicProfileLoadResult = await getPublicProfile(userId, isSelf);
+        if (cancelled) return;
+
+        const [socials, eagohData, listingData, vendorData] = await Promise.all([
+          getPublicSocialAccounts(userId).catch(() => [] as PublicSocialAccount[]),
+          getPublicEagohs(userId).catch(() => [] as PublicEagohSummary[]),
+          getPublicListings(userId).catch(() => [] as PublicListingSummary[]),
           getPublicVendorStats(userId).catch(() => null),
         ]);
+        if (cancelled) return;
 
-        if (!profileData) {
-          setError("This public profile is unavailable.");
-          setLoading(false);
-          return;
-        }
-
-        setProfile(profileData);
         setSocialAccounts(socials);
         setEagohs(eagohData);
         setListings(listingData);
         setVendorStats(vendorData);
+
+        switch (profileResult.status) {
+          case "success":
+            setProfile(profileResult.profile);
+            break;
+          case "not_found":
+            setError("This public profile has not been created.");
+            break;
+          case "hidden":
+            setError("This user's public profile is private.");
+            break;
+          case "forbidden":
+            setError("This profile cannot be viewed.");
+            break;
+          case "error":
+            setError(profileResult.message);
+            break;
+        }
       } catch {
-        setError("Public profile could not be loaded.");
+        if (!cancelled) setError("Public profile could not be loaded.");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
-  }, [visible, userId]);
 
+    return () => { cancelled = true; };
+  }, [visible, userId, isSelf]);
+
+  // Retry calls the shared loader
   const handleRetry = useCallback(() => {
-    // Trigger re-fetch by toggling loading
     if (!userId) return;
-    setLoading(true);
-    setError(null);
-
-    (async () => {
-      try {
-        const [profileData, socials, eagohData, listingData, vendorData] = await Promise.all([
-          getPublicProfile(userId).catch(() => null),
-          getPublicSocialAccounts(userId).catch(() => []),
-          getPublicEagohs(userId).catch(() => []),
-          getPublicListings(userId).catch(() => []),
-          getPublicVendorStats(userId).catch(() => null),
-        ]);
-
-        if (!profileData) {
-          setError("This public profile is unavailable.");
-          setLoading(false);
-          return;
-        }
-
-        setProfile(profileData);
-        setSocialAccounts(socials);
-        setEagohs(eagohData);
-        setListings(listingData);
-        setVendorStats(vendorData);
-      } catch {
-        setError("Public profile could not be loaded.");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [userId]);
+    loadProfile(userId);
+  }, [userId, loadProfile]);
 
   const handleSocialPress = useCallback((url: string) => {
     Linking.openURL(url).catch(() => undefined);
@@ -621,7 +665,9 @@ export default function PublicProfileModal({
 
           {/* Header */}
           <View style={styles.header}>
-            <Text style={styles.headerTitle}>Public Profile</Text>
+            <Text style={styles.headerTitle}>
+              {error ? "Profile Unavailable" : "Public Profile"}
+            </Text>
             <Pressable
               onPress={onClose}
               style={({ pressed }) => [styles.closeBtn, pressed && { opacity: 0.7 }]}

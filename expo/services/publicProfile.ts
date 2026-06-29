@@ -5,13 +5,26 @@ import { supabase } from "@/lib/supabase";
  * for any user. Never exposes email, subscription tier, Neuron balances,
  * payment info, or private credentials.
  *
- * Uses the existing profiles_marketplace_select RLS policy which allows
- * any authenticated user to read basic profile fields from any user who
- * has an active marketplace listing. For broader public profile access,
- * we select only approved public columns.
+ * RLS policies:
+ * - profiles_self_select: owner always reads own row
+ * - profiles_public_profile_select: any authenticated user can read
+ *   profiles where public_profile_enabled = true
+ * - profiles_marketplace_select: any authenticated user can read profiles
+ *   for users with active marketplace listings (legacy)
+ *
+ * Only PUBLIC_PROFILE_COLUMNS are selected. Self-preview bypasses the
+ * public_profile_enabled check because the owner policy applies.
  */
 
 // ── Types ──────────────────────────────────────────────────────────────
+
+/** Typed result from getPublicProfile — distinguishes every failure mode */
+export type PublicProfileLoadResult =
+  | { status: "success"; profile: PublicProfileData }
+  | { status: "not_found" }
+  | { status: "hidden" }
+  | { status: "forbidden"; message?: string }
+  | { status: "error"; message: string; code?: string };
 
 export type PublicProfileData = {
   userId: string;
@@ -94,15 +107,18 @@ const PUBLIC_PROFILE_COLUMNS = [
 // ── Queries ────────────────────────────────────────────────────────────
 
 /**
- * Fetch a user's public profile data. Returns null if the profile doesn't
- * exist or the user has disabled their public profile (public_profile_enabled = false).
+ * Fetch a user's public profile data. Returns a typed result that
+ * distinguishes every failure mode so the UI can show the right message.
  *
- * When the caller IS the profile owner, they can always see their own data
- * regardless of visibility settings. The `isSelf` flag controls this behavior.
+ * @param userId  The profile's auth.users UUID
+ * @param isSelf  True when the caller IS the profile owner —
+ *                self-preview always succeeds via the owner RLS policy
+ *                and ignores public_profile_enabled.
  */
 export async function getPublicProfile(
   userId: string,
-): Promise<PublicProfileData | null> {
+  isSelf: boolean = false,
+): Promise<PublicProfileLoadResult> {
   const { data, error } = await supabase
     .from("profiles")
     .select(PUBLIC_PROFILE_COLUMNS.join(","))
@@ -110,29 +126,74 @@ export async function getPublicProfile(
     .maybeSingle();
 
   if (error) {
-    console.warn("[publicProfile] fetch error", error.message);
-    return null;
+    // Distinguish Supabase error types for accurate UI messages
+    const code = (error as { code?: string }).code;
+    const msg = (error as { message?: string }).message ?? String(error);
+    const details = (error as { details?: string }).details;
+    const hint = (error as { hint?: string }).hint;
+
+    console.warn("[publicProfile] fetch error", {
+      userId,
+      isSelf,
+      code,
+      message: msg,
+      details,
+      hint,
+    });
+
+    // 42703 = undefined_column (schema mismatch — missing column in DB)
+    if (code === "42703") {
+      return {
+        status: "error",
+        message: __DEV__
+          ? "Public profile database fields are missing. Run the public profile migration."
+          : "Public profile could not be loaded.",
+        code,
+      };
+    }
+
+    // 42501 = insufficient_privilege (RLS denied)
+    if (code === "42501") {
+      return { status: "forbidden", message: msg };
+    }
+
+    // Generic DB / network error
+    return { status: "error", message: msg, code };
   }
-  if (!data) return null;
+
+  // No row exists — the profiles row was never created (handle_new_user trigger
+  // may not have fired, or the user deleted their account)
+  if (!data) {
+    return { status: "not_found" };
+  }
 
   const p = data as unknown as Record<string, unknown>;
+  const publicEnabled = (p.public_profile_enabled as boolean) !== false;
+
+  // Self can always view their own profile, even when hidden
+  if (!isSelf && !publicEnabled) {
+    return { status: "hidden" };
+  }
 
   return {
-    userId: p.id as string,
-    username: (p.username as string) ?? null,
-    displayName: (p.display_name as string) ?? null,
-    bio: (p.bio as string) ?? null,
-    avatarUrl: (p.avatar_url as string) ?? null,
-    bannerUrl: (p.banner_url as string) ?? null,
-    publicDisplayTitle: (p.public_display_title as string) ?? null,
-    isSocialVerified: (p.is_social_verified as boolean) === true,
-    socialVerifiedPlatform: (p.social_verified_platform as string) ?? null,
-    publicProfileEnabled: (p.public_profile_enabled as boolean) !== false,
-    showSocialAccounts: (p.show_social_accounts as boolean) !== false,
-    showCredentials: (p.show_credentials as boolean) !== false,
-    showPublicEagohs: (p.show_public_eagohs as boolean) !== false,
-    showFaction: (p.show_faction as boolean) === true,
-    joinedAt: (p.created_at as string) ?? null,
+    status: "success",
+    profile: {
+      userId: p.id as string,
+      username: (p.username as string) ?? null,
+      displayName: (p.display_name as string) ?? null,
+      bio: (p.bio as string) ?? null,
+      avatarUrl: (p.avatar_url as string) ?? null,
+      bannerUrl: (p.banner_url as string) ?? null,
+      publicDisplayTitle: (p.public_display_title as string) ?? null,
+      isSocialVerified: (p.is_social_verified as boolean) === true,
+      socialVerifiedPlatform: (p.social_verified_platform as string) ?? null,
+      publicProfileEnabled: publicEnabled,
+      showSocialAccounts: (p.show_social_accounts as boolean) !== false,
+      showCredentials: (p.show_credentials as boolean) !== false,
+      showPublicEagohs: (p.show_public_eagohs as boolean) !== false,
+      showFaction: (p.show_faction as boolean) === true,
+      joinedAt: (p.created_at as string) ?? null,
+    },
   };
 }
 

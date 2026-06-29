@@ -93,11 +93,12 @@ async function getPublicVendorStats(userId: string): Promise<{
 
 // ── Styles ─────────────────────────────────────────────────────────────
 
-const { height: SCREEN_HEIGHT } = Dimensions.get("window");
+const { height: WINDOW_HEIGHT } = Dimensions.get("window");
+const SHEET_HEIGHT = WINDOW_HEIGHT * 0.8;
 
-// ── Swipe dismiss threshold ───────────────────────────────────────────
-const DISMISS_THRESHOLD = 130;
-const DISMISS_VELOCITY_THRESHOLD = 0.55;
+// ── Swipe dismiss thresholds ─────────────────────────────────────────
+const DISMISS_THRESHOLD = 100;
+const DISMISS_VELOCITY_THRESHOLD = 0.5;
 
 const styles = StyleSheet.create({
   overlay: {
@@ -119,9 +120,10 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: SCREEN_HEIGHT * 0.92,
-    borderTopLeftRadius: 5,
-    borderTopRightRadius: 5,
+    height: SHEET_HEIGHT,
+    maxHeight: SHEET_HEIGHT,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     overflow: "hidden" as const,
     backgroundColor: palette.void,
     borderWidth: 1,
@@ -133,25 +135,27 @@ const styles = StyleSheet.create({
   handleArea: {
     alignItems: "center" as const,
     paddingTop: 10,
-    paddingBottom: 4,
+    paddingBottom: 6,
   },
   handle: {
-    width: 40,
+    width: 44,
     height: 5,
     borderRadius: 3,
-    backgroundColor: palette.line,
+    backgroundColor: "rgba(54,245,255,0.35)",
   },
   header: {
+    height: 60,
+    minHeight: 60,
     flexDirection: "row" as const,
     alignItems: "center" as const,
-    justifyContent: "space-between" as const,
+    justifyContent: "center" as const,
     paddingHorizontal: 16,
-    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: palette.line,
-    backgroundColor: "rgba(10,20,38,0.95)",
+    backgroundColor: "rgba(10,20,38,0.98)",
     zIndex: 100,
     elevation: 100,
+    position: "relative" as const,
   },
   headerTitle: {
     color: palette.text,
@@ -160,14 +164,19 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   closeBtn: {
+    position: "absolute" as const,
+    right: 12,
+    top: 8,
     width: 44,
     height: 44,
-    borderRadius: 5,
+    borderRadius: 8,
     alignItems: "center" as const,
     justifyContent: "center" as const,
-    backgroundColor: "rgba(255,255,255,0.06)",
+    backgroundColor: "rgba(255,255,255,0.08)",
     borderWidth: 1,
     borderColor: palette.line,
+    zIndex: 200,
+    elevation: 200,
   },
   scroll: { flex: 1 },
   scrollContent: { paddingBottom: 60 },
@@ -509,7 +518,7 @@ export default function PublicProfileModal({
   userId,
   currentUserId,
   onClose,
-}: PublicProfileModalProps): JSX.Element {
+}: PublicProfileModalProps): JSX.Element | null {
   const isSelf = !!(currentUserId && userId && currentUserId === userId);
 
   // Clear state when userId changes or modal opens
@@ -701,7 +710,7 @@ export default function PublicProfileModal({
         if (gestureState.dy > DISMISS_THRESHOLD || gestureState.vy > DISMISS_VELOCITY_THRESHOLD) {
           isDismissing.current = true;
           Animated.timing(translateY, {
-            toValue: SCREEN_HEIGHT,
+            toValue: WINDOW_HEIGHT,
             duration: 220,
             useNativeDriver: true,
           }).start(() => {
@@ -751,7 +760,7 @@ export default function PublicProfileModal({
     if (isDismissing.current) return;
     isDismissing.current = true;
     Animated.timing(translateY, {
-      toValue: SCREEN_HEIGHT,
+      toValue: WINDOW_HEIGHT,
       duration: 200,
       useNativeDriver: true,
     }).start(() => {
@@ -761,7 +770,7 @@ export default function PublicProfileModal({
     });
   }, [translateY, onClose]);
 
-  if (!visible) return <></>;
+  if (!visible) return null;
 
   return (
     <View style={styles.overlay}>

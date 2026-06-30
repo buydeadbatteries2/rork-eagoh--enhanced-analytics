@@ -61,6 +61,38 @@ export const TEST_STORE_SUBSCRIPTION_ALIASES: Record<string, string> = {
   syndicate_sub: "syndicate_sub",
 };
 
+/**
+ * RevenueCat Test Store Neuron product aliases — maps Test Store product IDs
+ * to their production counterparts. When Test Store mode is active, the Neuron
+ * store uses these to match test products to the correct Neuron amounts.
+ *
+ * Add entries here when RevenueCat Test Store returns identifiers that differ
+ * from the production App Store Connect product IDs.
+ */
+export const TEST_STORE_NEURON_ALIASES: Record<string, string> = {
+  // Common RevenueCat Test Store naming conventions for Neuron consumables
+  test_store_edge_250: "store_edge_250",
+  test_store_edge_750: "store_edge_750",
+  test_store_edge_2000: "store_edge_2000",
+  test_store_edge_6000: "store_edge_6000",
+  test_store_edge_15000: "store_edge_15000",
+  // Also match bare production IDs in case Test Store returns them directly
+  store_edge_250: "store_edge_250",
+  store_edge_750: "store_edge_750",
+  store_edge_2000: "store_edge_2000",
+  store_edge_6000: "store_edge_6000",
+  store_edge_15000: "store_edge_15000",
+};
+
+/**
+ * Normalize a Test Store neuron product ID to its production equivalent.
+ * Returns the production ID if already a production ID, or the aliased
+ * production ID if a known test alias, or null if unrecognised.
+ */
+export function normalizeNeuronProductId(productId: string): string | null {
+  return TEST_STORE_NEURON_ALIASES[productId] ?? null;
+}
+
 /** Map a RevenueCat product ID to its corresponding subscription tier. */
 export function subscriptionTierFromProductId(productId: string): SubscriptionTier | null {
   // Check the direct mapping first

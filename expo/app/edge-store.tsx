@@ -15,6 +15,7 @@ import { useEdge } from "@/providers/EdgeProvider";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useRevenueCat } from "@/providers/RevenueCatProvider";
 import { NEURON_PRODUCT_AMOUNTS } from "@/services/revenuecat";
+import { normalizeNeuronProductId } from "@/services/tiers";
 import { EDGE_PACKS, type EdgePack, isMockPurchaseAllowed, recordNeuronPurchaseOnce } from "@/services/edgeStore";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
@@ -319,9 +320,11 @@ const styles = StyleSheet.create({
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-/** Map a RevenueCat package to our local EdgePack using product.identifier (NOT package identifier). */
-function findEdgePack(rcPkg: PurchasesPackage): EdgePack | undefined {
-  return EDGE_PACKS.find((p) => p.productId === rcPkg.product.identifier);
+/** Map a RevenueCat package to our local EdgePack using product.identifier (NOT package identifier).
+ * @param lookupId - Normalized product ID after Test Store alias resolution. */
+function findEdgePack(rcPkg: PurchasesPackage, lookupId?: string): EdgePack | undefined {
+  const pid = lookupId ?? rcPkg.product.identifier;
+  return EDGE_PACKS.find((p) => p.productId === pid);
 }
 
 /** Format a RevenueCat price string (e.g. "$4.99") for display. */
@@ -479,7 +482,10 @@ export default function EdgeStoreScreen(): JSX.Element {
     // Attempt to match RC packages against local EDGE_PACKS using product.identifier
     const mapped: { edgePack: EdgePack; rcPackage: PurchasesPackage }[] = [];
     for (const rcPkg of rcNeuronPackages) {
-      const ep = findEdgePack(rcPkg);
+      // Normalize the product ID through Test Store aliases so lookups work
+      const normalized = normalizeNeuronProductId(rcPkg.product.identifier);
+      const lookupId = normalized ?? rcPkg.product.identifier;
+      const ep = findEdgePack(rcPkg, lookupId);
       if (ep) {
         console.log("[NeuronStore] Matched RC product", rcPkg.product.identifier, "(package:", rcPkg.identifier, ") →", ep.productId, "|", formatPrice(rcPkg));
         mapped.push({ edgePack: ep, rcPackage: rcPkg });
@@ -562,8 +568,9 @@ export default function EdgeStoreScreen(): JSX.Element {
         );
         setConfirmPack(null);
         setConfirmRcPkg(null);
-      } else if (isMockPurchaseAllowed()) {
+      } else if (isMockPurchaseAllowed() && runtimeMode !== "test-store") {
         // Mock purchase: RevenueCat not available in dev — use direct Supabase credit
+        // Never activate mock mode when Test Store is the active runtime.
         console.log("[NeuronStore] Using mock purchase for:", productId, "|", neuronAmount, "Neurons");
         await creditEdge(neuronAmount, `Mock Neuron purchase: ${confirmPack.label} (${productId})`);
         setConfirmPack(null);
@@ -637,6 +644,10 @@ export default function EdgeStoreScreen(): JSX.Element {
   const subEdge = balances.subscription.toLocaleString();
   const purchasedEdge = balances.purchased.toLocaleString();
 
+  // Whether the current runtime can execute real RevenueCat purchases.
+  // Test Store mode is included because it goes through RevenueCat's sandbox.
+  const canPurchase = rcConfigured || (runtimeMode === "test-store" && !usingFallbackPacks);
+
   // Disable when a mutation is in flight
   const disabled = isMutating || purchasing || isPurchasing;
 
@@ -654,7 +665,21 @@ export default function EdgeStoreScreen(): JSX.Element {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* RevenueCat / Test Mode status banner */}
         <View style={styles.statusBanner}>
-          {runtimeMode === "expo-go-disabled" || runtimeMode === "web-disabled" ? (
+          {runtimeMode === "test-store" && rcConfigured ? (
+            <>
+              <ShieldCheck color={palette.cyan} size={16} />
+              <Text style={styles.statusBannerText}>
+                RevenueCat Test Store
+              </Text>
+            </>
+          ) : runtimeMode === "test-store" && !rcConfigured ? (
+            <>
+              <AlertTriangle color={palette.gold} size={16} />
+              <Text style={[styles.statusBannerText, { color: palette.gold }]}>
+                RevenueCat Test Store could not be configured. Check your API key.
+              </Text>
+            </>
+          ) : runtimeMode === "expo-go-disabled" || runtimeMode === "web-disabled" ? (
             <>
               <WifiOff color={palette.muted} size={16} />
               <Text style={[styles.statusBannerText, { color: palette.muted }]}>
@@ -746,7 +771,7 @@ export default function EdgeStoreScreen(): JSX.Element {
                   } as PurchasesPackage["product"],
                 } as unknown as PurchasesPackage}
                 onPress={() => handleSelectPack(edgePack, rcPackage)}
-                disabled={disabled || !canRealPurchase}
+                disabled={disabled || !canPurchase}
               />
             ))}
           </View>
@@ -775,7 +800,7 @@ export default function EdgeStoreScreen(): JSX.Element {
       </ScrollView>
 
       {/* Confirmation modal */}
-      {confirmPack && canRealPurchase && (
+      {confirmPack && canPurchase && (
         <View style={styles.overlay}>
           <Pressable style={StyleSheet.absoluteFill} onPress={handleCancelConfirm} />
           <View style={styles.confirmCard}>

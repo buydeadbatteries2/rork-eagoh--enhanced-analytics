@@ -20,7 +20,7 @@ import Purchases, {
   type PurchasesPackage,
 } from "react-native-purchases";
 import type { SubscriptionTier } from "@/services/tiers";
-import { SUBSCRIPTION_PRODUCT_IDS } from "@/services/tiers";
+import { SUBSCRIPTION_PRODUCT_IDS, normalizeNeuronProductId } from "@/services/tiers";
 
 // ── Runtime detection ───────────────────────────────────────────────────────
 
@@ -293,9 +293,10 @@ export function getSubscriptionPackagesFromAllOfferings(
   return result;
 }
 
-/** Check if a product identifier is a known consumable Neuron product. */
+/** Check if a product identifier is a known consumable Neuron product (including Test Store aliases). */
 export function isNeuronProduct(productId: string): boolean {
-  return productId in NEURON_PRODUCT_AMOUNTS;
+  const normalized = normalizeNeuronProductId(productId);
+  return normalized !== null && normalized in NEURON_PRODUCT_AMOUNTS;
 }
 
 /**
@@ -386,11 +387,13 @@ export function getNeuronPackagesFromAllOfferings(
   for (const offering of offerings) {
     for (const pkg of offering.availablePackages) {
       const pid = pkg.product.identifier;
-      if (NEURON_PRODUCT_AMOUNTS[pid] !== undefined && !seen.has(pid)) {
+      // Normalize through Test Store aliases first, then check the amount map
+      const normalized = normalizeNeuronProductId(pid);
+      if (normalized !== null && NEURON_PRODUCT_AMOUNTS[normalized] !== undefined && !seen.has(pid)) {
         seen.add(pid);
         result.push(pkg);
         if (__DEV__) {
-          console.log(`[RevenueCat] Neuron pack found: ${pkg.identifier} → product: ${pid} (${NEURON_PRODUCT_AMOUNTS[pid]} Neurons) ${pkg.product.priceString ?? `$${pkg.product.price}`}`);
+          console.log(`[RevenueCat] Neuron pack found: ${pkg.identifier} → product: ${pid} (${NEURON_PRODUCT_AMOUNTS[normalized]} Neurons) ${normalized !== pid ? `→ normalized: ${normalized} ` : ""}${pkg.product.priceString ?? `$${pkg.product.price}`}`);
         }
       }
     }

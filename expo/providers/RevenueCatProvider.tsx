@@ -76,7 +76,9 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
 
   // Safe guards for whether RevenueCat operations can proceed
   const isAvailable = configured;
-  const canRealPurchase = configured && runtimeMode !== "test-store" && runtimeMode !== "unconfigured";
+  // Test Store purchases go through RevenueCat's sandbox — they ARE real purchases.
+  // Only unconfigured (missing key / error) blocks purchasing.
+  const canRealPurchase = configured && runtimeMode !== "unconfigured";
 
   // Track previous user ID to detect login/logout transitions
   const prevUserId = useRef<string | null>(null);

@@ -14,6 +14,7 @@ import {
   Gauge,
   Hexagon,
   Megaphone,
+  MessageCircle,
   RadioTower,
   ScanLine,
   Shield,
@@ -21,6 +22,7 @@ import {
   Sparkles,
   Star,
   Sword,
+  TrendingUp,
   Trophy,
   WalletCards,
   X,
@@ -30,6 +32,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, Alert, Animated, Dimensions, FlatList, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { useQuery } from "@tanstack/react-query";
 import { palette } from "@/constants/colors";
 import { DEFAULT_EAGOH_IMAGE, DEFAULT_EAGOH_NAME } from "@/constants/defaultEagoh";
 import { useAppTheme } from "@/providers/ThemeProvider";
@@ -52,26 +55,31 @@ import { canTransact } from "@/services/marketplace";
 import type { EagohRecord } from "@/services/eagohs";
 import { getBulkReputations, rankColor as repRankColor, rankEmoji, RANK_TIERS, type RankTier } from "@/services/reputation";
 import type { ReputationRow } from "@/services/reputation";
+import { getLeaderboard, type LeaderboardEntry } from "@/services/leaderboards";
+import { listUserFactions, getFactionFull, describeActivity, type FactionActivityRow } from "@/services/factions";
+import { canUseForge, canUseFactions, canUseExchange } from "@/services/permissions";
 
 type Phase = "loading" | "onboarding" | "auth" | "app";
 type CardTone = "cyan" | "gold" | "violet" | "ember" | "success";
 type HomeSection = { id: string; kind: "hero" | "sponsored" | "trending" | "feed" | "analyst" | "quickcheck" | "recent" | "favorites" | "labs" | "factions" | "leaderboards" | "domains" };
 type CardProps = { title: string; subtitle: string; meta?: string; tone?: "cyan" | "gold" | "violet"; icon?: React.ReactNode };
 
-type EagohItem = { id: string; name: string; metric: string; trend: string; accent: CardTone };
-type ActivityItem = { id: string; faction: string; event: string; time: string; accent: CardTone };
-type TeamItem = { id: string; team: string; status: string; heat: string; accent: CardTone };
+function getTimeAgo(date: Date): string {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (seconds < 60) return "now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return `${Math.floor(days / 7)}w`;
+}
 
 const onboarding = [
   { kicker: "01 / TRUST", title: "Your signal enters the grid.", body: "EAGOH maps reputation, identity, and opportunity into one command layer.", icon: <Eye color={palette.cyan} size={34} /> },
   { kicker: "02 / FACTIONS", title: "Align with crews that move markets.", body: "Discover factions, ranks, missions, and shared momentum with mock intelligence.", icon: <ShieldCheck color={palette.gold} size={34} /> },
   { kicker: "03 / LABS", title: "Prototype the next advantage.", body: "Labs previews experimental tools, drops, and analysis in a safe mock-only space.", icon: <Zap color={palette.success} size={34} /> },
-];
-
-const stats = [
-  { label: "Neurons", value: "12,480" },
-  { label: "Trust", value: "94%" },
-  { label: "Signals", value: "128" },
 ];
 
 const homeSections: HomeSection[] = [
@@ -80,41 +88,9 @@ const homeSections: HomeSection[] = [
   { id: "domains", kind: "domains" },
   { id: "leaderboards", kind: "leaderboards" },
   { id: "labs", kind: "labs" },
-  { id: "trending", kind: "trending" },
-  { id: "feed", kind: "feed" },
   { id: "factions", kind: "factions" },
-  { id: "analyst", kind: "analyst" },
   { id: "quickcheck", kind: "quickcheck" },
-  { id: "recent", kind: "recent" },
-  { id: "favorites", kind: "favorites" },
 ];
-
-
-const trendingEagohs: EagohItem[] = [
-  { id: "t1", name: "Ghost Falcon", metric: "Trust 96", trend: "+18%", accent: "cyan" },
-  { id: "t2", name: "Iron Pulse", metric: "8.9K Neurons", trend: "+12%", accent: "ember" },
-  { id: "t3", name: "Cinder Halo", metric: "Heat 72", trend: "+31%", accent: "gold" },
-];
-
-const recentlyViewed: EagohItem[] = [
-  { id: "r1", name: "Night Oracle", metric: "Viewed 2h ago", trend: "A-", accent: "violet" },
-  { id: "r2", name: "Blue Talon", metric: "Viewed today", trend: "B+", accent: "cyan" },
-  { id: "r3", name: "Vanta Crown", metric: "Viewed yesterday", trend: "A", accent: "success" },
-];
-
-const factionActivity: ActivityItem[] = [
-  { id: "a1", faction: "Obsidian Syndicate", event: "validated 18 EAGOH trust shifts", time: "4m", accent: "cyan" },
-  { id: "a2", faction: "Gold Circuit", event: "boosted sponsored discovery lanes", time: "17m", accent: "gold" },
-  { id: "a3", faction: "Violet Lab", event: "opened analyst simulations", time: "31m", accent: "violet" },
-];
-
-const favoriteTeams: TeamItem[] = [
-  { id: "f1", team: "Austin Fanatics", status: "3 EAGOHs surging", heat: "92", accent: "cyan" },
-  { id: "f2", team: "Metro Ultras", status: "new faction thread", heat: "86", accent: "gold" },
-  { id: "f3", team: "North End Loyal", status: "sentiment steady", heat: "74", accent: "success" },
-];
-
-const quickChecks = ["Trust Scan", "Fraud Pulse", "Team Fit", "Value Scan"];
 
 function toneColor(tone: CardTone): string {
   if (tone === "gold") return palette.gold;
@@ -231,19 +207,45 @@ const SponsoredBanner = React.memo(function SponsoredBanner({ item, userId, repu
 });
 
 const HeroSection = React.memo(function HeroSection({ onEdgePress }: { onEdgePress: () => void }): JSX.Element {
-  const { balances } = useEdge();
+  const { balances, monthlyAllocation } = useEdge();
+  const { effectiveSubscriptionTier } = useProfile();
+  const { eagohs } = useEagohs();
+  const isFree = effectiveSubscriptionTier === "free";
+  const userForged = (eagohs ?? []).filter((e) => !e.is_default_shell);
+
   return (
     <View style={styles.heroShell}>
       <LinearGradient colors={["rgba(54,245,255,0.20)", "rgba(124,92,255,0.12)", "rgba(255,184,77,0.08)"]} style={StyleSheet.absoluteFill} />
       <View style={styles.heroOrbit} />
       <Text style={styles.kicker}>EAGOH HOME</Text>
       <Text style={styles.screenTitle}>Command your edge.</Text>
-      <Text style={styles.heroHomeBody}>Featured banners, faction movement, sponsored discovery, and Quick Check tools are running in mock mode.</Text>
-      <View style={styles.statRow}>{stats.map((stat) => <View key={stat.label} style={styles.stat}><Text style={styles.statValue}>{stat.value}</Text><Text style={styles.statLabel}>{stat.label}</Text></View>)}</View>
+      {isFree ? (
+        <View style={styles.emptyBannerCard}>
+          <Image source={{ uri: DEFAULT_EAGOH_IMAGE }} style={styles.defaultShellSmall} resizeMode="contain" />
+          <Text style={styles.emptyBannerText}>Your default {DEFAULT_EAGOH_NAME} shell is active. Quick Check is ready.</Text>
+        </View>
+      ) : userForged.length === 0 ? (
+        <View style={styles.emptyBannerCard}>
+          <Image source={{ uri: DEFAULT_EAGOH_IMAGE }} style={styles.defaultShellSmall} resizeMode="contain" />
+          <Text style={styles.emptyBannerText}>Forge your first custom EAGOH to unlock domain intelligence.</Text>
+        </View>
+      ) : (
+        <Text style={styles.heroHomeBody}>{userForged.length} forged EAGOH{userForged.length !== 1 ? "s" : ""} active across {new Set(userForged.map((e) => e.domain ?? "unknown")).size} domain{new Set(userForged.map((e) => e.domain ?? "unknown")).size !== 1 ? "s" : ""}.</Text>
+      )}
+      <View style={styles.statRow}>
+        <View style={styles.stat}>
+          <Text style={styles.statValue}>{balances.total.toLocaleString()}</Text>
+          <Text style={styles.statLabel}>Neurons</Text>
+        </View>
+        <View style={styles.stat}>
+          <Text style={styles.statValue}>{monthlyAllocation.toLocaleString()}</Text>
+          <Text style={styles.statLabel}>Monthly</Text>
+        </View>
+      </View>
       <Pressable onPress={onEdgePress} style={({ pressed }) => [styles.edgeBalance, pressed && { opacity: 0.8 }]}>
         <WalletCards color={palette.gold} size={20} />
         <Text style={styles.edgeText}>Neuron Balance</Text>
-        <Text style={styles.edgeAmount}>{balances.total.toLocaleString()} EC</Text>
+        <Text style={styles.edgeAmount}>{balances.total.toLocaleString()} Neurons</Text>
         <ChevronRight color={palette.gold} size={14} style={{ opacity: 0.6 }} />
       </Pressable>
     </View>
@@ -311,47 +313,149 @@ const SponsoredSection = React.memo(function SponsoredSection({ userId }: { user
   );
 });
 
-const EagohRail = React.memo(function EagohRail({ items }: { items: EagohItem[] }): JSX.Element {
-  return (
-    <View style={styles.tileGrid}>{items.map((item) => {
-      const accent = toneColor(item.accent);
-      return (
-        <View key={item.id} style={styles.eagohTile}>
-          <View style={[styles.tileGlow, { backgroundColor: accent }]} />
-          <MiniImage accent={item.accent} label={item.trend} />
-          <Text style={styles.tileTitle}>{item.name}</Text>
-          <Text style={[styles.tileMetric, { color: accent }]}>{item.metric}</Text>
+const TrendingRail = React.memo(function TrendingRail(): JSX.Element {
+  const { data, isLoading } = useQuery<LeaderboardEntry[]>({
+    queryKey: ["home", "trending"],
+    queryFn: async () => {
+      const result = await getLeaderboard("rising", {}, 5, 0);
+      return result.entries;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  if (isLoading) {
+    return (
+      <View>
+        <SectionHeader eyebrow="MARKET HEAT" title="Trending EAGOHs" />
+        <View style={styles.loadingRow}><ActivityIndicator color={palette.cyan} size="small" /></View>
+      </View>
+    );
+  }
+
+  const entries = data ?? [];
+  if (entries.length === 0) {
+    return (
+      <View>
+        <SectionHeader eyebrow="MARKET HEAT" title="Trending EAGOHs" />
+        <View style={styles.emptyBannerCard}>
+          <TrendingUp color={palette.muted} size={28} />
+          <Text style={styles.emptyBannerText}>No trending EAGOHs yet. Reputation activity will appear here.</Text>
         </View>
-      );
-    })}</View>
+      </View>
+    );
+  }
+
+  return (
+    <View>
+      <SectionHeader eyebrow="MARKET HEAT" title="Trending EAGOHs" action="Rising" />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList} {...HORIZONTAL_LIST_PERFORMANCE_PROPS}>
+        {entries.map((entry) => {
+          const accent: CardTone = entry.rank_tier === "Gold" || entry.rank_tier === "Oracle" || entry.rank_tier === "Syndicate Prime" ? "gold" : entry.rank_tier === "Activated" || entry.rank_tier === "Platinum" ? "cyan" : entry.rank_tier === "Bronze" ? "ember" : "violet";
+          const color = toneColor(accent);
+          return (
+            <View key={entry.eagoh_id} style={[styles.trendingCard, { borderColor: `${color}33` }]}>
+              <View style={[styles.tileGlow, { backgroundColor: color }]} />
+              <MiniImage accent={accent} label={entry.rank_tier} />
+              <Text style={styles.tileTitle} numberOfLines={1}>{entry.eagoh_name}</Text>
+              <Text style={[styles.tileMetric, { color }]}>{entry.rank_tier} · {entry.reputation_score}</Text>
+            </View>
+          );
+        })}
+      </ScrollView>
+    </View>
   );
 });
 
-const ActivityFeed = React.memo(function ActivityFeed(): JSX.Element {
+const FactionActivityFeed = React.memo(function FactionActivityFeed(): JSX.Element {
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+  const { effectiveSubscriptionTier } = useProfile();
+
+  const { data: activities, isLoading } = useQuery<(FactionActivityRow & { faction_name?: string })[]>({
+    queryKey: ["home", "faction-activity", userId],
+    enabled: !!userId && canUseFactions(effectiveSubscriptionTier),
+    queryFn: async () => {
+      if (!userId) return [];
+      const factions = await listUserFactions(userId);
+      if (factions.length === 0) return [];
+      const allActivities: (FactionActivityRow & { faction_name?: string })[] = [];
+      for (const f of factions.slice(0, 3)) {
+        const full = await getFactionFull(f.id);
+        if (full) {
+          for (const a of full.recentActivity.slice(0, 5)) {
+            allActivities.push({ ...a, faction_name: f.name });
+          }
+        }
+      }
+      allActivities.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      return allActivities.slice(0, 6);
+    },
+    staleTime: 2 * 60 * 1000,
+  });
+
+  if (isLoading) {
+    return (
+      <View>
+        <SectionHeader eyebrow="FACTION GRID" title="Activity feed" />
+        <View style={styles.loadingRow}><ActivityIndicator color={palette.violet} size="small" /></View>
+      </View>
+    );
+  }
+
+  const items = activities ?? [];
+  if (items.length === 0) {
+    return (
+      <View>
+        <SectionHeader eyebrow="FACTION GRID" title="Activity feed" />
+        <View style={styles.emptyBannerCard}>
+          <Shield color={palette.muted} size={28} />
+          <Text style={styles.emptyBannerText}>No Faction activity to display. Join or create a Faction to see updates here.</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View>
       <SectionHeader eyebrow="FACTION GRID" title="Activity feed" />
-      <View style={styles.feedCard}>{factionActivity.map((item) => {
-        const accent = toneColor(item.accent);
-        return (
-          <View key={item.id} style={styles.feedRow}>
-            <View style={[styles.feedDot, { backgroundColor: accent }]} />
-            <View style={styles.feedTextWrap}><Text style={styles.feedFaction}>{item.faction}</Text><Text style={styles.feedEvent}>{item.event}</Text></View>
-            <Text style={styles.feedTime}>{item.time}</Text>
-          </View>
-        );
-      })}</View>
+      <View style={styles.feedCard}>
+        {items.map((item) => {
+          const timeAgo = getTimeAgo(new Date(item.created_at));
+          return (
+            <View key={item.id} style={styles.feedRow}>
+              <View style={[styles.feedDot, { backgroundColor: palette.violet }]} />
+              <View style={styles.feedTextWrap}>
+                <Text style={styles.feedFaction}>{item.faction_name ?? "Faction"}</Text>
+                <Text style={styles.feedEvent}>{describeActivity(item)}</Text>
+              </View>
+              <Text style={styles.feedTime}>{timeAgo}</Text>
+            </View>
+          );
+        })}
+      </View>
     </View>
   );
 });
 
 const AnalystAccess = React.memo(function AnalystAccess(): JSX.Element {
+  const router = useRouter();
+  const h = useHaptics();
   return (
     <View>
       <SectionHeader eyebrow="ANALYST NODE" title="Quick analyst access" />
       <View style={styles.analystGrid}>
-        <FuturisticCard title="Signal Brief" subtitle="One-tap mock analyst snapshot for EAGOH momentum." meta="LIVE" icon={<RadioTower color={palette.cyan} size={19} />} />
-        <FuturisticCard title="Neuron Model" subtitle="Preview projected trust, heat, and fan alignment." meta="MOCK" tone="gold" icon={<BarChart3 color={palette.gold} size={19} />} />
+        <Pressable
+          onPress={() => { h.selection(); router.push("/(tabs)/sessions" as never); }}
+          style={({ pressed }) => [pressed && styles.pressed]}
+        >
+          <FuturisticCard title="Quick Check" subtitle="Fast 1-3 Neuron intelligence scan using your active EAGOH." meta="LIVE" icon={<RadioTower color={palette.cyan} size={19} />} />
+        </Pressable>
+        <Pressable
+          onPress={() => { h.selection(); router.push("/open-intelligence" as never); }}
+          style={({ pressed }) => [pressed && styles.pressed]}
+        >
+          <FuturisticCard title="Open Intelligence" subtitle="Feed observations, classify signals, and score intelligence." tone="gold" icon={<BarChart3 color={palette.gold} size={19} />} />
+        </Pressable>
       </View>
     </View>
   );
@@ -359,18 +463,38 @@ const AnalystAccess = React.memo(function AnalystAccess(): JSX.Element {
 
 const QuickCheckSection = React.memo(function QuickCheckSection(): JSX.Element {
   const h = useHaptics();
+  const router = useRouter();
+  const { effectiveSubscriptionTier } = useProfile();
+  const isFree = effectiveSubscriptionTier === "free";
+
+  const scanTypes = [
+    { label: "Quick Check", desc: "1-3 Neurons", accent: palette.cyan, icon: <ScanLine color={palette.cyan} size={18} /> },
+    { label: "Trust Pulse", desc: "Signal scan", accent: palette.gold, icon: <Gauge color={palette.gold} size={18} /> },
+    { label: "Domain Fit", desc: "EAGOH match", accent: palette.violet, icon: <BrainCircuit color={palette.violet} size={18} /> },
+    { label: "Value Scan", desc: "Market check", accent: palette.success, icon: <BarChart3 color={palette.success} size={18} /> },
+  ];
+
   return (
     <View>
-      <SectionHeader eyebrow="FAST SCANS" title="Quick Check access" />
-      <View style={styles.quickGrid}>{quickChecks.map((check, index) => {
-        const accent = [palette.cyan, palette.gold, palette.violet, palette.success][index];
-        return (
-          <Pressable key={check} onPress={h.selection} style={({ pressed }) => [styles.quickButton, pressed && styles.pressed]}>
-            {index % 2 === 0 ? <ScanLine color={accent} size={18} /> : <Gauge color={accent} size={18} />}
-            <Text style={styles.quickText}>{check}</Text>
+      <SectionHeader eyebrow="FAST SCANS" title="Quick Check access" action={isFree ? undefined : "Sessions tab"} />
+      <View style={styles.quickGrid}>
+        {scanTypes.map((scan, index) => (
+          <Pressable
+            key={scan.label}
+            onPress={() => {
+              h.selection();
+              router.push("/(tabs)/sessions" as never);
+            }}
+            style={({ pressed }) => [styles.quickButton, pressed && styles.pressed]}
+          >
+            {scan.icon}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.quickText}>{scan.label}</Text>
+            </View>
+            <ChevronRight color={scan.accent} size={12} style={{ opacity: 0.5 }} />
           </Pressable>
-        );
-      })}</View>
+        ))}
+      </View>
     </View>
   );
 });
@@ -454,19 +578,50 @@ const FactionsFeatureCard = React.memo(function FactionsFeatureCard(): JSX.Eleme
 });
 
 const FavoritesSection = React.memo(function FavoritesSection(): JSX.Element {
+  const { eagohs } = useEagohs();
+  const userForged = (eagohs ?? []).filter((e) => !e.is_default_shell);
+  const allTeams = new Map<string, { teamId: string; eagohCount: number }>();
+  userForged.forEach((e) => {
+    const teams = Array.isArray((e as any).fanatic_teams) ? (e as any).fanatic_teams as string[] : [];
+    teams.forEach((t: string) => {
+      const existing = allTeams.get(t);
+      if (existing) existing.eagohCount++;
+      else allTeams.set(t, { teamId: t, eagohCount: 1 });
+    });
+  });
+  const teams = [...allTeams.values()].sort((a, b) => b.eagohCount - a.eagohCount).slice(0, 5);
+
+  if (teams.length === 0) {
+    return (
+      <View>
+        <SectionHeader eyebrow="FANATIC TEAMS" title="Favorites" />
+        <View style={styles.emptyBannerCard}>
+          <Star color={palette.muted} size={28} />
+          <Text style={styles.emptyBannerText}>Assign fanatic teams to your EAGOHs to see them here.</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View>
-      <SectionHeader eyebrow="FANATIC TEAMS" title="Favorites" />
-      <View style={styles.teamList}>{favoriteTeams.map((team) => {
-        const accent = toneColor(team.accent);
-        return (
-          <View key={team.id} style={styles.teamRow}>
-            <View style={[styles.teamBadge, { borderColor: accent }]}><Star color={accent} size={17} fill={accent} /></View>
-            <View style={styles.feedTextWrap}><Text style={styles.feedFaction}>{team.team}</Text><Text style={styles.feedEvent}>{team.status}</Text></View>
-            <Text style={[styles.teamHeat, { color: accent }]}>{team.heat}</Text>
-          </View>
-        );
-      })}</View>
+      <SectionHeader eyebrow="FANATIC TEAMS" title="Favorites" action={`${teams.length} teams`} />
+      <View style={styles.teamList}>
+        {teams.map((team, i) => {
+          const accents: CardTone[] = ["cyan", "gold", "violet", "ember", "success"];
+          const accent = accents[i % accents.length];
+          const color = toneColor(accent);
+          return (
+            <View key={team.teamId} style={styles.teamRow}>
+              <View style={[styles.teamBadge, { borderColor: color }]}><Star color={color} size={17} fill={color} /></View>
+              <View style={styles.feedTextWrap}>
+                <Text style={styles.feedFaction}>{team.teamId}</Text>
+                <Text style={styles.feedEvent}>{team.eagohCount} EAGOH{team.eagohCount !== 1 ? "s" : ""} assigned</Text>
+              </View>
+            </View>
+          );
+        })}
+      </View>
     </View>
   );
 });
@@ -728,14 +883,10 @@ function HomeApp({ userId, onPromote }: { userId: string | null; onPromote: () =
     if (item.kind === "sponsored") return <SponsoredSection userId={userId} />;
     if (item.kind === "domains") return <HomeDomainsSection />;
     if (item.kind === "leaderboards") return <View><SectionHeader eyebrow="RANKINGS" title="EAGOH Leaderboards" action="View all" /><LeaderboardsFeatureCard /></View>;
-    if (item.kind === "trending") return <View><SectionHeader eyebrow="MARKET HEAT" title="Trending EAGOHs" action="Mock" /><EagohRail items={trendingEagohs} /></View>;
-    if (item.kind === "feed") return <ActivityFeed />;
     if (item.kind === "labs") return <LabsFeatureCard />;
     if (item.kind === "factions") return <FactionsFeatureCard />;
-    if (item.kind === "analyst") return <AnalystAccess />;
     if (item.kind === "quickcheck") return <QuickCheckSection />;
-    if (item.kind === "recent") return <View><SectionHeader eyebrow="RETURN PATH" title="Recently viewed EAGOHs" /><EagohRail items={recentlyViewed} /></View>;
-    return <FavoritesSection />;
+    return null;
   }, [userId]);
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -746,11 +897,17 @@ function HomeApp({ userId, onPromote }: { userId: string | null; onPromote: () =
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
         {...LIST_PERFORMANCE_PROPS}
+        ListHeaderComponent={<TrendingRail />}
         ListFooterComponent={
-          <Pressable onPress={onPromote} style={styles.promoteBannerButton}>
-            <Megaphone color={palette.cyan} size={18} />
-            <Text style={styles.promoteBannerText}>Promote Your EAGOH · From 250 Neurons/day</Text>
-          </Pressable>
+          <View style={{ gap: 18 }}>
+            <FactionActivityFeed />
+            <AnalystAccess />
+            <FavoritesSection />
+            <Pressable onPress={onPromote} style={styles.promoteBannerButton}>
+              <Megaphone color={palette.cyan} size={18} />
+              <Text style={styles.promoteBannerText}>Promote Your EAGOH · From 250 Neurons/day</Text>
+            </Pressable>
+          </View>
         }
       />
     </SafeAreaView>
@@ -1090,6 +1247,7 @@ const styles = StyleSheet.create({
   hotBadge: { position: "absolute", top: 8, right: 8, borderRadius: 5, backgroundColor: palette.ember, paddingHorizontal: 7, paddingVertical: 3 },
   hotBadgeText: { color: palette.text, fontSize: 9, fontWeight: "900", letterSpacing: 1.2 },
   sponsoredCardHot: { borderColor: "rgba(255,77,109,0.45)" },
+  trendingCard: { width: 148, minHeight: 130, borderRadius: 5, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.panel, padding: 10, overflow: "hidden" as const, gap: 10 },
   loadingRow: { minHeight: 80, alignItems: "center", justifyContent: "center" },
   emptyBannerCard: { minHeight: 88, borderRadius: 5, borderWidth: 1, borderColor: palette.line, borderStyle: "dashed", alignItems: "center", justifyContent: "center", gap: 8, padding: 16 },
   emptyBannerText: { color: palette.muted, fontSize: 13, textAlign: "center", lineHeight: 18, fontWeight: "700" },

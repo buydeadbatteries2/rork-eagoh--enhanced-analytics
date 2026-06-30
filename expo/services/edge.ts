@@ -86,7 +86,7 @@ export function getForgeCost(mode: "initial" | "full_reforge" | "partial_reforge
 
 /** Monthly subscription Edge allocations per tier. Free tier is dormant (no allocation). */
 export const TIER_MONTHLY_ALLOCATION: Record<SubscriptionTier, number> = {
-  free: 0,
+  free: 25,
   pro: 600,
   oracle_elite: 1400,
   syndicate: 3700,

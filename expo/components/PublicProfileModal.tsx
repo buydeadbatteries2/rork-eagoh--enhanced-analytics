@@ -1071,7 +1071,7 @@ export default function PublicProfileModal({
                         {listing.minPrice > 0 && (
                           <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
                             <Coins color={palette.gold} size={10} />
-                            <Text style={styles.listingPrice}>From {listing.minPrice} EC/day</Text>
+                            <Text style={styles.listingPrice}>From {listing.minPrice} Neurons/day</Text>
                           </View>
                         )}
                       </View>

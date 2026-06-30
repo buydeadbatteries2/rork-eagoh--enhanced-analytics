@@ -471,7 +471,7 @@ const ListingCard = memo(function ListingCard({
         {/* Price + Buy button — stacked vertically */}
         <View style={styles.priceButtonCol}>
           <Text style={styles.pricePreview}>
-            From {minPrice ?? "—"} EC/day
+            From {minPrice ?? "—"} Neurons/day
           </Text>
           <Pressable
             onPress={() => isPaid && onPurchase(item)}
@@ -1307,7 +1307,7 @@ const CarouselListingCard = memo(function CarouselListingCard({
         {minPrice ? (
           <View style={styles.carouselCardPrice}>
             <Coins color={palette.gold} size={10} />
-            <Text style={styles.carouselCardPriceText}>{minPrice} EC/day</Text>
+            <Text style={styles.carouselCardPriceText}>{minPrice} Neurons/day</Text>
           </View>
         ) : (
           <Text style={styles.carouselCardPriceFree}>Free</Text>
@@ -1481,13 +1481,13 @@ const MyListingCard = memo(function MyListingCard({
               if (price <= 0) return null;
               return (
                 <View key={level} style={styles.myListingPriceTag}>
-                  <Text style={styles.myListingPriceText}>{level}: {price} EC</Text>
+                  <Text style={styles.myListingPriceText}>{level}: {price} Neurons</Text>
                 </View>
               );
             })}
           </View>
           {minPrice && (
-            <Text style={styles.myListingMinPrice}>From {minPrice} EC/day</Text>
+            <Text style={styles.myListingMinPrice}>From {minPrice} Neurons/day</Text>
           )}
         </View>
       </View>

@@ -22,6 +22,7 @@ import {
   getCustomerInfo,
   getNeuronPackagesFromAllOfferings,
   getOfferings,
+  getSubscriptionPackagesFromAllOfferings,
   getRevenueCatConfigError,
   getRevenueCatKeyMode,
   getRevenueCatRuntimeMode,
@@ -338,15 +339,11 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
     [currentOffering, allOfferings],
   );
 
-  // ── Subscription/consumable package filtering ────────────────────────
+  // ── Subscription packages — search ALL offerings, not just the current one ─
 
   const subscriptionPackages: PurchasesPackage[] = useMemo(
-    () =>
-      packages.filter((p) => {
-        const pid = p.product.identifier;
-        return pid === "pro_sub" || pid === "oracle_elite_sub" || pid === "syndicate_sub";
-      }),
-    [packages],
+    () => getSubscriptionPackagesFromAllOfferings(currentOffering, allOfferings),
+    [currentOffering, allOfferings],
   );
 
   /** @deprecated — use allNeuronPackages for store display; this only scans the current offering */

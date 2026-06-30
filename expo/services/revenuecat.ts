@@ -253,6 +253,46 @@ export function isSubscriptionProduct(productId: string): boolean {
   return subscriptionTierFromProductId(productId) !== null;
 }
 
+/**
+ * Search ALL available offerings for subscription packages.
+ *
+ * Uses SUBSCRIPTION_PRODUCT_IDS and TEST_STORE_SUBSCRIPTION_ALIASES to identify
+ * matching products by `product.identifier`. Deduplicates by product identifier.
+ */
+export function getSubscriptionPackagesFromAllOfferings(
+  currentOffering: PurchasesOffering | null,
+  allOfferings: PurchasesOffering[],
+): PurchasesPackage[] {
+  const seen = new Set<string>();
+  const result: PurchasesPackage[] = [];
+
+  const offerings: PurchasesOffering[] = [];
+  if (currentOffering) offerings.push(currentOffering);
+  for (const off of allOfferings) {
+    if (off !== currentOffering) offerings.push(off);
+  }
+
+  for (const offering of offerings) {
+    for (const pkg of offering.availablePackages) {
+      const pid = pkg.product.identifier;
+      const tier = subscriptionTierFromProductId(pid);
+      if (tier !== null && !seen.has(pid)) {
+        seen.add(pid);
+        result.push(pkg);
+        if (__DEV__) {
+          console.log(`[RevenueCat] Subscription pack found: ${pkg.identifier} → product: ${pid} → tier: ${tier} ${pkg.product.priceString ?? `$${pkg.product.price}`}`);
+        }
+      }
+    }
+  }
+
+  if (__DEV__) {
+    console.log(`[RevenueCat] Total subscription packs across all offerings: ${result.length}`);
+  }
+
+  return result;
+}
+
 /** Check if a product identifier is a known consumable Neuron product. */
 export function isNeuronProduct(productId: string): boolean {
   return productId in NEURON_PRODUCT_AMOUNTS;

@@ -1,5 +1,6 @@
 import { palette } from "@/constants/colors";
 import { useAuth } from "@/providers/AuthProvider";
+import { signOutUser } from "@/services/auth";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useHaptics } from "@/hooks/useHaptics";
 import { useQueryClient } from "@tanstack/react-query";
@@ -948,7 +949,7 @@ const AdminOverrideRow = memo(function AdminOverrideRow({
 
 export default function SettingsScreen(): JSX.Element {
   const router = useRouter();
-  const { user, signOut, signOutState, resetPassword, resetPasswordState } = useAuth();
+  const { user, signOutState, resetPassword, resetPasswordState } = useAuth();
   const {
     profile,
     effectiveSubscriptionTier,
@@ -1017,11 +1018,20 @@ export default function SettingsScreen(): JSX.Element {
         style: "destructive",
         onPress: () => {
           h.warning();
-          signOut().catch((e) => console.warn("[settings] signOut failed", e));
+          signOutUser()
+            .then(() => {
+              // onAuthStateChange fires SIGNED_OUT → root layout replaces (tabs) with (auth)
+              router.replace("/(auth)/login" as never);
+            })
+            .catch((e: unknown) => {
+              const msg = e instanceof Error ? e.message : "Sign out failed";
+              Alert.alert("Sign Out Failed", msg);
+              console.warn("[settings] signOut failed", e);
+            });
         },
       },
     ]);
-  }, [signOut, h]);
+  }, [h, router]);
 
   const handleToggleHaptics = useCallback((): void => {
     const next = !hapticsEnabled;

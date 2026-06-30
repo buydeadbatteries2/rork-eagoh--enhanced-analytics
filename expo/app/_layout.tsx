@@ -1,11 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Stack } from "expo-router";
+import { Stack, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect, useMemo } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StatusBar } from "expo-status-bar";
-import { StyleSheet, View } from "react-native";
-import { AuthProvider } from "@/providers/AuthProvider";
+import { ActivityIndicator, StyleSheet, View, Text } from "react-native";
+import { AuthProvider, useAuth } from "@/providers/AuthProvider";
 import { ProfileProvider } from "@/providers/ProfileProvider";
 import { EagohProvider } from "@/providers/EagohProvider";
 import { EdgeProvider } from "@/providers/EdgeProvider";
@@ -17,77 +17,127 @@ SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
-/** Inner component with the dark cybernetic EAGOH theme applied at root level. */
-function ThemedRoot(): JSX.Element {
-  const themedStyles = useMemo(
-    () => ({
-      root: { flex: 1, backgroundColor: palette.void } as const,
-    }),
-    [],
-  );
+/** Auth guard — redirects based on auth state. Must live inside providers to access useAuth. */
+function AuthGate(): JSX.Element {
+  const { isAuthenticated, isReady } = useAuth();
+  const segments = useSegments();
+  const router = useRouter();
 
-  return (
-    <GestureHandlerRootView style={themedStyles.root}>
-      <View style={themedStyles.root}>
+  useEffect(() => {
+    if (!isReady) return;
+
+    const inAuthGroup = segments[0] === "(auth)";
+
+    if (!isAuthenticated && !inAuthGroup) {
+      // Not signed in and not already on an auth screen → go to login
+      router.replace("/(auth)/login");
+    } else if (isAuthenticated && inAuthGroup) {
+      // Signed in but on an auth screen → go to home
+      router.replace("/(tabs)");
+    }
+  }, [isReady, isAuthenticated, segments, router]);
+
+  useEffect(() => {
+    if (isReady) {
+      SplashScreen.hideAsync();
+    }
+  }, [isReady]);
+
+  // Show nothing while auth is loading — prevents flash of wrong screen
+  if (!isReady) {
+    return (
+      <View style={authStyles.splash}>
         <StatusBar style="light" />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: palette.void },
-          }}
-        >
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen
-            name="labs"
-            options={{ presentation: "modal", headerShown: false }}
-          />
-          <Stack.Screen
-            name="factions"
-            options={{ presentation: "modal", headerShown: false }}
-          />
-          <Stack.Screen
-            name="open-intelligence"
-            options={{ presentation: "modal", headerShown: false }}
-          />
-          <Stack.Screen
-            name="leaderboards"
-            options={{ presentation: "modal", headerShown: false }}
-          />
-          <Stack.Screen
-            name="settings"
-            options={{ presentation: "modal", headerShown: false }}
-          />
-          <Stack.Screen
-            name="legal/terms"
-            options={{ presentation: "modal", headerShown: false }}
-          />
-          <Stack.Screen
-            name="legal/privacy"
-            options={{ presentation: "modal", headerShown: false }}
-          />
-          <Stack.Screen
-            name="legal/disclaimer"
-            options={{ presentation: "modal", headerShown: false }}
-          />
-          <Stack.Screen
-            name="public-profile"
-            options={{ presentation: "modal", headerShown: false }}
-          />
-          <Stack.Screen
-            name="subscription"
-            options={{ presentation: "modal", headerShown: false }}
-          />
-        </Stack>
+        <ActivityIndicator color={palette.cyan} size="large" />
+        <Text style={authStyles.splashText}>INITIALIZING TRUST PROTOCOL</Text>
       </View>
+    );
+  }
+
+  // Auth gate renders nothing itself — the Stack below handles routing
+  return (
+    <GestureHandlerRootView style={authStyles.root}>
+      <StatusBar style="light" />
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: palette.void },
+        }}
+      >
+        <Stack.Screen name="(auth)" />
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen
+          name="not-found"
+          options={{ presentation: "modal", headerShown: false }}
+        />
+        <Stack.Screen
+          name="labs"
+          options={{ presentation: "modal", headerShown: false }}
+        />
+        <Stack.Screen
+          name="factions"
+          options={{ presentation: "modal", headerShown: false }}
+        />
+        <Stack.Screen
+          name="open-intelligence"
+          options={{ presentation: "modal", headerShown: false }}
+        />
+        <Stack.Screen
+          name="leaderboards"
+          options={{ presentation: "modal", headerShown: false }}
+        />
+        <Stack.Screen
+          name="settings"
+          options={{ presentation: "modal", headerShown: false }}
+        />
+        <Stack.Screen
+          name="legal/terms"
+          options={{ presentation: "modal", headerShown: false }}
+        />
+        <Stack.Screen
+          name="legal/privacy"
+          options={{ presentation: "modal", headerShown: false }}
+        />
+        <Stack.Screen
+          name="legal/disclaimer"
+          options={{ presentation: "modal", headerShown: false }}
+        />
+        <Stack.Screen
+          name="public-profile"
+          options={{ presentation: "modal", headerShown: false }}
+        />
+        <Stack.Screen
+          name="subscription"
+          options={{ presentation: "modal", headerShown: false }}
+        />
+        <Stack.Screen
+          name="edge-store"
+          options={{ presentation: "modal", headerShown: false }}
+        />
+      </Stack>
     </GestureHandlerRootView>
   );
 }
 
-export default function RootLayout(): JSX.Element {
-  useEffect(() => {
-    SplashScreen.hideAsync();
-  }, []);
+const authStyles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: palette.void },
+  splash: {
+    flex: 1,
+    backgroundColor: palette.void,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 16,
+  },
+  splashText: {
+    color: palette.cyan,
+    fontSize: 10,
+    fontWeight: "900" as const,
+    letterSpacing: 3.2,
+    marginTop: 8,
+  },
+});
 
+export default function RootLayout(): JSX.Element {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
@@ -96,7 +146,7 @@ export default function RootLayout(): JSX.Element {
             <EdgeProvider>
               <EagohProvider>
                 <ForgeProvider>
-                  <ThemedRoot />
+                  <AuthGate />
                 </ForgeProvider>
               </EagohProvider>
             </EdgeProvider>

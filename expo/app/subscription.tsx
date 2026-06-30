@@ -22,6 +22,7 @@ import {
   TIER_MAX_EAGOHS,
   TIER_BENEFITS,
   SUBSCRIPTION_PRODUCT_IDS,
+  subscriptionTierFromProductId,
   type SubscriptionTier,
 } from "@/services/tiers";
 import { LinearGradient } from "expo-linear-gradient";
@@ -442,7 +443,7 @@ export default function SubscriptionScreen(): JSX.Element {
     [effectiveSubscriptionTier],
   );
 
-  // Map RC packages to tiers
+  // Map RC packages to tiers using the shared mapping (handles Test Store aliases too)
   const tierPackages = useMemo(() => {
     const map: Record<string, PurchasesPackage | null> = {
       pro: null,
@@ -451,9 +452,10 @@ export default function SubscriptionScreen(): JSX.Element {
     };
     for (const pkg of rcSubPkgs) {
       const pid = pkg.product.identifier;
-      if (pid === SUBSCRIPTION_PRODUCT_IDS.pro) map.pro = pkg;
-      else if (pid === SUBSCRIPTION_PRODUCT_IDS.oracle_elite) map.oracle_elite = pkg;
-      else if (pid === SUBSCRIPTION_PRODUCT_IDS.syndicate) map.syndicate = pkg;
+      const tier = subscriptionTierFromProductId(pid);
+      if (tier && tier in map) {
+        map[tier] = pkg;
+      }
     }
     return map;
   }, [rcSubPkgs]);
@@ -468,11 +470,9 @@ export default function SubscriptionScreen(): JSX.Element {
       if (!user?.id) return;
       h.heavy();
       const pid = pkg.product.identifier;
-      const tier = pid === "pro_sub" ? "pro" :
-        pid === "oracle_elite_sub" ? "oracle_elite" :
-        pid === "syndicate_sub" ? "syndicate" : null;
+      const tier = subscriptionTierFromProductId(pid);
 
-      if (!tier) {
+      if (!tier || tier === "free") {
         Alert.alert("Error", "Unknown subscription product.");
         return;
       }

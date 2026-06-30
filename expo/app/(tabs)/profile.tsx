@@ -16,9 +16,10 @@ import { Award, BrainCircuit, Coins, Cpu, Crown, Eye, Flame, FlaskConical, Layer
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import PublicProfileModal from "@/components/PublicProfileModal";
-import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/providers/AuthProvider";
+import { signOutUser } from "@/services/auth";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useEagohs } from "@/providers/EagohProvider";
 import type { EagohRecord } from "@/services/eagohs";
@@ -158,7 +159,7 @@ const StatCard = memo(function StatCard({ item }: { item: Stat }): JSX.Element {
 
 export default function ProfileScreen(): JSX.Element {
   const h = useHaptics();
-  const { user, signOut, signOutState } = useAuth();
+  const { user, signOutState } = useAuth();
   const { eagohs } = useEagohs();
   const { profile, effectiveSubscriptionTier, isAdminOverrideActive } = useProfile();
   const { palette: pal } = useAppTheme();
@@ -169,8 +170,17 @@ export default function ProfileScreen(): JSX.Element {
 
   const handleSignOut = useCallback((): void => {
     h.selection();
-    signOut().catch((e) => console.warn("[auth] signOut failed", e));
-  }, [signOut, h]);
+    signOutUser()
+      .then(() => {
+        // onAuthStateChange fires SIGNED_OUT → root layout replaces (tabs) with (auth)
+        router.replace("/(auth)/login" as never);
+      })
+      .catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : "Sign out failed";
+        Alert.alert("Sign Out Failed", msg);
+        console.warn("[auth] signOut failed", e);
+      });
+  }, [h, router]);
   const displayAlias = (user?.user_metadata as { username?: string } | undefined)?.username ?? user?.email ?? "EAGOH operator";
 
   // ── Reputation for primary EAGOH ────────────────────────────────────

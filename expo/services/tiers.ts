@@ -41,10 +41,38 @@ export const SUBSCRIPTION_PRODUCT_IDS: Record<Exclude<SubscriptionTier, "free">,
   syndicate: "syndicate_sub",
 };
 
+/**
+ * RevenueCat Test Store product aliases — maps Test Store product IDs to their
+ * real App Store counterparts. When Test Store mode is active, the subscription
+ * screen uses these to match test products to the correct tier.
+ *
+ * Server-side, RevenueCat Test Store may create products with different
+ * identifiers than the production App Store Connect products. This map
+ * bridges the gap so test purchases still flow through the correct tier flow.
+ */
+export const TEST_STORE_SUBSCRIPTION_ALIASES: Record<string, string> = {
+  // Common RevenueCat Test Store naming conventions
+  test_pro_sub: "pro_sub",
+  test_oracle_elite_sub: "oracle_elite_sub",
+  test_syndicate_sub: "syndicate_sub",
+  // Also match bare product IDs in case Test Store returns them directly
+  pro_sub: "pro_sub",
+  oracle_elite_sub: "oracle_elite_sub",
+  syndicate_sub: "syndicate_sub",
+};
+
 /** Map a RevenueCat product ID to its corresponding subscription tier. */
 export function subscriptionTierFromProductId(productId: string): SubscriptionTier | null {
+  // Check the direct mapping first
   for (const [tier, id] of Object.entries(SUBSCRIPTION_PRODUCT_IDS)) {
     if (id === productId) return tier as SubscriptionTier;
+  }
+  // Check test store aliases
+  const aliased = TEST_STORE_SUBSCRIPTION_ALIASES[productId];
+  if (aliased) {
+    for (const [tier, id] of Object.entries(SUBSCRIPTION_PRODUCT_IDS)) {
+      if (id === aliased) return tier as SubscriptionTier;
+    }
   }
   return null;
 }

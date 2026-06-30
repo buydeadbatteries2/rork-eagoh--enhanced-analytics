@@ -915,7 +915,6 @@ export default function HomeScreen(): JSX.Element {
   const { palette: pal } = useAppTheme();
   const [phase, setPhase] = useState<Phase>("loading");
   const [bootDone, setBootDone] = useState<boolean>(false);
-  const [onboardingDone, setOnboardingDone] = useState<boolean>(false);
   const [purchaseModal, setPurchaseModal] = useState(false);
   const width = Dimensions.get("window").width;
   const compact = useMemo<boolean>(() => width < 380, [width]);
@@ -927,16 +926,12 @@ export default function HomeScreen(): JSX.Element {
       setPhase("loading");
       return;
     }
-    if (isAuthenticated) {
-      setPhase("app");
-      return;
-    }
-    setPhase(onboardingDone ? "auth" : "onboarding");
-  }, [bootDone, isReady, isAuthenticated, onboardingDone]);
+    // Auth is handled by root layout — we only render when authenticated.
+    setPhase("app");
+  }, [bootDone, isReady, isAuthenticated]);
 
   if (phase === "loading") return <LoadingScreen onDone={() => setBootDone(true)} />;
-  if (phase === "onboarding") return <OnboardingScreen onComplete={() => setOnboardingDone(true)} />;
-  if (phase === "auth") return <AuthScreen />;
+  if (phase === "onboarding") return <OnboardingScreen onComplete={() => setPhase("app")} />;
   return (
     <View style={[styles.appRoot, compact && styles.compact, { backgroundColor: pal.void }]}>
       <HomeApp

@@ -102,6 +102,9 @@ export type EagohRecord = {
   image_prompt: string | null;
   image_generated_at: string | null;
   last_name_change: string | null;
+  is_default_shell: boolean;
+  is_user_forged: boolean;
+  status: string | null;
   team_focus_mode: TeamFocusMode | null;
   pro_team_focus_id: string | null;
   pro_team_focus_name: string | null;
@@ -196,8 +199,9 @@ export type EagohDraft = {
   imageUrl?: string | null;
 };
 
+/** Maximum user-forged EAGOHs per tier. Default shells are excluded. */
 export const TIER_EAGOH_LIMITS: Record<SubscriptionTier, number> = {
-  free: 1,
+  free: 0,
   pro: 2,
   oracle_elite: 3,
   syndicate: 5,
@@ -226,6 +230,59 @@ export async function countEagohs(userId: string): Promise<number> {
     .eq("user_id", userId);
   if (error) throw error;
   return count ?? 0;
+}
+
+/** Count only user-forged EAGOHs, excluding default dormant shells. */
+export async function countUserForgedEagohs(userId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from("eagohs")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .eq("is_default_shell", false);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+/** Create the default dormant EAGOH shell for a new user. Idempotent — at most one per user. */
+export async function createDefaultEagohShell(
+  userId: string,
+  defaultImageUrl: string,
+): Promise<EagohRecord | null> {
+  // Idempotency check — skip if one already exists
+  const { data: existing } = await supabase
+    .from("eagohs")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("is_default_shell", true)
+    .maybeSingle();
+  if (existing) return null;
+
+  const { data: created, error } = await supabase
+    .from("eagohs")
+    .insert({
+      user_id: userId,
+      name: "EAGOH",
+      domain: "general",
+      image_url: defaultImageUrl,
+      image_thumb_url: defaultImageUrl,
+      is_default_shell: true,
+      is_user_forged: false,
+      status: "dormant",
+      sport: "",
+      dna: [],
+      cybernetic_intensity: "minimal",
+      pose: "calm-sentinel",
+      lab: "neon-vault",
+    })
+    .select("*")
+    .single();
+
+  if (error || !created) {
+    console.warn("[eagohs] failed to create default shell", error?.message ?? "unknown");
+    return null;
+  }
+
+  return applyDomainDnaToRecord(created as EagohRecord);
 }
 
 export async function getEagohFull(eagohId: string): Promise<EagohFull | null> {
@@ -259,7 +316,8 @@ export async function createEagoh(
   draft: EagohDraft,
 ): Promise<CreateEagohResult> {
   const limit = getEagohLimit(tier);
-  const current = await countEagohs(userId);
+  // Only count user-forged EAGOHs — default shells are excluded from the limit
+  const current = await countUserForgedEagohs(userId);
   if (current >= limit) {
     return { ok: false, reason: "limit", message: `Your ${tier} tier allows ${limit} EAGOH${limit === 1 ? "" : "s"}. Upgrade to forge more.` };
   }

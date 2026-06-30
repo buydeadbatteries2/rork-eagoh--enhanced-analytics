@@ -144,8 +144,12 @@ alter table public.eagohs add column if not exists technology_area text;
 alter table public.eagohs add column if not exists technology_role text;
 alter table public.eagohs add column if not exists health_fitness_area text;
 alter table public.eagohs add column if not exists health_fitness_role text;
+alter table public.eagohs add column if not exists is_default_shell boolean not null default false;
+alter table public.eagohs add column if not exists is_user_forged boolean not null default true;
+alter table public.eagohs add column if not exists status text default 'active';
 
 create index if not exists eagohs_user_id_idx on public.eagohs(user_id);
+create index if not exists eagohs_user_default_shell_idx on public.eagohs(user_id, is_default_shell);
 
 alter table public.eagohs enable row level security;
 

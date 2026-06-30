@@ -34,6 +34,7 @@ import {
   X,
 } from "lucide-react-native";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "expo-router";
 import PublicProfileModal from "@/components/PublicProfileModal";
 import {
   ActivityIndicator,
@@ -1612,6 +1613,7 @@ const MktSponsoredCarousel = memo(function MktSponsoredCarousel({ userId }: { us
 
 export default function MarketplaceScreen(): JSX.Element {
   const h = useHaptics();
+  const router = useRouter();
   const { user } = useAuth();
   const { profile } = useProfile();
   const { balances } = useEdge();
@@ -1643,6 +1645,33 @@ export default function MarketplaceScreen(): JSX.Element {
 
   const { effectiveSubscriptionTier } = useProfile();
   const isPaid = canTransact(effectiveSubscriptionTier);
+
+  // ── Free-tier lock ──────────────────────────────────────────────
+  if (!isPaid) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top"]}>
+        <View style={styles.lockedRoot}>
+          <LinearGradient colors={["rgba(54,245,255,0.06)", "rgba(10,18,30,0.72)", "rgba(3,6,11,0.96)"]} style={StyleSheet.absoluteFill} />
+          <View style={styles.lockedContent}>
+            <View style={[styles.lockedIcon, { borderColor: "rgba(54,245,255,0.35)" }]}>
+              <ArrowRightLeft color={palette.cyan} size={40} />
+            </View>
+            <Text style={styles.lockedTitle}>Exchange requires Pro or higher.</Text>
+            <Text style={styles.lockedSubtitle}>
+              Upgrade to Pro or higher to browse, buy, and sell EAGOH intelligence syncs on the Exchange.
+            </Text>
+            <Pressable
+              onPress={() => router.push("/subscription" as never)}
+              style={({ pressed }) => [styles.lockedCta, pressed && { opacity: 0.85 }]}
+            >
+              <Crown color={palette.void} size={16} />
+              <Text style={styles.lockedCtaText}>View Plans</Text>
+            </Pressable>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   const loadData = useCallback(async () => {
     if (!user?.id) { setLoading(false); return; }
@@ -2053,6 +2082,14 @@ export default function MarketplaceScreen(): JSX.Element {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   safe: { flex: 1 },
+  // Free-tier locked page
+  lockedRoot: { flex: 1, alignItems: "center" as const, justifyContent: "center" as const, overflow: "hidden" as const, padding: 24 },
+  lockedContent: { alignItems: "center" as const, gap: 16, maxWidth: 340 },
+  lockedIcon: { width: 80, height: 80, borderRadius: 5, borderWidth: 1, alignItems: "center" as const, justifyContent: "center" as const, backgroundColor: "rgba(54,245,255,0.08)" },
+  lockedTitle: { color: palette.text, fontSize: 20, fontWeight: "900" as const, textAlign: "center" as const, letterSpacing: -0.5 },
+  lockedSubtitle: { color: palette.muted, fontSize: 13, fontWeight: "600" as const, textAlign: "center" as const, lineHeight: 20 },
+  lockedCta: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8, paddingHorizontal: 24, paddingVertical: 14, borderRadius: 5, backgroundColor: palette.cyan, marginTop: 8 },
+  lockedCtaText: { color: palette.void, fontSize: 15, fontWeight: "900" as const, letterSpacing: 0.5 },
   scroll: { padding: 16, paddingBottom: 130, gap: 16 },
 
   // Hero

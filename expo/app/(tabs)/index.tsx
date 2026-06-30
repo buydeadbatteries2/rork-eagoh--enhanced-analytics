@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Coins,
   Cpu,
+  Crown,
   Eye,
   FlaskConical,
   Gauge,
@@ -26,10 +27,11 @@ import {
   Zap,
 } from "lucide-react-native";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Dimensions, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Dimensions, FlatList, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { palette } from "@/constants/colors";
+import { DEFAULT_EAGOH_IMAGE, DEFAULT_EAGOH_NAME } from "@/constants/defaultEagoh";
 import { useAppTheme } from "@/providers/ThemeProvider";
 import { HORIZONTAL_LIST_PERFORMANCE_PROPS, LIST_PERFORMANCE_PROPS, OptimizedEagohImage } from "@/app/_components/PerformancePrimitives";
 import { useAuth } from "@/providers/AuthProvider";
@@ -374,19 +376,38 @@ const QuickCheckSection = React.memo(function QuickCheckSection(): JSX.Element {
 });
 
 const LabsFeatureCard = React.memo(function LabsFeatureCard(): JSX.Element {
+  const { effectiveSubscriptionTier } = useProfile();
+  const router = useRouter();
+  const isFree = effectiveSubscriptionTier === "free";
   return (
     <View>
-      <SectionHeader eyebrow="FORGE & LABS" title="Prototype intelligence" action="Forge tab" />
-      <View style={styles.featureCard}>
-        <View style={[styles.featureIconWrap, { borderColor: "rgba(108,230,255,0.4)" }]}>
-          <FlaskConical color={palette.cyan} size={24} />
+      <SectionHeader eyebrow="FORGE & LABS" title="Prototype intelligence" action={isFree ? "View Plans" : "Forge tab"} />
+      {isFree ? (
+        <Pressable
+          onPress={() => router.push("/subscription" as never)}
+          style={({ pressed }) => [styles.featureCard, pressed && styles.pressed]}
+        >
+          <View style={[styles.featureIconWrap, { borderColor: "rgba(255,184,77,0.4)" }]}>
+            <Crown color={palette.gold} size={24} />
+          </View>
+          <View style={styles.featureInfo}>
+            <Text style={styles.featureTitle}>Upgrade to Unlock Forge</Text>
+            <Text style={styles.featureDesc}>Forge custom EAGOH intelligence units with a Pro subscription or higher. Free users keep the default shell.</Text>
+          </View>
+          <ChevronRight color={palette.gold} size={18} />
+        </Pressable>
+      ) : (
+        <View style={styles.featureCard}>
+          <View style={[styles.featureIconWrap, { borderColor: "rgba(108,230,255,0.4)" }]}>
+            <FlaskConical color={palette.cyan} size={24} />
+          </View>
+          <View style={styles.featureInfo}>
+            <Text style={styles.featureTitle}>EAGOH Forge</Text>
+            <Text style={styles.featureDesc}>Create your EAGOH with cybernetic body, glass-dome brain, and intelligence domain tuning. Forge tab.</Text>
+          </View>
+          <ChevronRight color={palette.cyan} size={18} />
         </View>
-        <View style={styles.featureInfo}>
-          <Text style={styles.featureTitle}>EAGOH Forge</Text>
-          <Text style={styles.featureDesc}>Create your EAGOH with cybernetic body, glass-dome brain, and intelligence domain tuning. Forge tab.</Text>
-        </View>
-        <ChevronRight color={palette.cyan} size={18} />
-      </View>
+      )}
       <View style={[styles.featureCard, { marginTop: 8 }]}>
         <View style={[styles.featureIconWrap, { borderColor: "rgba(0,255,178,0.4)" }]}>
           <Cpu color={palette.success} size={24} />
@@ -403,24 +424,30 @@ const LabsFeatureCard = React.memo(function LabsFeatureCard(): JSX.Element {
 const FactionsFeatureCard = React.memo(function FactionsFeatureCard(): JSX.Element {
   const h = useHaptics();
   const router = useRouter();
+  const { effectiveSubscriptionTier } = useProfile();
+  const isFree = effectiveSubscriptionTier === "free";
   return (
     <View>
-      <SectionHeader eyebrow="FACTIONS" title="Intelligence alliances" action="View all" />
+      <SectionHeader eyebrow="FACTIONS" title="Intelligence alliances" action={isFree ? "View Plans" : "View all"} />
       <Pressable
         onPress={() => {
           h.selection();
-          router.push("/factions" as never);
+          if (isFree) {
+            router.push("/subscription" as never);
+          } else {
+            router.push("/factions" as never);
+          }
         }}
         style={({ pressed }) => [styles.featureCard, pressed && styles.pressed]}
       >
-        <View style={[styles.featureIconWrap, { borderColor: "rgba(138,92,255,0.4)" }]}>
-          <Shield color={palette.violet} size={24} />
+        <View style={[styles.featureIconWrap, { borderColor: isFree ? "rgba(255,184,77,0.4)" : "rgba(138,92,255,0.4)" }]}>
+          {isFree ? <Crown color={palette.gold} size={24} /> : <Shield color={palette.violet} size={24} />}
         </View>
         <View style={styles.featureInfo}>
-          <Text style={styles.featureTitle}>Faction Network</Text>
-          <Text style={styles.featureDesc}>Build private intelligence networks with other EAGOH users.</Text>
+          <Text style={styles.featureTitle}>{isFree ? "Factions — Upgrade Required" : "Faction Network"}</Text>
+          <Text style={styles.featureDesc}>{isFree ? "Upgrade to Pro or higher to create and join intelligence alliances." : "Build private intelligence networks with other EAGOH users."}</Text>
         </View>
-        <ChevronRight color={palette.violet} size={18} />
+        <ChevronRight color={isFree ? palette.gold : palette.violet} size={18} />
       </Pressable>
     </View>
   );
@@ -642,14 +669,24 @@ const LeaderboardsFeatureCard = React.memo(function LeaderboardsFeatureCard(): J
 
 function HomeDomainsSection(): JSX.Element {
   const { eagohs } = useEagohs();
+  const { effectiveSubscriptionTier } = useProfile();
+  const isFree = effectiveSubscriptionTier === "free";
+
   if (!eagohs || eagohs.length === 0) {
     return (
       <View>
-        <SectionHeader eyebrow="MY DOMAINS" title="Domain Coverage" action="Forge first" />
-        <View style={styles.emptyBannerCard}>
-          <BrainCircuit color={palette.muted} size={28} />
-          <Text style={styles.emptyBannerText}>Forge an EAGOH to unlock domain intelligence. Each EAGOH specializes in one domain.</Text>
-        </View>
+        <SectionHeader eyebrow="MY DOMAINS" title="Domain Coverage" action={isFree ? undefined : "Forge first"} />
+        {isFree ? (
+          <View style={styles.emptyBannerCard}>
+            <Image source={{ uri: DEFAULT_EAGOH_IMAGE }} style={styles.defaultShellSmall} resizeMode="contain" />
+            <Text style={styles.emptyBannerText}>Your default {DEFAULT_EAGOH_NAME} shell is active. Upgrade to Forge custom intelligence units.</Text>
+          </View>
+        ) : (
+          <View style={styles.emptyBannerCard}>
+            <BrainCircuit color={palette.muted} size={28} />
+            <Text style={styles.emptyBannerText}>Forge an EAGOH to unlock domain intelligence. Each EAGOH specializes in one domain.</Text>
+          </View>
+        )}
       </View>
     );
   }
@@ -1076,6 +1113,7 @@ const styles = StyleSheet.create({
     gap: 9,
   },
   promoteBannerText: { color: palette.cyan, fontSize: 13, fontWeight: "900" },
+  defaultShellSmall: { width: 56, height: 56, borderRadius: 5, alignSelf: "center" },
   // Modal (shared pattern with marketplace)
   modalOverlay: { flex: 1, justifyContent: "flex-end", backgroundColor: palette.overlay },
   modalSheet: {

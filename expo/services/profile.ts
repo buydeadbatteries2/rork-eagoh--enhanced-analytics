@@ -91,6 +91,17 @@ export async function ensureProfile(userId: string, username?: string | null): P
   const base = DEFAULT_PROFILE(userId, username);
   const { data, error } = await supabase.from("profiles").insert(base).select("*").single();
   if (error) throw error;
+
+  // Provision the default dormant EAGOH shell in the background.
+  // Failure here should not block profile creation.
+  try {
+    const { createDefaultEagohShell } = await import("@/services/eagohs");
+    const { DEFAULT_EAGOH_IMAGE } = await import("@/constants/defaultEagoh");
+    void createDefaultEagohShell(userId, DEFAULT_EAGOH_IMAGE);
+  } catch {
+    // Best-effort; the app will try again on next profile fetch if needed.
+  }
+
   return data as UserProfile;
 }
 

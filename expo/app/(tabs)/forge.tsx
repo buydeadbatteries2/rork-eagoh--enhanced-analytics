@@ -13,12 +13,14 @@
  */
 
 import { palette } from "@/constants/colors";
+import { DEFAULT_EAGOH_IMAGE } from "@/constants/defaultEagoh";
 import { useAppTheme } from "@/providers/ThemeProvider";
 import { useAuth } from "@/providers/AuthProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useEagohs, useEagohFull } from "@/providers/EagohProvider";
 import { useForge, type ForgePending } from "@/providers/ForgeProvider";
 import { useProfile } from "@/providers/ProfileProvider";
+import { canUseForge } from "@/services/permissions";
 import type { EagohFull, EagohRecord, TeamFocusMode } from "@/services/eagohs";
 import { renameEagohName } from "@/services/eagohs";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
@@ -587,6 +589,36 @@ export default function ForgeScreen(): JSX.Element {
 
   const { effectiveSubscriptionTier } = useProfile();
   const currentTier = effectiveSubscriptionTier;
+
+  // ── Free-tier lock ──────────────────────────────────────────────
+  const canForge = canUseForge(currentTier);
+
+  if (!canForge) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top"]}>
+        <View style={styles.lockedRoot}>
+          <LinearGradient colors={["rgba(54,245,255,0.06)", "rgba(10,18,30,0.72)", "rgba(3,6,11,0.96)"]} style={StyleSheet.absoluteFill} />
+          <View style={styles.lockedContent}>
+            <View style={[styles.lockedIcon, { borderColor: "rgba(54,245,255,0.35)" }]}>
+              <Crown color={palette.cyan} size={40} />
+            </View>
+            <Text style={styles.lockedTitle}>Forge requires Pro or higher.</Text>
+            <Text style={styles.lockedSubtitle}>
+              Upgrade to unlock the EAGOH Forge and create custom intelligence units with cybernetic chassis, domain specialization, and full-body renders.
+            </Text>
+            <Pressable
+              onPress={() => router.push("/subscription" as never)}
+              style={({ pressed }) => [styles.lockedCta, pressed && { opacity: 0.85 }]}
+            >
+              <Sparkles color={palette.void} size={16} />
+              <Text style={styles.lockedCtaText}>View Plans</Text>
+            </Pressable>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   const multiplier = TIER_MULTIPLIER[currentTier] ?? 0;
   const maxEagohs = TIER_MAX_EAGOHS[currentTier] ?? 0;
   const forgeCost = getForgeCost(isEditing ? "full_reforge" : "initial");
@@ -2255,6 +2287,14 @@ export default function ForgeScreen(): JSX.Element {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.void },
+  // ── Free-tier locked page ──────────────────────────────────────
+  lockedRoot: { flex: 1, alignItems: "center", justifyContent: "center", overflow: "hidden", padding: 24 },
+  lockedContent: { alignItems: "center", gap: 16, maxWidth: 340 },
+  lockedIcon: { width: 80, height: 80, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(54,245,255,0.08)" },
+  lockedTitle: { color: palette.text, fontSize: 20, fontWeight: "900", textAlign: "center", letterSpacing: -0.5 },
+  lockedSubtitle: { color: palette.muted, fontSize: 13, fontWeight: "600", textAlign: "center", lineHeight: 20 },
+  lockedCta: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 24, paddingVertical: 14, borderRadius: 5, backgroundColor: palette.cyan, marginTop: 8 },
+  lockedCtaText: { color: palette.void, fontSize: 15, fontWeight: "900", letterSpacing: 0.5 },
   headerWrap: { paddingHorizontal: 14, paddingTop: 8 },
   previewArea: { position: "relative", marginHorizontal: 12, marginTop: 6 },
   previewStage: {

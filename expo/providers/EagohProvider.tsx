@@ -37,8 +37,10 @@ export const [EagohProvider, useEagohs] = createContextHook(() => {
   });
 
   const eagohs: EagohRecord[] = listQuery.data ?? [];
+  /** Only user-forged EAGOHs count against the tier limit. Default shells are excluded. */
+  const userForgedEagohs = eagohs.filter((e) => !e.is_default_shell);
   const limit = getEagohLimit(tier);
-  const remaining = Math.max(0, limit - eagohs.length);
+  const remaining = Math.max(0, limit - userForgedEagohs.length);
   const canCreate = !!userId && remaining > 0;
 
   const createMutation = useMutation({

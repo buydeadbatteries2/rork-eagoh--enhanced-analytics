@@ -11,6 +11,7 @@
  */
 
 import { palette } from "@/constants/colors";
+import { DEFAULT_EAGOH_IMAGE, DEFAULT_EAGOH_NAME, DEFAULT_EAGOH_DOMAIN_LABEL } from "@/constants/defaultEagoh";
 import { useAppTheme } from "@/providers/ThemeProvider";
 import { useHaptics } from "@/hooks/useHaptics";
 import {
@@ -25,6 +26,7 @@ import {
   ChevronUp,
   Clock,
   Cpu,
+  Crown,
   Eye,
   Flame,
   Globe,
@@ -64,6 +66,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import EagohHeroBanner from "@/app/_components/EagohHeroBanner";
 import EagohPageHeader from "@/app/_components/EagohPageHeader";
@@ -71,6 +74,7 @@ import { useAuth } from "@/providers/AuthProvider";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useEagohs } from "@/providers/EagohProvider";
+import { canUseSessionType } from "@/services/permissions";
 import { INTELLIGENCE_DOMAINS, getDomainColor, normalizeDomainId } from "@/services/domains";
 import { guardDomainRequest } from "@/services/domainGuard";
 import { getQuickCheckCost, runQuickCheck, runQuickAnalytics, runStandardSession, runDeepDive, runPremiumEvent, getSessionCost, type AnalystSessionType, type AnalystRequestKind, type AnalystErrorCode } from "@/services/analyst";
@@ -276,7 +280,7 @@ function EagohPicker({
         <LinearGradient colors={["rgba(14,24,37,0.98)", "rgba(8,15,26,0.98)"]} style={StyleSheet.absoluteFill} />
         <Text style={styles.pickerTitle}>Select EAGOH</Text>
         {eagohs.length === 0 ? (
-          <Text style={styles.pickerEmpty}>No EAGOHs forged yet. Visit the Forge to create one.</Text>
+          <Text style={styles.pickerEmpty}>No EAGOHs available. Your default shell is being provisioned.</Text>
         ) : (
           eagohs.map((eagoh) => {
             const domain = INTELLIGENCE_DOMAINS.find((d) => d.id === eagoh.domain);
@@ -1856,6 +1860,7 @@ function MyRankingsSession({
 // ── Main screen ──
 export default function SessionsScreen(): JSX.Element {
   const h = useHaptics();
+  const router = useRouter();
   const { eagohs } = useEagohs();
   const { profile } = useProfile();
   const { effectiveSubscriptionTier: userTier } = useProfile();
@@ -1889,14 +1894,23 @@ export default function SessionsScreen(): JSX.Element {
   const handleSessionPress = useCallback((session: SessionType): void => {
     h.selection();
     if (eagohs.length === 0) {
+      if (userTier === "free") {
+        // Free users with no EAGOHs — they have a default shell, this shouldn't happen
+        Alert.alert("No EAGOH", "No EAGOH available. Your default shell is being provisioned.");
+        return;
+      }
       Alert.alert("No EAGOH", "Forge an EAGOH first to run sessions.");
       return;
     }
-    if (!session.active && session.id !== "open-intelligence" && session.id !== "faction-network" && session.id !== "my-rankings") {
+    if (!canUseSessionType(userTier, session.id as "quick-check" | "quick-analysis" | "standard" | "oracle" | "premium-event" | "open-intelligence" | "faction-network" | "my-rankings")) {
+      Alert.alert(
+        "Upgrade Required",
+        `"${session.name}" requires a Pro subscription or higher. Quick Check is always available on the Free tier.`,
+      );
       return;
     }
     setActiveSession(session);
-  }, [eagohs.length, h]);
+  }, [eagohs.length, h, userTier]);
 
   const handleBack = useCallback((): void => {
     setActiveSession(null);
@@ -2131,15 +2145,35 @@ export default function SessionsScreen(): JSX.Element {
           {/* Session type cards */}
           <Text style={styles.sectionLabel}>SESSION TYPES</Text>
           <View style={styles.sessionList}>
-            {sessionTypes.map((session) => (
-              <SessionCard
-                key={session.id}
-                session={session}
-                onPress={() => handleSessionPress(session)}
-                disabled={eagohs.length === 0 && session.id !== "quick-check"}
-              />
-            ))}
+            {sessionTypes.map((session) => {
+              const isFreeBlocked = userTier === "free" && !canUseSessionType(userTier, session.id as "quick-check" | "quick-analysis" | "standard" | "oracle" | "premium-event" | "open-intelligence" | "faction-network" | "my-rankings");
+              return (
+                <SessionCard
+                  key={session.id}
+                  session={isFreeBlocked ? { ...session, active: false } : session}
+                  onPress={() => handleSessionPress(session)}
+                  disabled={isFreeBlocked || (eagohs.length === 0 && session.id !== "quick-check")}
+                />
+              );
+            })}
           </View>
+          {/* Free-tier upgrade prompt — shown after Quick Check card */}
+          {userTier === "free" ? (
+            <View style={styles.upgradeBanner}>
+              <LinearGradient colors={["rgba(255,184,77,0.06)", "rgba(10,18,30,0.85)"]} style={StyleSheet.absoluteFill} />
+              <Crown color={palette.gold} size={20} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.upgradeBannerTitle}>Unlock All Session Types</Text>
+                <Text style={styles.upgradeBannerText}>Quick Analysis, Standard Analysis, Oracle Deep Dive, Premium Event, and Open Intelligence require a paid plan.</Text>
+              </View>
+              <Pressable
+                onPress={() => router.push("/subscription" as never)}
+                style={({ pressed }) => [styles.upgradeBannerBtn, pressed && { opacity: 0.8 }]}
+              >
+                <Text style={styles.upgradeBannerBtnText}>View Plans</Text>
+              </Pressable>
+            </View>
+          ) : null}
 
           <View style={styles.bottomSpacer} />
         </ScrollView>
@@ -2475,6 +2509,13 @@ const styles = StyleSheet.create({
   dotMid: { opacity: 0.55 },
 
   bottomSpacer: { height: 40 },
+
+  // Free-tier upgrade banner
+  upgradeBanner: { flexDirection: "row" as const, alignItems: "center" as const, gap: 12, padding: 14, borderRadius: 5, borderWidth: 1, borderColor: "rgba(255,184,77,0.30)", overflow: "hidden" as const, marginTop: 14 },
+  upgradeBannerTitle: { color: palette.gold, fontSize: 13, fontWeight: "900" as const, marginBottom: 3 },
+  upgradeBannerText: { color: palette.muted, fontSize: 11, fontWeight: "600" as const, lineHeight: 16, flexShrink: 1 },
+  upgradeBannerBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 5, backgroundColor: palette.gold, alignSelf: "center" as const },
+  upgradeBannerBtnText: { color: palette.void, fontSize: 12, fontWeight: "900" as const },
 
   // Thread chat additions
   threadBadge: {

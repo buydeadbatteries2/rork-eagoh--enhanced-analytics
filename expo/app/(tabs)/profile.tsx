@@ -5,6 +5,7 @@
  */
 
 import { palette } from "@/constants/colors";
+import { DEFAULT_EAGOH_IMAGE, DEFAULT_EAGOH_NAME } from "@/constants/defaultEagoh";
 import { useAppTheme } from "@/providers/ThemeProvider";
 import { LIST_PERFORMANCE_PROPS } from "@/app/_components/PerformancePrimitives";
 import { Image } from "expo-image";
@@ -78,17 +79,31 @@ function SectionTitle({ eyebrow, title }: { eyebrow: string; title: string }): J
   );
 }
 
-/** Gallery of all forged EAGOHs — sizes adjust dynamically based on count. */
-const EagohGallery = memo(function EagohGallery({ eagohs }: { eagohs: EagohRecord[] }): JSX.Element {
+/** Gallery of all forged EAGOHs — sizes adjust dynamically based on count. Free users see the default shell. */
+const EagohGallery = memo(function EagohGallery({ eagohs, isFree }: { eagohs: EagohRecord[]; isFree: boolean }): JSX.Element {
   const count = eagohs.length;
 
   if (count === 0) {
     return (
       <View style={[styles.chamber, styles.chamberEmpty]}>
         <LinearGradient colors={["rgba(54,245,255,0.06)", "rgba(10,18,30,0.72)", "rgba(3,6,11,0.96)"]} style={StyleSheet.absoluteFill} />
-        <FlaskConical color={palette.muted} size={36} />
-        <Text style={styles.emptyTitle}>No EAGOHs Forged</Text>
-        <Text style={styles.emptyHint}>Head to the Forge to create your first intelligence unit.</Text>
+        {isFree ? (
+          <>
+            <Image source={{ uri: DEFAULT_EAGOH_IMAGE }} style={styles.defaultShellImage} contentFit="contain" />
+            <Text style={styles.emptyTitle}>{DEFAULT_EAGOH_NAME}</Text>
+            <Text style={styles.emptyHint}>Default Intelligence Shell</Text>
+            <View style={styles.dormantBadge}>
+              <View style={styles.dormantBadgeDot} />
+              <Text style={styles.dormantBadgeText}>DORMANT</Text>
+            </View>
+          </>
+        ) : (
+          <>
+            <FlaskConical color={palette.muted} size={36} />
+            <Text style={styles.emptyTitle}>No EAGOHs Forged</Text>
+            <Text style={styles.emptyHint}>Head to the Forge to create your first intelligence unit.</Text>
+          </>
+        )}
       </View>
     );
   }
@@ -267,7 +282,7 @@ export default function ProfileScreen(): JSX.Element {
               <Text style={styles.adminOverrideText}>Promotional Access Active</Text>
             </View>
           ) : null}
-          <EagohGallery eagohs={eagohs} />
+          <EagohGallery eagohs={eagohs} isFree={currentTier === "free"} />
           <Pressable onPress={handleSignOut} disabled={signOutState.isPending} style={({ pressed }) => [styles.signOutButton, pressed && { opacity: 0.85 }]}>
             {signOutState.isPending ? <ActivityIndicator color={palette.ember} /> : <LogOut color={palette.ember} size={16} />}
             <Text style={styles.signOutText}>{signOutState.isPending ? "Signing out…" : "Sign out"}</Text>
@@ -528,6 +543,10 @@ const styles = StyleSheet.create({
   chamberEmpty: { height: 260, alignItems: "center", justifyContent: "center", gap: 10 },
   emptyTitle: { color: palette.muted, fontSize: 16, fontWeight: "900", letterSpacing: 0.5 },
   emptyHint: { color: palette.muted, fontSize: 12, fontWeight: "600", textAlign: "center", paddingHorizontal: 20 },
+  defaultShellImage: { width: 120, height: 120, borderRadius: 5 },
+  dormantBadge: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 5, borderWidth: 1, borderColor: palette.line, backgroundColor: "rgba(255,255,255,0.04)" },
+  dormantBadgeDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: palette.muted },
+  dormantBadgeText: { color: palette.muted, fontSize: 10, fontWeight: "900" as const, letterSpacing: 1.5 },
   backHalo: { position: "absolute", top: 54, alignSelf: "center", width: 260, height: 260, borderRadius: 130, borderWidth: 1, opacity: 0.8 },
   labGrid: { ...StyleSheet.absoluteFillObject, opacity: 0.8 },
   gridLine: { position: "absolute", top: 0, bottom: 0, width: 1 },

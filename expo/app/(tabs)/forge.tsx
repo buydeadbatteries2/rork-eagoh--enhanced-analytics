@@ -98,7 +98,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 
-const GENERIC_EAGOH_URI = "https://pub-e001eb4506b145aa938b5d3badbff6a5.r2.dev/attachments/x0u51a75lkvm28afuhja2.png";
+const GENERIC_EAGOH_URI = DEFAULT_EAGOH_IMAGE;
 
 type OptionTone = "cyan" | "gold" | "violet" | "ember" | "success";
 type ForgeOption = { id: string; label: string; detail?: string; tone: OptionTone };

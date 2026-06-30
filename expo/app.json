@@ -15,7 +15,8 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "app.rork.30jz62ydo3j4acgin2ijq"
+      "bundleIdentifier": "app.rork.30jz62ydo3j4acgin2ijq",
+      "buildNumber": "1"
     },
     "android": {
       "adaptiveIcon": {

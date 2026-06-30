@@ -67,7 +67,7 @@ function AuthGate(): JSX.Element {
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen
-          name="not-found"
+          name="+not-found"
           options={{ presentation: "modal", headerShown: false }}
         />
         <Stack.Screen

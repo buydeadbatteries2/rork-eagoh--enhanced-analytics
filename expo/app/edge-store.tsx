@@ -22,7 +22,6 @@ import { useRouter } from "expo-router";
 import {
   AlertTriangle,
   ArrowLeft,
-  Lock,
   BadgeCheck,
   Coins,
   Infinity,
@@ -411,30 +410,6 @@ export default function EdgeStoreScreen(): JSX.Element {
   const { user } = useAuth();
   const { profile, effectiveSubscriptionTier } = useProfile();
 
-  // ── Free user guard ────────────────────────────────────────────────────
-  if (effectiveSubscriptionTier === "free") {
-    return (
-      <View style={{ flex: 1, backgroundColor: pal.void, alignItems: "center", justifyContent: "center", padding: 32, gap: 18 }}>
-        <SafeAreaView style={{ flex: 0 }} />
-        <View style={{ width: 72, height: 72, borderRadius: 36, borderWidth: 1, borderColor: "rgba(255,184,77,0.35)", backgroundColor: "rgba(255,184,77,0.08)", alignItems: "center", justifyContent: "center" }}>
-          <Lock color={palette.gold} size={32} />
-        </View>
-        <Text style={{ color: palette.text, fontSize: 22, fontWeight: "900", letterSpacing: -0.5, textAlign: "center" }}>Neuron Store Unavailable</Text>
-        <Text style={{ color: palette.muted, fontSize: 14, fontWeight: "600", textAlign: "center", lineHeight: 20 }}>
-          Upgrade to Pro, Oracle Elite, or Syndicate to purchase additional Neurons.
-        </Text>
-        <Pressable
-          onPress={() => { h.selection(); router.push("/subscription" as never); }}
-          style={({ pressed }) => [
-            { paddingHorizontal: 28, paddingVertical: 14, borderRadius: 5, borderWidth: 1, borderColor: palette.gold, backgroundColor: "rgba(255,184,77,0.12)" },
-            pressed && { opacity: 0.75 },
-          ]}
-        >
-          <Text style={{ color: palette.gold, fontSize: 13, fontWeight: "900", letterSpacing: 1.2 }}>VIEW PLANS</Text>
-        </Pressable>
-      </View>
-    );
-  }
   const { balances, purchase: creditEdge, isMutating } = useEdge();
   const {
     configured: rcConfigured,
@@ -683,7 +658,8 @@ export default function EdgeStoreScreen(): JSX.Element {
             <>
               <WifiOff color={palette.muted} size={16} />
               <Text style={[styles.statusBannerText, { color: palette.muted }]}>
-                Store purchases require a development build or TestFlight.
+                Store purchases require a development build or TestFlight.{'\n'}
+                Enable RevenueCat Test Store for preview purchases.
               </Text>
             </>
           ) : usingFallbackPacks ? (

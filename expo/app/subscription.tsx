@@ -233,7 +233,7 @@ const styles = StyleSheet.create({
 
 // ── Sub-component: Preview Tier Card (Expo Go / preview) ──────────────────
 
-function PreviewTierCard({ tier }: { tier: Exclude<SubscriptionTier, "free"> }): JSX.Element {
+function PreviewTierCard({ tier, runtimeMode }: { tier: Exclude<SubscriptionTier, "free">; runtimeMode: string }): JSX.Element {
   const c = TIER_ACCENTS[tier];
   const label = TIER_LABELS[tier];
   const allocation = TIER_MONTHLY_ALLOCATION[tier];
@@ -280,7 +280,11 @@ function PreviewTierCard({ tier }: { tier: Exclude<SubscriptionTier, "free"> }):
           disabled
           style={[styles.subscribeBtn, { backgroundColor: "rgba(255,255,255,0.03)", borderColor: palette.line }]}
         >
-          <Text style={[styles.subscribeBtnText, { color: palette.muted }]}>Available in TestFlight</Text>
+          <Text style={[styles.subscribeBtnText, { color: palette.muted }]}>
+            {runtimeMode === "web-disabled"
+              ? "Native build required"
+              : "Available in TestFlight or Test Store"}
+          </Text>
         </Pressable>
       </View>
     </View>
@@ -592,9 +596,9 @@ export default function SubscriptionScreen(): JSX.Element {
           {/* Preview tier cards (disabled) */}
           {isPreview ? (
             <>
-              <PreviewTierCard tier="pro" />
-              <PreviewTierCard tier="oracle_elite" />
-              <PreviewTierCard tier="syndicate" />
+              <PreviewTierCard tier="pro" runtimeMode={runtimeMode} />
+              <PreviewTierCard tier="oracle_elite" runtimeMode={runtimeMode} />
+              <PreviewTierCard tier="syndicate" runtimeMode={runtimeMode} />
             </>
           ) : isTestStoreUnconfigured ? (
             <View style={styles.statusCenter}>

@@ -16,7 +16,6 @@ import {
   Dna,
   Filter,
   Info,
-  Lock,
   PackageOpen,
   Pencil,
   PlusCircle,
@@ -54,7 +53,6 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
 import { useAuth } from "@/providers/AuthProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useEagohs } from "@/providers/EagohProvider";
@@ -471,7 +469,7 @@ const ListingCard = memo(function ListingCard({
         {/* Price + Buy button — stacked vertically */}
         <View style={styles.priceButtonCol}>
           <Text style={styles.pricePreview}>
-            From {minPrice ?? "—"} Neurons/day
+            From {minPrice ?? "—"} EC/day
           </Text>
           <Pressable
             onPress={() => isPaid && onPurchase(item)}
@@ -1307,7 +1305,7 @@ const CarouselListingCard = memo(function CarouselListingCard({
         {minPrice ? (
           <View style={styles.carouselCardPrice}>
             <Coins color={palette.gold} size={10} />
-            <Text style={styles.carouselCardPriceText}>{minPrice} Neurons/day</Text>
+            <Text style={styles.carouselCardPriceText}>{minPrice} EC/day</Text>
           </View>
         ) : (
           <Text style={styles.carouselCardPriceFree}>Free</Text>
@@ -1481,13 +1479,13 @@ const MyListingCard = memo(function MyListingCard({
               if (price <= 0) return null;
               return (
                 <View key={level} style={styles.myListingPriceTag}>
-                  <Text style={styles.myListingPriceText}>{level}: {price} Neurons</Text>
+                  <Text style={styles.myListingPriceText}>{level}: {price} EC</Text>
                 </View>
               );
             })}
           </View>
           {minPrice && (
-            <Text style={styles.myListingMinPrice}>From {minPrice} Neurons/day</Text>
+            <Text style={styles.myListingMinPrice}>From {minPrice} EC/day</Text>
           )}
         </View>
       </View>
@@ -1614,7 +1612,6 @@ const MktSponsoredCarousel = memo(function MktSponsoredCarousel({ userId }: { us
 
 export default function MarketplaceScreen(): JSX.Element {
   const h = useHaptics();
-  const router = useRouter();
   const { user } = useAuth();
   const { profile } = useProfile();
   const { balances } = useEdge();
@@ -1646,31 +1643,6 @@ export default function MarketplaceScreen(): JSX.Element {
 
   const { effectiveSubscriptionTier } = useProfile();
   const isPaid = canTransact(effectiveSubscriptionTier);
-
-  // ── Free user guard ────────────────────────────────────────────────────
-  if (effectiveSubscriptionTier === "free") {
-    return (
-      <View style={{ flex: 1, backgroundColor: pal.void, alignItems: "center", justifyContent: "center", padding: 32, gap: 18 }}>
-        <SafeAreaView style={{ flex: 0 }} />
-        <View style={{ width: 72, height: 72, borderRadius: 36, borderWidth: 1, borderColor: "rgba(255,184,77,0.35)", backgroundColor: "rgba(255,184,77,0.08)", alignItems: "center", justifyContent: "center" }}>
-          <Lock color={palette.gold} size={32} />
-        </View>
-        <Text style={{ color: palette.text, fontSize: 22, fontWeight: "900", letterSpacing: -0.5, textAlign: "center" }}>Exchange Unavailable</Text>
-        <Text style={{ color: palette.muted, fontSize: 14, fontWeight: "600", textAlign: "center", lineHeight: 20 }}>
-          Upgrade to Pro, Oracle Elite, or Syndicate to access the EAGOH Exchange.
-        </Text>
-        <Pressable
-          onPress={() => { h.selection(); router.push("/subscription" as never); }}
-          style={({ pressed }) => [
-            { paddingHorizontal: 28, paddingVertical: 14, borderRadius: 5, borderWidth: 1, borderColor: palette.gold, backgroundColor: "rgba(255,184,77,0.12)" },
-            pressed && { opacity: 0.75 },
-          ]}
-        >
-          <Text style={{ color: palette.gold, fontSize: 13, fontWeight: "900", letterSpacing: 1.2 }}>VIEW PLANS</Text>
-        </Pressable>
-      </View>
-    );
-  }
 
   const loadData = useCallback(async () => {
     if (!user?.id) { setLoading(false); return; }

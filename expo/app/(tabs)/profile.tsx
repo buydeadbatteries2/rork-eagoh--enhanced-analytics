@@ -250,7 +250,6 @@ export default function ProfileScreen(): JSX.Element {
   }, [reputation]);
 
   const currentTier = effectiveSubscriptionTier;
-  const isFree = currentTier === "free";
 
   const handleSettingsPress = useCallback((): void => {
     h.selection();
@@ -442,30 +441,26 @@ export default function ProfileScreen(): JSX.Element {
       };
       return (
         <View style={{ gap: 10 }}>
-          {!isFree && (
-            <Pressable onPress={handleFactions} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
-              <View style={[styles.featureIconWrap, { borderColor: "rgba(138,92,255,0.35)" }]}>
-                <Shield color={palette.violet} size={20} />
-              </View>
-              <View style={styles.featureInfo}>
-                <Text style={styles.featureTitle}>Faction Network</Text>
-                <Text style={styles.featureDesc}>Build private intelligence networks with other EAGOH users.</Text>
-              </View>
-              <Cpu color={palette.muted} size={16} />
-            </Pressable>
-          )}
-          {!isFree && (
-            <Pressable onPress={handleEdgeStore} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
-              <View style={[styles.featureIconWrap, { borderColor: "rgba(255,181,71,0.35)" }]}>
-                <Coins color={palette.gold} size={20} />
-              </View>
-              <View style={styles.featureInfo}>
-                <Text style={styles.featureTitle}>Neuron Store</Text>
-                <Text style={styles.featureDesc}>Purchase additional Neurons</Text>
-              </View>
-              <Cpu color={palette.muted} size={16} />
-            </Pressable>
-          )}
+          <Pressable onPress={handleFactions} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
+            <View style={[styles.featureIconWrap, { borderColor: "rgba(138,92,255,0.35)" }]}>
+              <Shield color={palette.violet} size={20} />
+            </View>
+            <View style={styles.featureInfo}>
+              <Text style={styles.featureTitle}>Faction Network</Text>
+              <Text style={styles.featureDesc}>Build private intelligence networks with other EAGOH users.</Text>
+            </View>
+            <Cpu color={palette.muted} size={16} />
+          </Pressable>
+          <Pressable onPress={handleEdgeStore} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
+            <View style={[styles.featureIconWrap, { borderColor: "rgba(255,181,71,0.35)" }]}>
+              <Coins color={palette.gold} size={20} />
+            </View>
+            <View style={styles.featureInfo}>
+              <Text style={styles.featureTitle}>Neuron Store</Text>
+              <Text style={styles.featureDesc}>Purchase additional Neurons</Text>
+            </View>
+            <Cpu color={palette.muted} size={16} />
+          </Pressable>
           <Pressable onPress={() => { h.selection(); router.push("/subscription" as never); }} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
             <View style={[styles.featureIconWrap, { borderColor: "rgba(255,184,77,0.35)" }]}>
               <Crown color={palette.gold} size={20} />
@@ -476,18 +471,16 @@ export default function ProfileScreen(): JSX.Element {
             </View>
             <Cpu color={palette.muted} size={16} />
           </Pressable>
-          {!isFree && (
-            <Pressable onPress={() => { h.selection(); setShowPublicProfile(true); }} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
-              <View style={[styles.featureIconWrap, { borderColor: "rgba(54,245,255,0.35)" }]}>
-                <Eye color={palette.cyan} size={20} />
-              </View>
-              <View style={styles.featureInfo}>
-                <Text style={styles.featureTitle}>View My Public Profile</Text>
-                <Text style={styles.featureDesc}>Preview how other EAGOH users see your profile.</Text>
-              </View>
-              <Cpu color={palette.muted} size={16} />
-            </Pressable>
-          )}
+          <Pressable onPress={() => { h.selection(); setShowPublicProfile(true); }} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
+            <View style={[styles.featureIconWrap, { borderColor: "rgba(54,245,255,0.35)" }]}>
+              <Eye color={palette.cyan} size={20} />
+            </View>
+            <View style={styles.featureInfo}>
+              <Text style={styles.featureTitle}>View My Public Profile</Text>
+              <Text style={styles.featureDesc}>Preview how other EAGOH users see your profile.</Text>
+            </View>
+            <Cpu color={palette.muted} size={16} />
+          </Pressable>
           <Pressable onPress={handleSettingsPress} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
             <View style={[styles.featureIconWrap, { borderColor: "rgba(120,180,255,0.35)" }]}>
               <Crown color={palette.text} size={20} />

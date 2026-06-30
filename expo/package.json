@@ -10,8 +10,6 @@
     "lint": "expo lint"
   },
   "dependencies": {
-    "@babel/plugin-transform-runtime": "^8.0.1",
-    "@babel/runtime": "^8.0.0",
     "@expo/vector-icons": "^15.0.3",
     "@nkzw/create-context-hook": "^1.1.0",
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -22,7 +20,6 @@
     "@ungap/structured-clone": "^1.3.0",
     "expo": "~54.0.27",
     "expo-blur": "~15.0.8",
-    "expo-build-properties": "~1.0.10",
     "expo-constants": "~18.0.11",
     "expo-file-system": "~19.0.23",
     "expo-font": "~14.0.10",

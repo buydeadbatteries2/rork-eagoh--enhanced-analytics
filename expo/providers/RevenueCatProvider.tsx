@@ -76,9 +76,7 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
 
   // Safe guards for whether RevenueCat operations can proceed
   const isAvailable = configured;
-  // Test Store purchases go through RevenueCat's sandbox — they ARE real purchases.
-  // Only unconfigured (missing key / error) blocks purchasing.
-  const canRealPurchase = configured && runtimeMode !== "unconfigured";
+  const canRealPurchase = configured && runtimeMode !== "test-store" && runtimeMode !== "unconfigured";
 
   // Track previous user ID to detect login/logout transitions
   const prevUserId = useRef<string | null>(null);
@@ -224,24 +222,11 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
     const currentUserId = user?.id ?? null;
     const previousUserId = prevUserId.current;
 
-    // Reset tracking when RevenueCat transitions from unconfigured → configured
-    // so that a previously-logged-in user is picked up after configuration completes.
-    if (configured && previousUserId === currentUserId && previousUserId !== null) {
-      // Same user, already logged into RC on a previous run — reload offerings
-      queryClient.invalidateQueries({ queryKey: offeringsKey });
-      return;
-    }
-
-    // Skip if no change AND we're not in a just-configured state
-    if (currentUserId === previousUserId && configured) return;
-
-    if (!configured) {
-      // Track the user ID even before RC is ready so we can log in once configured
-      prevUserId.current = currentUserId;
-      return;
-    }
-
+    // Skip if no change
+    if (currentUserId === previousUserId) return;
     prevUserId.current = currentUserId;
+
+    if (!configured) return;
 
     if (currentUserId) {
       // User logged in or switched — log into RevenueCat

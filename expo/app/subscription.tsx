@@ -233,7 +233,7 @@ const styles = StyleSheet.create({
 
 // ── Sub-component: Preview Tier Card (Expo Go / preview) ──────────────────
 
-function PreviewTierCard({ tier, runtimeMode }: { tier: Exclude<SubscriptionTier, "free">; runtimeMode: string }): JSX.Element {
+function PreviewTierCard({ tier }: { tier: Exclude<SubscriptionTier, "free"> }): JSX.Element {
   const c = TIER_ACCENTS[tier];
   const label = TIER_LABELS[tier];
   const allocation = TIER_MONTHLY_ALLOCATION[tier];
@@ -280,11 +280,7 @@ function PreviewTierCard({ tier, runtimeMode }: { tier: Exclude<SubscriptionTier
           disabled
           style={[styles.subscribeBtn, { backgroundColor: "rgba(255,255,255,0.03)", borderColor: palette.line }]}
         >
-          <Text style={[styles.subscribeBtnText, { color: palette.muted }]}>
-            {runtimeMode === "web-disabled"
-              ? "Native build required"
-              : "Available in TestFlight or Test Store"}
-          </Text>
+          <Text style={[styles.subscribeBtnText, { color: palette.muted }]}>Available in TestFlight</Text>
         </Pressable>
       </View>
     </View>
@@ -565,7 +561,6 @@ export default function SubscriptionScreen(): JSX.Element {
 
   if (!rcConfigured) {
     const isPreview = runtimeMode === "expo-go-disabled" || runtimeMode === "web-disabled";
-    const isTestStoreUnconfigured = runtimeMode === "unconfigured" && process.env.EXPO_PUBLIC_REVENUECAT_USE_TEST_STORE === "true";
     return (
       <SafeAreaView edges={["top"]} style={styles.safe}>
         <View style={styles.header}>
@@ -586,8 +581,6 @@ export default function SubscriptionScreen(): JSX.Element {
               <Text style={styles.heroSubtitle}>
                 {isPreview
                   ? "Store purchases require a development build or TestFlight. Previewing subscription tiers below."
-                  : isTestStoreUnconfigured
-                  ? "RevenueCat Test Store API key is missing. Add EXPO_PUBLIC_REVENUECAT_TEST_API_KEY to enable Test Store purchases."
                   : "Unlock the full power of EAGOH intelligence. All plans include a monthly Neuron allocation, EAGOH slots, and exclusive features."}
               </Text>
             </View>
@@ -596,22 +589,10 @@ export default function SubscriptionScreen(): JSX.Element {
           {/* Preview tier cards (disabled) */}
           {isPreview ? (
             <>
-              <PreviewTierCard tier="pro" runtimeMode={runtimeMode} />
-              <PreviewTierCard tier="oracle_elite" runtimeMode={runtimeMode} />
-              <PreviewTierCard tier="syndicate" runtimeMode={runtimeMode} />
+              <PreviewTierCard tier="pro" />
+              <PreviewTierCard tier="oracle_elite" />
+              <PreviewTierCard tier="syndicate" />
             </>
-          ) : isTestStoreUnconfigured ? (
-            <View style={styles.statusCenter}>
-              <Coins color={palette.muted} size={40} />
-              <Text style={styles.statusTitle}>RevenueCat Test Store Unavailable</Text>
-              <Text style={styles.statusSubtitle}>
-                The Test Store flag is enabled but no Test Store API key was found. Add EXPO_PUBLIC_REVENUECAT_TEST_API_KEY to your environment.
-              </Text>
-              <Pressable onPress={handleRetry} style={({ pressed }) => [styles.retryBtn, pressed && { opacity: 0.7 }]}>
-                <RefreshCw color={palette.cyan} size={16} />
-                <Text style={styles.retryBtnText}>Retry</Text>
-              </Pressable>
-            </View>
           ) : (
             <View style={styles.statusCenter}>
               <Coins color={palette.muted} size={40} />
@@ -643,16 +624,6 @@ export default function SubscriptionScreen(): JSX.Element {
         <Text style={styles.headerTitle}>Subscription</Text>
         <Crown color={palette.gold} size={18} />
       </View>
-
-      {/* Test Store badge */}
-      {runtimeMode === "test-store" ? (
-        <View style={{ paddingHorizontal: 18, paddingBottom: 10 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 5, backgroundColor: "rgba(54,245,255,0.12)", borderWidth: 1, borderColor: "rgba(54,245,255,0.25)" }}>
-            <ShieldCheck color={palette.cyan} size={14} />
-            <Text style={{ color: palette.cyan, fontSize: 12, fontWeight: "700" as const }}>RevenueCat Test Store</Text>
-          </View>
-        </View>
-      ) : null}
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* Hero card */}

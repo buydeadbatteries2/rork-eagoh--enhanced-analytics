@@ -1346,21 +1346,17 @@ export default function SettingsScreen(): JSX.Element {
           },
         ],
       },
-      ...(currentTier !== "free"
-        ? ([
-            {
-              id: "socialVerification",
-              title: "Social Verification",
-              titleIcon: <BadgeCheck color={pal.cyan} size={15} />,
-              rows: [
-                {
-                  kind: "custom" as const,
-                  render: () => <SocialVerificationPanel pal={pal} />,
-                } satisfies SectionRow,
-              ],
-            } satisfies SettingsSection,
-          ] as SettingsSection[])
-        : ([] as SettingsSection[])),
+      {
+        id: "socialVerification",
+        title: "Social Verification",
+        titleIcon: <BadgeCheck color={pal.cyan} size={15} />,
+        rows: [
+          {
+            kind: "custom" as const,
+            render: () => <SocialVerificationPanel pal={pal} />,
+          },
+        ],
+      },
 
       {
         id: "feedback",
@@ -1400,31 +1396,27 @@ export default function SettingsScreen(): JSX.Element {
             icon: <Zap color={pal.cyan} size={18} />,
           },
           ...(isAdminOverrideActive && profile
-            ? ([
+            ? [
                 {
                   kind: "adminOverride" as const,
                   tier: profile.admin_tier_override ?? "",
                   expiresAt: profile.admin_tier_expires_at,
                   note: profile.admin_tier_note,
-                } satisfies SectionRow,
-              ] as SectionRow[])
-            : ([] as SectionRow[])),
+                },
+              ]
+            : []),
           {
             kind: "link",
             label: "Manage Subscription",
             icon: <Crown color={pal.gold} size={18} />,
             onPress: () => { h.selection(); router.push("/subscription" as never); },
           },
-          ...(currentTier !== "free"
-            ? ([
-                {
-                  kind: "link" as const,
-                  label: "Neuron Store",
-                  icon: <Coins color={pal.gold} size={18} />,
-                  onPress: navigateTo("/edge-store"),
-                } satisfies SectionRow,
-              ] as SectionRow[])
-            : ([] as SectionRow[])),
+          {
+            kind: "link",
+            label: "Neuron Store",
+            icon: <Coins color={pal.gold} size={18} />,
+            onPress: navigateTo("/edge-store"),
+          },
 
         ],
       },

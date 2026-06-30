@@ -1,5 +1,5 @@
 import { Tabs } from "expo-router";
-import { Atom, Home, MessageCircle, Store, UserRound } from "lucide-react-native";
+import { ArrowRightLeft, Hammer, Home, MessageCircle, UserRound } from "lucide-react-native";
 import React from "react";
 import { Platform } from "react-native";
 import { palette } from "@/constants/colors";
@@ -54,7 +54,7 @@ export default function TabLayout(): JSX.Element {
         name="forge"
         options={{
           title: "Forge",
-          tabBarIcon: ({ color, size }) => <Atom color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => <Hammer color={color} size={size} strokeWidth={2.2} />,
         }}
       />
       <Tabs.Screen
@@ -68,7 +68,7 @@ export default function TabLayout(): JSX.Element {
         name="marketplace"
         options={{
           title: "Exchange",
-          tabBarIcon: ({ color, size }) => <Store color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => <ArrowRightLeft color={color} size={size} strokeWidth={2.2} />,
         }}
       />
       <Tabs.Screen

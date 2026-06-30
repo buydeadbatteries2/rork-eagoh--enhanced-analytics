@@ -59,6 +59,7 @@ import {
   Gem,
   Heart,
   Info,
+  Lock,
   Pencil,
   Plus,
   ScanFace,
@@ -353,10 +354,37 @@ export default function ForgeScreen(): JSX.Element {
   const h = useHaptics();
   const router = useRouter();
   const { user } = useAuth();
-  const { profile } = useProfile();
+  const { profile, effectiveSubscriptionTier } = useProfile();
   const { total: edgeTotal } = useEdge();
   const { pending, prepareForge, confirmForge, cancelForge, isGenerating } = useForge();
   const { eagohs, remaining, canCreate, tier, deleteEagoh, isDeleting } = useEagohs();
+
+  const forgeTier = effectiveSubscriptionTier;
+
+  // ── Free user guard ────────────────────────────────────────────────────
+  if (forgeTier === "free") {
+    return (
+      <View style={{ flex: 1, backgroundColor: palette.void, alignItems: "center", justifyContent: "center", padding: 32, gap: 18 }}>
+        <SafeAreaView style={{ flex: 0 }} />
+        <View style={{ width: 72, height: 72, borderRadius: 36, borderWidth: 1, borderColor: "rgba(255,184,77,0.35)", backgroundColor: "rgba(255,184,77,0.08)", alignItems: "center", justifyContent: "center" }}>
+          <Lock color={palette.gold} size={32} />
+        </View>
+        <Text style={{ color: palette.text, fontSize: 22, fontWeight: "900", letterSpacing: -0.5, textAlign: "center" }}>Forge Unavailable</Text>
+        <Text style={{ color: palette.muted, fontSize: 14, fontWeight: "600", textAlign: "center", lineHeight: 20 }}>
+          Upgrade to Pro, Oracle Elite, or Syndicate to forge EAGOH intelligence units.
+        </Text>
+        <Pressable
+          onPress={() => { h.selection(); router.push("/subscription" as never); }}
+          style={({ pressed }) => [
+            { paddingHorizontal: 28, paddingVertical: 14, borderRadius: 5, borderWidth: 1, borderColor: palette.gold, backgroundColor: "rgba(255,184,77,0.12)" },
+            pressed && { opacity: 0.75 },
+          ]}
+        >
+          <Text style={{ color: palette.gold, fontSize: 13, fontWeight: "900", letterSpacing: 1.2 }}>VIEW PLANS</Text>
+        </Pressable>
+      </View>
+    );
+  }
   const { height: windowHeight } = useWindowDimensions();
   const { palette: pal } = useAppTheme();
 
@@ -585,8 +613,7 @@ export default function ForgeScreen(): JSX.Element {
     };
   }, []);
 
-  const { effectiveSubscriptionTier } = useProfile();
-  const currentTier = effectiveSubscriptionTier;
+  const currentTier = forgeTier;
   const multiplier = TIER_MULTIPLIER[currentTier] ?? 0;
   const maxEagohs = TIER_MAX_EAGOHS[currentTier] ?? 0;
   const forgeCost = getForgeCost(isEditing ? "full_reforge" : "initial");
@@ -920,11 +947,6 @@ export default function ForgeScreen(): JSX.Element {
     }
     setForgeError(null);
     if (isEditing) {
-      // Free users cannot reforge
-      if (currentTier === "free") {
-        setForgeError("Custom Reforging requires an active subscription.");
-        return;
-      }
       // If no changes detected, don't charge or generate
       if (reforgeCost.changedSections.length === 0) {
         setForgeError("No modifications detected. No Neurons charged.");
@@ -1053,11 +1075,6 @@ export default function ForgeScreen(): JSX.Element {
           {isEditing ? (
             <Pressable
               onPress={(): void => {
-                if (currentTier === "free") {
-                  setRenameError("EAGOH renaming requires a Pro, Oracle Elite, or Syndicate subscription.");
-                  setShowRenameModal(true);
-                  return;
-                }
                 const cooldown = getRenameCooldownRemaining(editingEagoh?.last_name_change);
                 if (cooldown > 0) {
                   setRenameError("Identity recalibration unavailable. EAGOH names may only be changed once every 30 days.");
@@ -1700,7 +1717,7 @@ export default function ForgeScreen(): JSX.Element {
               bottomName={name || "New EAGOH"}
               changeBtnText={isEditing ? (editingEagoh?.name ?? "Change") : "Select EAGOH"}
               onPress={(): void => setShowPicker(true)}
-              isFree={currentTier === "free"}
+              isFree={false}
               isEditing={isEditing}
               specialtyLabel={specialtyLabel}
               credentialStatus={isEditing ? (credentials ? "complete" : "missing") : null}

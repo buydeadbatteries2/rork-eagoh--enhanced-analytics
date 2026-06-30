@@ -1,8 +1,9 @@
 import { Tabs } from "expo-router";
-import { Atom, Home, MessageCircle, Store, UserRound } from "lucide-react-native";
+import { Atom, Home, Lock, MessageCircle, Store, UserRound } from "lucide-react-native";
 import React from "react";
-import { Platform } from "react-native";
+import { Platform, Text, View } from "react-native";
 import { palette } from "@/constants/colors";
+import { useProfile } from "@/providers/ProfileProvider";
 
 /**
  * Standard native mobile tab bar anchored to the bottom of the screen.
@@ -11,6 +12,8 @@ import { palette } from "@/constants/colors";
  * Labels always display fully.
  */
 export default function TabLayout(): JSX.Element {
+  const { effectiveSubscriptionTier } = useProfile();
+  const isFree = effectiveSubscriptionTier === "free";
 
   return (
     <Tabs
@@ -50,13 +53,15 @@ export default function TabLayout(): JSX.Element {
           tabBarIcon: ({ color, size }) => <Home color={color} size={size} />,
         }}
       />
-      <Tabs.Screen
-        name="forge"
-        options={{
-          title: "Forge",
-          tabBarIcon: ({ color, size }) => <Atom color={color} size={size} />,
-        }}
-      />
+      {!isFree && (
+        <Tabs.Screen
+          name="forge"
+          options={{
+            title: "Forge",
+            tabBarIcon: ({ color, size }) => <Atom color={color} size={size} />,
+          }}
+        />
+      )}
       <Tabs.Screen
         name="sessions"
         options={{
@@ -64,13 +69,15 @@ export default function TabLayout(): JSX.Element {
           tabBarIcon: ({ color, size }) => <MessageCircle color={color} size={size} />,
         }}
       />
-      <Tabs.Screen
-        name="marketplace"
-        options={{
-          title: "Exchange",
-          tabBarIcon: ({ color, size }) => <Store color={color} size={size} />,
-        }}
-      />
+      {!isFree && (
+        <Tabs.Screen
+          name="marketplace"
+          options={{
+            title: "Exchange",
+            tabBarIcon: ({ color, size }) => <Store color={color} size={size} />,
+          }}
+        />
+      )}
       <Tabs.Screen
         name="profile"
         options={{

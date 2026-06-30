@@ -12,7 +12,7 @@ export type AdminOverrideTier = SubscriptionTier | null;
 
 /** Monthly subscription Neuron allocations per tier. */
 export const TIER_MONTHLY_ALLOCATION: Record<SubscriptionTier, number> = {
-  free: 0,
+  free: 25,
   pro: 600,
   oracle_elite: 1400,
   syndicate: 3700,

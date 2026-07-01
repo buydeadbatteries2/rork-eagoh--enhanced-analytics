@@ -168,6 +168,30 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     });
   }, [profile, userId, queryClient]);
 
+  // ── Upgrade allocation: trigger rollover when tier changes from free → paid ──
+  const prevTierRef = useRef<SubscriptionTier | null>(null);
+  useEffect(() => {
+    if (!profile || !userId) return;
+    const tier = getEffectiveSubscriptionTier(profile);
+    const prevTier = prevTierRef.current;
+    prevTierRef.current = tier;
+
+    // Only trigger on actual upgrade from free to paid (not on first mount)
+    if (!prevTier || prevTier === tier) return;
+    if (prevTier !== "free") return;
+    if (tier === "free") return;
+
+    // Grant the new paid tier's monthly allocation immediately
+    if (__DEV__) {
+      console.log(`[ProfileProvider] Tier upgrade detected: ${prevTier} → ${tier} — triggering allocation`);
+    }
+    applyMonthlyRolloverService(userId, profile, tier).then((next) => {
+      queryClient.setQueryData(profileKey(userId), next);
+    }).catch((err) => {
+      console.warn("[ProfileProvider] upgrade allocation failed:", (err as Error).message);
+    });
+  }, [profile, userId, queryClient]);
+
   const effectiveSubscriptionTier: SubscriptionTier = getEffectiveSubscriptionTier(profile);
   const isAdminOverrideActive: boolean = hasActiveAdminOverride(profile);
 

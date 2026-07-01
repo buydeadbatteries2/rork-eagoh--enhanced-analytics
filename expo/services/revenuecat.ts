@@ -218,7 +218,8 @@ export function getRevenueCatConfigError(): string | null {
  * Derive the paid subscription tier from RevenueCat CustomerInfo.
  *
  * Priority (highest first): syndicate → oracle_elite → pro → free.
- * Detects using activeSubscriptions containing known product identifiers.
+ * Resolves both production product IDs AND Test Store aliases via
+ * subscriptionTierFromProductId so tier sync is always correct.
  */
 export function getRevenueCatSubscriptionTier(
   customerInfo: CustomerInfo | null,
@@ -228,12 +229,17 @@ export function getRevenueCatSubscriptionTier(
   const activeSubs = customerInfo.activeSubscriptions;
   if (!activeSubs || activeSubs.length === 0) return "free";
 
-  const activeIds = new Set(activeSubs);
+  // Collect resolved tiers from ALL active subscriptions (handles Test Store aliases)
+  const resolved = new Set<SubscriptionTier>();
+  for (const subId of activeSubs) {
+    const tier = subscriptionTierFromProductId(subId);
+    if (tier && tier !== "free") resolved.add(tier);
+  }
 
-  // Check in priority order — highest tier first
-  if (activeIds.has(SUBSCRIPTION_PRODUCT_IDS.syndicate)) return "syndicate";
-  if (activeIds.has(SUBSCRIPTION_PRODUCT_IDS.oracle_elite)) return "oracle_elite";
-  if (activeIds.has(SUBSCRIPTION_PRODUCT_IDS.pro)) return "pro";
+  // Priority order — highest tier wins
+  if (resolved.has("syndicate")) return "syndicate";
+  if (resolved.has("oracle_elite")) return "oracle_elite";
+  if (resolved.has("pro")) return "pro";
 
   return "free";
 }

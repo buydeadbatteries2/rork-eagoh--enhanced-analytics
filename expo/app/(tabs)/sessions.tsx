@@ -77,7 +77,7 @@ import { useEagohs } from "@/providers/EagohProvider";
 import { canUseSessionType, getSessionEligibility } from "@/services/permissions";
 import { INTELLIGENCE_DOMAINS, getDomainColor, normalizeDomainId } from "@/services/domains";
 import { guardDomainRequest } from "@/services/domainGuard";
-import { getQuickCheckCost, runQuickCheck, runQuickAnalytics, runStandardSession, runDeepDive, runPremiumEvent, getSessionCost, type AnalystSessionType, type AnalystRequestKind, type AnalystErrorCode } from "@/services/analyst";
+import { getQuickCheckCost, runQuickCheck, runQuickAnalytics, runStandardSession, runDeepDive, runPremiumEvent, getSessionCost, type AnalystSessionType, type AnalystRequestKind, type AnalystErrorCode, type ConversationMessage, type Grounding, type Source } from "@/services/analyst";
 import {
   createThread,
   addMessage,
@@ -158,7 +158,7 @@ const sessionTypes: SessionType[] = [
   { id: "my-rankings", name: "My Rankings", description: "Leaderboard positions & badges", costRange: "Free", minCost: 0, maxCost: 0, model: "Rankings View", duration: "Live", tone: "gold", active: true },
 ];
 
-type ChatMessage = { id: string; sender: "user" | "analyst"; text: string; confidence?: number; cost?: number };
+type ChatMessage = { id: string; sender: "user" | "analyst"; text: string; confidence?: number; cost?: number; grounding?: Grounding; sources?: Source[] };
 
 function toneColor(tone: SessionTone): string {
   if (tone === "gold") return palette.gold;
@@ -606,16 +606,18 @@ function AnalystChatThread({
     try {
       const kind = detectQuickCheckKind(prompt);
       let result;
+      // Use real eagohId if this is a forged EAGOH; null for virtual Quick Check
+      const realEagohId = isVirtualEagoh ? null : currentEagoh.id;
       if (currentSession.id === "quick-check") {
-        result = await runQuickCheck({ prompt, kind, personality: "tactical", context: [], eagohMeta });
+        result = await runQuickCheck({ prompt, eagohId: realEagohId, kind, personality: "tactical", conversationContext: [], eagohMeta });
       } else if (currentSession.id === "quick-analysis") {
-        result = await runQuickAnalytics({ prompt, kind: "general", personality: "calm", context: [], eagohMeta });
+        result = await runQuickAnalytics({ prompt, eagohId: realEagohId, kind: "general", personality: "calm", conversationContext: [], eagohMeta });
       } else if (currentSession.id === "oracle") {
-        result = await runDeepDive({ prompt, kind: "general", personality: "oracle", context: [], eagohMeta });
+        result = await runDeepDive({ prompt, eagohId: realEagohId, kind: "general", personality: "oracle", conversationContext: [], eagohMeta });
       } else if (currentSession.id === "premium-event") {
-        result = await runPremiumEvent({ prompt, kind: "general", personality: "calm", context: [], eagohMeta });
+        result = await runPremiumEvent({ prompt, eagohId: realEagohId, kind: "general", personality: "calm", conversationContext: [], eagohMeta });
       } else {
-        result = await runStandardSession({ prompt, kind: "general", personality: "calm", context: [], eagohMeta });
+        result = await runStandardSession({ prompt, eagohId: realEagohId, kind: "general", personality: "calm", conversationContext: [], eagohMeta });
       }
 
       if (!result.ok) {
@@ -662,7 +664,7 @@ function AnalystChatThread({
 
         setMessages([
           { id: userMsg.id, sender: "user", text: prompt, cost },
-          { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence },
+          { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding, sources: result.sources },
         ]);
       } catch (dbErr: unknown) {
         const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
@@ -714,22 +716,29 @@ function AnalystChatThread({
       return;
     }
 
-    // Build context from last 10 messages
-    const context = messages.slice(-10).map((m) => `${m.sender === "user" ? "User" : "EAGOH"}: ${m.text}`);
+    // Build structured conversation context from last 10 exchanges
+    const convoContext: ConversationMessage[] = messages.slice(-20).map((m) => ({
+      role: m.sender === "user" ? "user" as const : "assistant" as const,
+      content: m.text,
+    }));
+
+    // Use real eagohId if this is a forged EAGOH; null for virtual Quick Check
+    const isVirtualForFollowup = (eagoh as Record<string, unknown>).is_virtual === true;
+    const realEagohId = isVirtualForFollowup ? null : eagoh.id;
 
     // Call analyst
     const kind = detectQuickCheckKind(text);
     let result;
     if (session.id === "quick-check") {
-      result = await runQuickCheck({ prompt: text, kind, personality: "tactical", context, eagohMeta });
+      result = await runQuickCheck({ prompt: text, eagohId: realEagohId, kind, personality: "tactical", conversationContext: convoContext, eagohMeta });
     } else if (session.id === "quick-analysis") {
-      result = await runQuickAnalytics({ prompt: text, kind: "general", personality: "calm", context, eagohMeta });
+      result = await runQuickAnalytics({ prompt: text, eagohId: realEagohId, kind: "general", personality: "calm", conversationContext: convoContext, eagohMeta });
     } else if (session.id === "oracle") {
-      result = await runDeepDive({ prompt: text, kind: "general", personality: "oracle", context, eagohMeta });
+      result = await runDeepDive({ prompt: text, eagohId: realEagohId, kind: "general", personality: "oracle", conversationContext: convoContext, eagohMeta });
     } else if (session.id === "premium-event") {
-      result = await runPremiumEvent({ prompt: text, kind: "general", personality: "calm", context, eagohMeta });
+      result = await runPremiumEvent({ prompt: text, eagohId: realEagohId, kind: "general", personality: "calm", conversationContext: convoContext, eagohMeta });
     } else {
-      result = await runStandardSession({ prompt: text, kind: "general", personality: "calm", context, eagohMeta });
+      result = await runStandardSession({ prompt: text, eagohId: realEagohId, kind: "general", personality: "calm", conversationContext: convoContext, eagohMeta });
     }
 
     if (!result.ok) {
@@ -765,13 +774,13 @@ function AnalystChatThread({
       setMessages((prev) => [
         ...prev,
         { id: userMsg.id, sender: "user", text, cost },
-        { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence },
+        { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding, sources: result.sources },
       ]);
     } catch {
       setMessages((prev) => [
         ...prev,
         { id: `u-${Date.now()}`, sender: "user", text, cost },
-        { id: `a-${Date.now()}`, sender: "analyst", text: result.reply, confidence: result.confidence },
+        { id: `a-${Date.now()}`, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding, sources: result.sources },
       ]);
       setError("Could not save to history.");
     }
@@ -886,6 +895,60 @@ function AnalystChatThread({
             <Text style={msg.sender === "analyst" ? styles.msgAnalystText : styles.msgUserText}>{msg.text}</Text>
             {msg.confidence ? <Text style={styles.msgMeta}>Confidence {msg.confidence}%</Text> : null}
             {msg.cost ? <Text style={styles.msgCost}>{msg.cost} Neurons</Text> : null}
+            {/* Grounding display for analyst messages */}
+            {msg.sender === "analyst" && msg.grounding ? (
+              <View style={styles.groundingWrap}>
+                <View style={styles.groundingDivider} />
+                <View style={styles.groundingRow}>
+                  <Globe color={palette.muted} size={11} />
+                  <Text style={styles.groundingTitle}>Intelligence Sources</Text>
+                </View>
+                <View style={styles.groundingItems}>
+                  {msg.grounding.openIntelligenceUsed ? (
+                    <View style={styles.groundingItem}>
+                      <BrainCircuit color={palette.cyan} size={10} />
+                      <Text style={styles.groundingItemText}>
+                        Open Intelligence: {msg.grounding.openIntelligenceCount} entr{msg.grounding.openIntelligenceCount === 1 ? 'y' : 'ies'} used
+                      </Text>
+                    </View>
+                  ) : null}
+                  {msg.grounding.externalSearchUsed ? (
+                    <View style={styles.groundingItem}>
+                      <Search color={palette.gold} size={10} />
+                      <Text style={styles.groundingItemText}>
+                        Current Research: {msg.grounding.sourceCount} source{msg.grounding.sourceCount !== 1 ? 's' : ''} used
+                      </Text>
+                    </View>
+                  ) : null}
+                  {!msg.grounding.openIntelligenceUsed && !msg.grounding.externalSearchUsed ? (
+                    <View style={styles.groundingItem}>
+                      <Cpu color={palette.muted} size={10} />
+                      <Text style={styles.groundingItemText}>Trained knowledge only</Text>
+                    </View>
+                  ) : null}
+                  <View style={styles.groundingItem}>
+                    <MessageSquare color={palette.muted} size={10} />
+                    <Text style={styles.groundingItemText}>Conversation Context: included</Text>
+                  </View>
+                </View>
+                {/* External sources expandable list */}
+                {msg.sources && msg.sources.length > 0 ? (
+                  <View style={styles.sourcesWrap}>
+                    {msg.sources.map((src, i) => (
+                      <View key={i} style={styles.sourceRow}>
+                        <Text style={styles.sourceIndex}>{i + 1}.</Text>
+                        <View style={styles.sourceInfo}>
+                          <Text style={styles.sourceTitle} numberOfLines={1}>{src.title}</Text>
+                          {src.publisher ? (
+                            <Text style={styles.sourcePublisher} numberOfLines={1}>{src.publisher}{src.publishedAt ? ` · ${src.publishedAt}` : ''}</Text>
+                          ) : null}
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
           </View>
         ))}
         {isSending ? (
@@ -3092,4 +3155,73 @@ const styles = StyleSheet.create({
   mrBadgeInfo: { flex: 1, gap: 2 },
   mrBadgeName: { color: palette.text, fontSize: 12, fontWeight: "900" },
   mrBadgeDesc: { color: palette.muted, fontSize: 10, fontWeight: "700", lineHeight: 14 },
+
+  // ── Grounding display ───────────────────────────────────────────────
+  groundingWrap: {
+    marginTop: 10,
+    paddingTop: 8,
+  },
+  groundingDivider: {
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    marginBottom: 8,
+  },
+  groundingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginBottom: 6,
+  },
+  groundingTitle: {
+    color: palette.muted,
+    fontSize: 10,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  groundingItems: {
+    gap: 3,
+  },
+  groundingItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingVertical: 2,
+  },
+  groundingItemText: {
+    color: palette.muted,
+    fontSize: 10,
+    fontWeight: "600",
+  },
+  sourcesWrap: {
+    marginTop: 8,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.04)",
+    gap: 4,
+  },
+  sourceRow: {
+    flexDirection: "row",
+    gap: 4,
+  },
+  sourceIndex: {
+    color: palette.muted,
+    fontSize: 10,
+    fontWeight: "700",
+    width: 14,
+  },
+  sourceInfo: {
+    flex: 1,
+  },
+  sourceTitle: {
+    color: palette.cyan,
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  sourcePublisher: {
+    color: palette.muted,
+    fontSize: 9,
+    fontWeight: "500",
+    marginTop: 1,
+  },
 });

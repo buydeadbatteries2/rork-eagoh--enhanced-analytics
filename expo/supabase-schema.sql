@@ -990,6 +990,38 @@ create policy "usa_marketplace_select" on public.user_social_accounts
   );
 
 -- =============================================================================
+-- ANALYST CONTEXT USAGE (tracks which OI entries influenced each session)
+-- =============================================================================
+create table if not exists public.analyst_context_usage (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
+  thread_id uuid not null references public.analyst_threads(id) on delete cascade,
+  message_id uuid not null references public.analyst_messages(id) on delete cascade,
+  session_type text not null,
+  open_intelligence_entry_id uuid references public.open_intelligence(id) on delete set null,
+  relevance_score double precision not null default 0,
+  created_at timestamptz default now()
+);
+
+create index if not exists acu_user_id_idx on public.analyst_context_usage(user_id, created_at desc);
+create index if not exists acu_eagoh_idx on public.analyst_context_usage(eagoh_id);
+create index if not exists acu_thread_idx on public.analyst_context_usage(thread_id);
+
+-- Enable RLS — users can only read their own usage records
+-- (insert is server-side via the Cloudflare Worker)
+alter table public.analyst_context_usage enable row level security;
+
+drop policy if exists "acu_self_select" on public.analyst_context_usage;
+
+create policy "acu_self_select" on public.analyst_context_usage
+  for select using (auth.uid() = user_id);
+
+-- Allow insert by authenticated users (for server-side recording)
+create policy "acu_self_insert" on public.analyst_context_usage
+  for insert with check (auth.uid() = user_id);
+
+-- =============================================================================
 -- ANALYST THREADS (persistent AI chat sessions)
 -- =============================================================================
 create table if not exists public.analyst_threads (

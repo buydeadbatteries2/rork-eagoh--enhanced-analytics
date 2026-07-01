@@ -3,5 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "dependencies": {}
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.0"
+  }
 }

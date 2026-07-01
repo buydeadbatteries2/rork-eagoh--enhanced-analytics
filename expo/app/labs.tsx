@@ -34,7 +34,7 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "
 import { Animated, DimensionValue, Easing, FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useEdge } from "@/providers/EdgeProvider";
-import { getQuickCheckCost, runQuickCheck, runQuickAnalytics, runStandardSession, runDeepDive, type AnalystRequestKind, type AnalystCallError } from "@/services/analyst";
+import { getQuickCheckCost, runQuickCheck, runQuickAnalytics, runStandardSession, runDeepDive, type AnalystRequestKind, type AnalystCallError, type ConversationMessage } from "@/services/analyst";
 
 type LabMode = "forge" | "intelligence" | "analyst";
 type ForgeStep = "Identity" | "DNA" | "Teams" | "Body" | "Pose" | "Preview";
@@ -444,12 +444,19 @@ export default function LabsScreen(): JSX.Element {
       setMessages((current) => [...current, { id: `u-${Date.now()}`, sender: "user", text: prompt }]);
       setIsAnalystTyping(true);
 
+      // Build conversation context from memory cards
+      const memoryContext: ConversationMessage[] = memoryCards.map((item) => ({
+        role: "user" as const,
+        content: `${item.title}: ${item.detail}`,
+      }));
+
       // Call analyst FIRST — do NOT deduct Edge until we know the call succeeded
       const result = await runQuickCheck({
         prompt,
+        eagohId: null,
         kind,
         personality: "tactical",
-        context: memoryCards.map((item) => `${item.title}: ${item.detail}`),
+        conversationContext: memoryContext,
       });
 
       if (!result.ok) {
@@ -484,14 +491,17 @@ export default function LabsScreen(): JSX.Element {
     setMessages((current) => [...current, { id: `u-${Date.now()}`, sender: "user", text: prompt }]);
     setIsAnalystTyping(true);
 
-    const context = memoryCards.map((item) => `${item.title}: ${item.detail}`);
+    const memoryContext: ConversationMessage[] = memoryCards.map((item) => ({
+      role: "user" as const,
+      content: `${item.title}: ${item.detail}`,
+    }));
     let result: Awaited<ReturnType<typeof runQuickCheck>>;
     if (selectedSession === "quick-analysis") {
-      result = await runQuickAnalytics({ prompt, kind: "general", personality: "calm", context });
+      result = await runQuickAnalytics({ prompt, eagohId: null, kind: "general", personality: "calm", conversationContext: memoryContext });
     } else if (selectedSession === "oracle") {
-      result = await runDeepDive({ prompt, kind: "general", personality: "oracle", context });
+      result = await runDeepDive({ prompt, eagohId: null, kind: "general", personality: "oracle", conversationContext: memoryContext });
     } else {
-      result = await runStandardSession({ prompt, kind: "general", personality: "calm", context });
+      result = await runStandardSession({ prompt, eagohId: null, kind: "general", personality: "calm", conversationContext: memoryContext });
     }
 
     if (result.ok) {

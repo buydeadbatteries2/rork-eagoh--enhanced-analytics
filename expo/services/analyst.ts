@@ -1,17 +1,24 @@
 /**
  * Analyst AI service layer.
  *
- * Modular, lightweight wrapper around the secure `/analyst/chat` server route.
- * Designed to scale across multiple session tiers:
- *   - Quick Check (cheap, concise, tactical) — ACTIVE
- *   - Quick Analytics (placeholder — wired later)
- *   - Standard Session (placeholder — wired later)
- *   - Deep Dive / Oracle (placeholder — wired later)
+ * Secure, grounded wrapper around the `/analyst/chat` Cloudflare Worker.
  *
- * No OpenAI key ever lives on the client. The Workers function holds the key
- * and selects the model. We only describe intent + personality from here.
+ * The worker handles:
+ *   - JWT authentication
+ *   - EAGOH ownership verification
+ *   - Open Intelligence retrieval & relevance ranking
+ *   - External current-research search
+ *   - Structured prompt assembly with source labeling
+ *
+ * Client responsibilities:
+ *   - Send the Supabase access token as Bearer auth
+ *   - Send eagohId + structured conversationContext (never raw OI)
+ *   - Display grounding metadata in the UI
+ *
+ * No API keys, private OI content, or service-role tokens ever reach the client.
  */
 
+import { supabase } from "@/lib/supabase";
 import { normalizeDomainId } from "./domains";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -36,12 +43,34 @@ export type AnalystRequestKind =
   | "team_analysis"
   | "general";
 
+export type ConversationMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type Source = {
+  title: string;
+  publisher?: string;
+  url?: string;
+  publishedAt?: string;
+};
+
+export type Grounding = {
+  openIntelligenceUsed: boolean;
+  openIntelligenceCount: number;
+  externalSearchUsed: boolean;
+  sourceCount: number;
+};
+
 export type AnalystCallInput = {
   prompt: string;
   sessionType: AnalystSessionType;
+  /** The EAGOH's Supabase UUID (null for virtual Quick Check). */
+  eagohId: string | null;
   kind?: AnalystRequestKind;
   personality?: AnalystPersonality;
-  context?: string[];
+  /** Structured conversation history — never raw OI context. */
+  conversationContext?: ConversationMessage[];
 };
 
 export type AnalystCallResult = {
@@ -50,12 +79,17 @@ export type AnalystCallResult = {
   model: string;
   sessionType: AnalystSessionType;
   confidence: number;
+  grounding: Grounding;
+  sources?: Source[];
 };
 
 /** Specific error codes returned by the Cloudflare worker. */
 export type AnalystErrorCode =
   | "missing_api_key"
+  | "missing_config"
   | "invalid_request"
+  | "unauthorized"
+  | "eagoh_not_found"
   | "openai_error"
   | "openai_rate_limit"
   | "openai_empty_response"
@@ -85,9 +119,6 @@ export const QUICK_CHECK_EDGE_RANGE = { min: 1, max: 3 } as const;
 
 /**
  * Compute the Edge cost for a Quick Check based on prompt complexity.
- * - Short prompt → 1 Edge
- * - Medium prompt → 2 Edge
- * - Long / multi-question prompt → 3 Edge
  */
 export function getQuickCheckCost(prompt: string): number {
   const trimmed = prompt.trim();
@@ -143,7 +174,6 @@ const SESSION_COST_RANGES: Record<AnalystSessionType, { min: number; max: number
 
 /**
  * Estimate Edge cost for any session type based on prompt complexity.
- * Short prompt → min, long/multi-question → max, otherwise midpoint.
  */
 export function getSessionCost(sessionType: string, prompt: string): number {
   const range = SESSION_COST_RANGES[sessionType as AnalystSessionType];
@@ -157,8 +187,11 @@ export function getSessionCost(sessionType: string, prompt: string): number {
 }
 
 const ERROR_MESSAGES: Record<AnalystErrorCode, string> = {
-  missing_api_key: "OpenAI API key not configured.",
+  missing_api_key: "Analyst service is not configured.",
+  missing_config: "Analyst service is not fully configured.",
   invalid_request: "Invalid session request.",
+  unauthorized: "Please sign in to use the analyst service.",
+  eagoh_not_found: "Selected EAGOH not found or access denied.",
   openai_error: "Analyst service encountered an error.",
   openai_rate_limit: "Analyst service is temporarily busy. Please try again.",
   openai_empty_response: "Analyst returned an empty response.",
@@ -189,8 +222,7 @@ function localFallback(input: AnalystCallInput): string {
 }
 
 /**
- * Sanitise a prompt for logging — truncate and strip line breaks so logs stay
- * readable and never contain secrets.
+ * Sanitise a prompt for logging — truncate and strip line breaks.
  */
 function sanitizeForLog(text: string): string {
   return text.slice(0, 120).replace(/\n/g, " ");
@@ -198,7 +230,6 @@ function sanitizeForLog(text: string): string {
 
 /**
  * Parse the worker error response into a specific AnalystErrorCode.
- * The worker returns `{ ok: false, errorCode?: string, error: string }`.
  */
 function classifyWorkerError(
   httpStatus: number,
@@ -207,13 +238,18 @@ function classifyWorkerError(
 ): AnalystErrorCode {
   // Worker returns specific errorCode strings
   if (errorCode === "missing_api_key") return "missing_api_key";
+  if (errorCode === "missing_config") return "missing_config";
   if (errorCode === "invalid_request") return "invalid_request";
+  if (errorCode === "unauthorized") return "unauthorized";
+  if (errorCode === "eagoh_not_found") return "eagoh_not_found";
   if (errorCode === "openai_rate_limit") return "openai_rate_limit";
   if (errorCode === "openai_empty_response") return "openai_empty_response";
   if (errorCode === "openai_error") return "openai_error";
 
   // Fall back to HTTP status heuristics
-  if (httpStatus === 503) return "missing_api_key";
+  if (httpStatus === 401) return "unauthorized";
+  if (httpStatus === 403) return "eagoh_not_found";
+  if (httpStatus === 503) return "missing_config";
   if (httpStatus === 429) return "openai_rate_limit";
   if (httpStatus === 502 || httpStatus === 500) return "openai_error";
   if (httpStatus === 400) return "invalid_request";
@@ -221,6 +257,7 @@ function classifyWorkerError(
   // Check message content
   if (errorMessage?.toLowerCase().includes("rate")) return "openai_rate_limit";
   if (errorMessage?.toLowerCase().includes("empty")) return "openai_empty_response";
+  if (errorMessage?.toLowerCase().includes("auth")) return "unauthorized";
 
   return "unknown";
 }
@@ -247,7 +284,6 @@ function devLog(
 
 /**
  * Lightweight service availability check — pings the functions endpoint.
- * Returns true if the analyst backend is reachable.
  */
 export async function verifyAnalystService(): Promise<{ ok: boolean; error?: string }> {
   if (!FUNCTIONS_BASE_URL) {
@@ -265,10 +301,25 @@ export async function verifyAnalystService(): Promise<{ ok: boolean; error?: str
 }
 
 /**
- * Core analyst call. All session types route through this — only the prompt
- * shaping, personality, and budget change.
+ * Get the current Supabase access token for authenticating with the worker.
+ * Returns null if the user is not signed in.
+ */
+async function getAccessToken(): Promise<string | null> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Core analyst call. All session types route through this.
  *
- * @param eagohMeta — optional EAGOH metadata for diagnostic logging (never sent to API).
+ * Sends a structured request with eagohId and conversationContext.
+ * The worker handles OI retrieval, ranking, and external search server-side.
+ *
+ * @param eagohMeta — optional EAGOH metadata for client-side diagnostic logging.
  */
 async function callAnalyst(
   input: AnalystCallInput,
@@ -284,12 +335,11 @@ async function callAnalyst(
     };
   }
 
-  // Normalise domain for logging
   const normalizedDomain = eagohMeta?.domain ? normalizeDomainId(eagohMeta.domain) : "none";
 
   // Log request
   devLog("request", {
-    eagohId: eagohMeta?.id ?? "none",
+    eagohId: input.eagohId ?? "none",
     eagohName: eagohMeta?.name ?? "none",
     eagohDomain: eagohMeta?.domain ?? "none",
     normalizedDomain,
@@ -298,7 +348,7 @@ async function callAnalyst(
     kind: input.kind ?? "general",
     promptPreview: sanitizeForLog(prompt),
     promptLength: prompt.length,
-    contextCount: input.context?.length ?? 0,
+    conversationContextCount: input.conversationContext?.length ?? 0,
     functionsBaseUrl: FUNCTIONS_BASE_URL ? "configured" : "missing",
   });
 
@@ -312,22 +362,36 @@ async function callAnalyst(
     };
   }
 
-  const systemHints = buildSystemHints(input);
-  const fullPrompt = `${systemHints}\n\nUser question: ${prompt}`;
+  // Get access token for auth
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    devLog("error", { reason: "no_access_token" });
+    return {
+      ok: false,
+      errorCode: "unauthorized",
+      error: ERROR_MESSAGES.unauthorized,
+      fallback: localFallback(input),
+    };
+  }
 
+  // Build the grounded request payload (no raw OI context)
   const payload = {
-    prompt: fullPrompt,
+    prompt,
     sessionType: input.sessionType,
+    eagohId: input.eagohId,
     personality: input.personality ?? "tactical",
     kind: input.kind ?? "general",
-    context: input.context ?? [],
+    conversationContext: input.conversationContext ?? [],
   };
 
   let response: Response;
   try {
     response = await fetch(`${FUNCTIONS_BASE_URL}/analyst/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
       body: JSON.stringify(payload),
     });
   } catch (fetchError) {
@@ -351,9 +415,12 @@ async function callAnalyst(
     ok?: boolean;
     reply?: string;
     model?: string;
+    sessionType?: AnalystSessionType;
+    confidence?: number;
+    grounding?: Grounding;
+    sources?: Source[];
     error?: string;
     errorCode?: string;
-    status?: number;
   };
   try {
     data = (await response.json()) as typeof data;
@@ -378,9 +445,12 @@ async function callAnalyst(
     error: data.error ? sanitizeForLog(data.error) : "none",
     hasReply: !!data.reply,
     model: data.model ?? "unknown",
+    grounding: data.grounding
+      ? `OI:${data.grounding.openIntelligenceCount}/search:${data.grounding.externalSearchUsed}/src:${data.grounding.sourceCount}`
+      : "none",
   });
 
-  // Handle non-ok responses — check for rate limits and retry
+  // Handle non-ok responses
   if (!response.ok || !data.ok || !data.reply) {
     const code = classifyWorkerError(
       response.status,
@@ -408,7 +478,14 @@ async function callAnalyst(
     reply: data.reply.trim(),
     model: data.model ?? "gpt-4o-mini",
     sessionType: input.sessionType,
-    confidence: budget.baseConfidence,
+    confidence: data.confidence ?? budget.baseConfidence,
+    grounding: data.grounding ?? {
+      openIntelligenceUsed: false,
+      openIntelligenceCount: 0,
+      externalSearchUsed: false,
+      sourceCount: 0,
+    },
+    sources: data.sources,
   };
 }
 
@@ -417,58 +494,64 @@ async function callAnalyst(
 /** Quick Check — fast, concise, tactical. ACTIVE. */
 export function runQuickCheck(args: {
   prompt: string;
+  eagohId: string | null;
   kind?: AnalystRequestKind;
   personality?: AnalystPersonality;
-  context?: string[];
+  conversationContext?: ConversationMessage[];
   eagohMeta?: { id: string; name: string; domain: string };
 }): Promise<AnalystResponse> {
   return callAnalyst(
     {
       prompt: args.prompt,
       sessionType: "quick-check",
+      eagohId: args.eagohId,
       kind: args.kind ?? "general",
       personality: args.personality ?? "tactical",
-      context: args.context,
+      conversationContext: args.conversationContext,
     },
     args.eagohMeta,
   );
 }
 
-/** Quick Analytics — short-form analytics tier. Reserved for future activation. */
+/** Quick Analytics — short-form analytics tier. */
 export function runQuickAnalytics(args: {
   prompt: string;
+  eagohId: string | null;
   kind?: AnalystRequestKind;
   personality?: AnalystPersonality;
-  context?: string[];
+  conversationContext?: ConversationMessage[];
   eagohMeta?: { id: string; name: string; domain: string };
 }): Promise<AnalystResponse> {
   return callAnalyst(
     {
       prompt: args.prompt,
       sessionType: "quick-analytics",
+      eagohId: args.eagohId,
       kind: args.kind,
       personality: args.personality ?? "calm",
-      context: args.context,
+      conversationContext: args.conversationContext,
     },
     args.eagohMeta,
   );
 }
 
-/** Standard Session — reserved for future activation. */
+/** Standard Session — balanced analysis. */
 export function runStandardSession(args: {
   prompt: string;
+  eagohId: string | null;
   kind?: AnalystRequestKind;
   personality?: AnalystPersonality;
-  context?: string[];
+  conversationContext?: ConversationMessage[];
   eagohMeta?: { id: string; name: string; domain: string };
 }): Promise<AnalystResponse> {
   return callAnalyst(
     {
       prompt: args.prompt,
       sessionType: "standard",
+      eagohId: args.eagohId,
       kind: args.kind,
       personality: args.personality ?? "calm",
-      context: args.context,
+      conversationContext: args.conversationContext,
     },
     args.eagohMeta,
   );
@@ -477,18 +560,20 @@ export function runStandardSession(args: {
 /** Deep Dive / Oracle — premium long-form reasoning. */
 export function runDeepDive(args: {
   prompt: string;
+  eagohId: string | null;
   kind?: AnalystRequestKind;
   personality?: AnalystPersonality;
-  context?: string[];
+  conversationContext?: ConversationMessage[];
   eagohMeta?: { id: string; name: string; domain: string };
 }): Promise<AnalystResponse> {
   return callAnalyst(
     {
       prompt: args.prompt,
       sessionType: "oracle",
+      eagohId: args.eagohId,
       kind: args.kind,
       personality: args.personality ?? "oracle",
-      context: args.context,
+      conversationContext: args.conversationContext,
     },
     args.eagohMeta,
   );
@@ -497,18 +582,20 @@ export function runDeepDive(args: {
 /** Premium Event Analysis — event-focused intelligence breakdown. */
 export function runPremiumEvent(args: {
   prompt: string;
+  eagohId: string | null;
   kind?: AnalystRequestKind;
   personality?: AnalystPersonality;
-  context?: string[];
+  conversationContext?: ConversationMessage[];
   eagohMeta?: { id: string; name: string; domain: string };
 }): Promise<AnalystResponse> {
   return callAnalyst(
     {
       prompt: args.prompt,
       sessionType: "premium-event",
+      eagohId: args.eagohId,
       kind: args.kind ?? "general",
       personality: args.personality ?? "calm",
-      context: args.context,
+      conversationContext: args.conversationContext,
     },
     args.eagohMeta,
   );

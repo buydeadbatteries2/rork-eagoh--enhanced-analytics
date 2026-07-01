@@ -84,3 +84,60 @@ export function canCreateEagoh(tier: SubscriptionTier): boolean {
 export function canRenameEagoh(tier: SubscriptionTier): boolean {
   return tier !== "free";
 }
+
+// ── Session eligibility ──────────────────────────────────────────────────
+
+export type SessionEligibilityResult =
+  | { allowed: true; requiresEagoh: boolean }
+  | { allowed: false; reason: "eagoh_required" | "tier_too_low" | "insufficient_neurons" };
+
+/**
+ * Centralized session eligibility check.
+ *
+ * Quick Check is the only session type that does NOT require a forged EAGOH.
+ * All advanced sessions require a real user-forged EAGOH AND the correct tier.
+ */
+export function getSessionEligibility({
+  tier,
+  sessionType,
+  forgedEagohCount,
+  neuronBalance,
+  minNeuronCost,
+}: {
+  tier: SubscriptionTier;
+  sessionType: SessionTypeId;
+  forgedEagohCount: number;
+  neuronBalance: number;
+  minNeuronCost?: number;
+}): SessionEligibilityResult {
+  // Quick Check: available to all, no EAGOH required
+  if (sessionType === "quick-check") {
+    if (minNeuronCost !== undefined && neuronBalance < minNeuronCost) {
+      return { allowed: false, reason: "insufficient_neurons" };
+    }
+    return { allowed: true, requiresEagoh: false };
+  }
+
+  // Faction Network & My Rankings: view-only, no EAGOH required, tier-gated
+  if (sessionType === "faction-network" || sessionType === "my-rankings") {
+    if (tier === "free") {
+      return { allowed: false, reason: "tier_too_low" };
+    }
+    return { allowed: true, requiresEagoh: true };
+  }
+
+  // Advanced sessions: require forged EAGOH + correct tier
+  if (forgedEagohCount === 0) {
+    return { allowed: false, reason: "eagoh_required" };
+  }
+
+  if (tier === "free") {
+    return { allowed: false, reason: "tier_too_low" };
+  }
+
+  if (minNeuronCost !== undefined && neuronBalance < minNeuronCost) {
+    return { allowed: false, reason: "insufficient_neurons" };
+  }
+
+  return { allowed: true, requiresEagoh: true };
+}

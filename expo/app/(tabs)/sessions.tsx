@@ -11,7 +11,7 @@
  */
 
 import { palette } from "@/constants/colors";
-import { DEFAULT_EAGOH_IMAGE, DEFAULT_EAGOH_NAME, DEFAULT_EAGOH_DOMAIN_LABEL } from "@/constants/defaultEagoh";
+import { DEFAULT_EAGOH_IMAGE, DEFAULT_EAGOH_NAME, DEFAULT_EAGOH_DOMAIN_LABEL, QUICK_CHECK_FALLBACK_EAGOH } from "@/constants/defaultEagoh";
 import { useAppTheme } from "@/providers/ThemeProvider";
 import { useHaptics } from "@/hooks/useHaptics";
 import {
@@ -74,7 +74,7 @@ import { useAuth } from "@/providers/AuthProvider";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useEagohs } from "@/providers/EagohProvider";
-import { canUseSessionType } from "@/services/permissions";
+import { canUseSessionType, getSessionEligibility } from "@/services/permissions";
 import { INTELLIGENCE_DOMAINS, getDomainColor, normalizeDomainId } from "@/services/domains";
 import { guardDomainRequest } from "@/services/domainGuard";
 import { getQuickCheckCost, runQuickCheck, runQuickAnalytics, runStandardSession, runDeepDive, runPremiumEvent, getSessionCost, type AnalystSessionType, type AnalystRequestKind, type AnalystErrorCode } from "@/services/analyst";
@@ -333,18 +333,23 @@ function SessionSetup({
   const selectedEagoh = useMemo(() => eagohs.find((e) => e.id === selectedEagohId), [eagohs, selectedEagohId]);
   const { effectiveSubscriptionTier: userTier } = useProfile();
   const domain = useMemo(() => INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh?.domain), [selectedEagoh]);
+  const isQuickCheck = session.id === "quick-check";
+  // For Quick Check, skip domain guard when there's no real forged EAGOH
+  const isVirtualEagoh = !selectedEagoh && isQuickCheck;
 
   const cost = prompt.trim() ? getSessionCost(session.id as AnalystSessionType, prompt) : session.minCost;
   const { total: edgeTotal } = useEdge();
   const canAfford = edgeTotal >= cost;
-  const domainGuardResult = !prompt || !selectedEagoh?.domain ? null : guardDomainRequest(selectedEagoh.domain, prompt, true, selectedEagoh ? { id: selectedEagoh.id, name: selectedEagoh.name || "Unnamed" } : undefined);
+  const domainGuardResult = !prompt || !selectedEagoh?.domain || isVirtualEagoh ? null : guardDomainRequest(selectedEagoh.domain, prompt, true, selectedEagoh ? { id: selectedEagoh.id, name: selectedEagoh.name || "Unnamed" } : undefined);
   const isDomainMatch = !domainGuardResult || domainGuardResult.ok;
 
   const handleStart = useCallback((): void => {
-    if (!selectedEagohId || !prompt.trim()) return;
+    // Quick Check works without a forged EAGOH — use fallback ID
+    const eagohId = selectedEagohId || (isQuickCheck ? QUICK_CHECK_FALLBACK_EAGOH.id : "");
+    if (!eagohId || !prompt.trim()) return;
     h.selection();
-    onStart(selectedEagohId, prompt);
-  }, [selectedEagohId, prompt, onStart, h]);
+    onStart(eagohId, prompt);
+  }, [selectedEagohId, prompt, onStart, h, isQuickCheck]);
 
   return (
     <KeyboardAvoidingView
@@ -369,19 +374,25 @@ function SessionSetup({
         {/* EAGOH Hero Card */}
         <EagohHeroBanner
           mode="sessions"
-          domainId={selectedEagoh?.domain ?? null}
+          domainId={selectedEagoh?.domain ?? (isVirtualEagoh ? "general" : null)}
           domainTone={selectedEagoh ? (INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh.domain)?.tone ?? "cyan") : "cyan"}
-          imageUrl={selectedEagoh?.image_url ?? selectedEagoh?.image_thumb_url ?? null}
-          domainLabel={selectedEagoh ? (INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh.domain)?.label ?? selectedEagoh.domain ?? "No domain") : "Select EAGOH"}
+          imageUrl={selectedEagoh?.image_url ?? selectedEagoh?.image_thumb_url ?? (isVirtualEagoh ? DEFAULT_EAGOH_IMAGE : null)}
+          domainLabel={selectedEagoh ? (INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh.domain)?.label ?? selectedEagoh.domain ?? "No domain") : (isVirtualEagoh ? "General Intelligence" : "Select EAGOH")}
           topRightBadge={selectedEagoh ? {
             text: userTier !== "free" ? "SHELL ACTIVE" : "DORMANT",
             color: userTier !== "free" ? palette.success : palette.muted,
             backgroundColor: userTier !== "free" ? "rgba(0,255,178,0.12)" : "rgba(255,255,255,0.04)",
             borderColor: userTier !== "free" ? "rgba(0,255,178,0.4)" : palette.line,
             dotColor: userTier !== "free" ? palette.success : palette.muted,
-          } : undefined}
+          } : (isVirtualEagoh ? {
+            text: "QUICK CHECK READY",
+            color: palette.cyan,
+            backgroundColor: "rgba(108,230,255,0.10)",
+            borderColor: "rgba(108,230,255,0.35)",
+            dotColor: palette.cyan,
+          } : undefined)}
           bottomLabel="ACTIVE EAGOH"
-          bottomName={selectedEagoh?.name || "No EAGOH selected"}
+          bottomName={selectedEagoh?.name || (isVirtualEagoh ? "EAGOH" : "No EAGOH selected")}
           changeBtnText={eagohs.length > 1 ? "Change" : "Select"}
           onPress={onChangeEagoh}
         />
@@ -570,8 +581,9 @@ function AnalystChatThread({
     const title = generateThreadTitle(prompt);
     const eagohMeta = { id: currentEagoh.id, name: currentEagoh.name || "Unnamed", domain: currentEagoh.domain ?? "unknown" };
 
-    // 1. Domain guard
-    if (currentEagoh.domain) {
+    // 1. Domain guard (skip for virtual/default fallback EAGOH)
+    const isVirtualEagoh = (currentEagoh as Record<string, unknown>).is_virtual === true;
+    if (currentEagoh.domain && !isVirtualEagoh) {
       const domainCheck = guardDomainRequest(currentEagoh.domain, prompt, true, { id: currentEagoh.id, name: currentEagoh.name || "Unnamed" });
       if (!domainCheck.ok) {
         setMessages((prev) => [...prev, { id: `error-${Date.now()}`, sender: "analyst", text: domainCheck.rejectionMessage }]);
@@ -683,8 +695,9 @@ function AnalystChatThread({
     const eagohMeta = { id: eagoh.id, name: eagoh.name || "Unnamed", domain: eagoh.domain ?? "unknown" };
     const cost = getSessionCost(session.id as AnalystSessionType, text);
 
-    // Domain guard
-    if (eagoh.domain) {
+    // Domain guard (skip for virtual/default fallback EAGOH)
+    const isVirtualEagohForFollowup = (eagoh as Record<string, unknown>).is_virtual === true;
+    if (eagoh.domain && !isVirtualEagohForFollowup) {
       const domainCheck = guardDomainRequest(eagoh.domain, text, true, { id: eagoh.id, name: eagoh.name || "Unnamed" });
       if (!domainCheck.ok) {
         setMessages((prev) => [...prev, { id: `u-${Date.now()}`, sender: "user", text, cost }, { id: `domain-${Date.now()}`, sender: "analyst", text: domainCheck.rejectionMessage }]);
@@ -1893,24 +1906,31 @@ export default function SessionsScreen(): JSX.Element {
 
   const handleSessionPress = useCallback((session: SessionType): void => {
     h.selection();
-    if (eagohs.length === 0) {
-      if (userTier === "free") {
-        // Free users with no EAGOHs — they have a default shell, this shouldn't happen
-        Alert.alert("No EAGOH", "No EAGOH available. Your default shell is being provisioned.");
-        return;
-      }
-      Alert.alert("No EAGOH", "Forge an EAGOH first to run sessions.");
-      return;
-    }
-    if (!canUseSessionType(userTier, session.id as "quick-check" | "quick-analysis" | "standard" | "oracle" | "premium-event" | "open-intelligence" | "faction-network" | "my-rankings")) {
+
+    // Check tier permissions first
+    if (userTier === "free" && !canUseSessionType(userTier, session.id as "quick-check" | "quick-analysis" | "standard" | "oracle" | "premium-event" | "open-intelligence" | "faction-network" | "my-rankings")) {
       Alert.alert(
         "Upgrade Required",
-        `"${session.name}" requires a Pro subscription or higher. Quick Check is always available on the Free tier.`,
+        `"${session.name}" requires a paid plan. Quick Check is always available on the Free tier.`,
       );
       return;
     }
+
+    // Quick Check: does NOT require a forged EAGOH — uses virtual fallback
+    if (session.id === "quick-check") {
+      setActiveSession(session);
+      return;
+    }
+
+    // All other sessions require at least one user-forged EAGOH
+    const userForged = eagohs.filter((e) => !e.is_default_shell);
+    if (userForged.length === 0) {
+      Alert.alert("Forge Required", "Forge an EAGOH to unlock specialized sessions. Quick Check is available now.");
+      return;
+    }
+
     setActiveSession(session);
-  }, [eagohs.length, h, userTier]);
+  }, [eagohs, h, userTier]);
 
   const handleBack = useCallback((): void => {
     setActiveSession(null);
@@ -1971,13 +1991,30 @@ export default function SessionsScreen(): JSX.Element {
     setSelectedEagohId(id);
   }, []);
 
-  // Thread view
-  if (activeThreadSession && selectedEagoh) {
+  // Thread view — Quick Check works even without a forged EAGOH
+  if (activeThreadSession) {
+    const threadEagoh = selectedEagoh ?? (activeThreadSession.id === "quick-check" ? {
+      id: QUICK_CHECK_FALLBACK_EAGOH.id,
+      name: QUICK_CHECK_FALLBACK_EAGOH.name,
+      domain: QUICK_CHECK_FALLBACK_EAGOH.domain,
+      image_url: QUICK_CHECK_FALLBACK_EAGOH.image_url,
+      image_thumb_url: QUICK_CHECK_FALLBACK_EAGOH.image_thumb_url,
+      is_default_shell: true,
+      is_virtual: true,
+    } as unknown as EagohRecord : null);
+
+    if (!threadEagoh) {
+      // Non-Quick Check session without an EAGOH — shouldn't happen, but guard it
+      Alert.alert("No EAGOH", "A forged EAGOH is required for this session type.");
+      handleDone();
+      return <SafeAreaView style={styles.safe} edges={["top"]} />;
+    }
+
     return (
       <SafeAreaView style={styles.safe} edges={["top"]}>
         <AnalystChatThread
           threadId={activeThreadId ?? undefined}
-          eagoh={selectedEagoh}
+          eagoh={threadEagoh}
           session={activeThreadSession}
           initialPrompt={activeThreadId ? undefined : activeThreadInitialPrompt}
           onDone={handleDone}
@@ -2074,29 +2111,42 @@ export default function SessionsScreen(): JSX.Element {
           {/* Header */}
           <EagohPageHeader kicker="INTELLIGENCE SESSIONS" title="Run your EAGOH">
             {eagohs.length === 0 ? (
-              <View style={styles.emptyBanner}>
-                <Sparkles color={palette.gold} size={14} />
-                <Text style={styles.emptyText}>Forge an EAGOH first to run sessions.</Text>
-              </View>
+              userTier === "free" ? (
+                <View style={[styles.emptyBanner, { backgroundColor: "rgba(108,230,255,0.08)", borderColor: "rgba(108,230,255,0.25)" }]}>
+                  <Zap color={palette.cyan} size={14} />
+                  <Text style={[styles.emptyText, { color: palette.cyan }]}>Quick Check is ready. Use your default intelligence shell for fast general analysis.</Text>
+                </View>
+              ) : (
+                <View style={styles.emptyBanner}>
+                  <Sparkles color={palette.gold} size={14} />
+                  <Text style={styles.emptyText}>Quick Check is ready. Forge an EAGOH to unlock specialized sessions.</Text>
+                </View>
+              )
             ) : null}
           </EagohPageHeader>
 
           {/* Selected EAGOH card */}
           <EagohHeroBanner
             mode="sessions"
-            domainId={selectedEagoh?.domain ?? null}
+            domainId={selectedEagoh?.domain ?? (eagohs.length === 0 ? "general" : null)}
             domainTone={selectedEagoh ? (INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh.domain)?.tone ?? "cyan") : "cyan"}
-            imageUrl={selectedEagoh?.image_url ?? selectedEagoh?.image_thumb_url ?? null}
-            domainLabel={selectedEagoh ? (INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh.domain)?.label ?? selectedEagoh.domain ?? "No domain") : "Select EAGOH"}
+            imageUrl={selectedEagoh?.image_url ?? selectedEagoh?.image_thumb_url ?? (eagohs.length === 0 ? DEFAULT_EAGOH_IMAGE : null)}
+            domainLabel={selectedEagoh ? (INTELLIGENCE_DOMAINS.find((d) => d.id === selectedEagoh.domain)?.label ?? selectedEagoh.domain ?? "No domain") : (eagohs.length === 0 ? "General Intelligence" : "Select EAGOH")}
             topRightBadge={selectedEagoh ? {
               text: userTier !== "free" ? "SHELL ACTIVE" : "DORMANT",
               color: userTier !== "free" ? palette.success : palette.muted,
               backgroundColor: userTier !== "free" ? "rgba(0,255,178,0.12)" : "rgba(255,255,255,0.04)",
               borderColor: userTier !== "free" ? "rgba(0,255,178,0.4)" : palette.line,
               dotColor: userTier !== "free" ? palette.success : palette.muted,
-            } : undefined}
+            } : (eagohs.length === 0 ? {
+              text: "QUICK CHECK READY",
+              color: palette.cyan,
+              backgroundColor: "rgba(108,230,255,0.10)",
+              borderColor: "rgba(108,230,255,0.35)",
+              dotColor: palette.cyan,
+            } : undefined)}
             bottomLabel="ACTIVE EAGOH"
-            bottomName={selectedEagoh?.name || "No EAGOH selected"}
+            bottomName={selectedEagoh?.name ?? (eagohs.length === 0 ? DEFAULT_EAGOH_NAME : "No EAGOH selected")}
             changeBtnText={eagohs.length > 1 ? "Change" : "Select"}
             onPress={() => setShowPicker(true)}
           />

@@ -16,3 +16,18 @@ export const DEFAULT_EAGOH_NAME = "EAGOH";
 /** Neutral domain label used by the default shell for Quick Check. */
 export const DEFAULT_EAGOH_DOMAIN = "general";
 export const DEFAULT_EAGOH_DOMAIN_LABEL = "General Intelligence";
+
+/**
+ * Virtual fallback EAGOH used for Quick Check when the user has no forged EAGOH.
+ * This is never persisted — it lives only in memory so Quick Check works
+ * without requiring a Supabase EAGOH row.
+ */
+export const QUICK_CHECK_FALLBACK_EAGOH = {
+  id: "quick-check-default",
+  name: DEFAULT_EAGOH_NAME,
+  domain: DEFAULT_EAGOH_DOMAIN,
+  image_url: DEFAULT_EAGOH_IMAGE,
+  image_thumb_url: DEFAULT_EAGOH_IMAGE,
+  is_default_shell: true,
+  is_virtual: true,
+} as const;

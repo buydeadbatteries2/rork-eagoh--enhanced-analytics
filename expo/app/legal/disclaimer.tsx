@@ -1,5 +1,5 @@
 import { palette } from "@/constants/colors";
-import { useRouter } from "expo-router";
+import { useSafeBack } from "@/hooks/useSafeBack";
 import { AlertTriangle, ArrowLeft } from "lucide-react-native";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -46,13 +46,13 @@ const DISCLAIMER_SECTIONS: { title: string; body: string }[] = [
 ];
 
 export default function DisclaimerScreen(): JSX.Element {
-  const router = useRouter();
+  const safeBack = useSafeBack();
 
   return (
     <SafeAreaView edges={["top"]} style={styles.safe}>
       <View style={styles.header}>
         <Pressable
-          onPress={() => { router.back(); }}
+          onPress={() => { safeBack(); }}
           style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.6 }]}
         >
           <ArrowLeft color={palette.text} size={20} />

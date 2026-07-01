@@ -18,6 +18,7 @@ import { NEURON_PRODUCT_AMOUNTS } from "@/services/revenuecat";
 import { EDGE_PACKS, type EdgePack, isMockPurchaseAllowed, recordNeuronPurchaseOnce } from "@/services/edgeStore";
 import { canPurchaseNeuronPacks } from "@/services/permissions";
 import { LinearGradient } from "expo-linear-gradient";
+import { useSafeBack } from "@/hooks/useSafeBack";
 import { useRouter } from "expo-router";
 import {
   AlertTriangle,
@@ -479,10 +480,12 @@ export default function EdgeStoreScreen(): JSX.Element {
     return { displayPacks: fallback, usingFallbackPacks: true };
   }, [rcNeuronPackages, rcConfigured]);
 
+  const safeBack = useSafeBack();
+
   const handleBack = useCallback((): void => {
     h.selection();
-    router.back();
-  }, [router, h]);
+    safeBack();
+  }, [safeBack, h]);
 
   const handleSelectPack = useCallback(
     (edgePack: EdgePack, rcPkg: PurchasesPackage | null): void => {

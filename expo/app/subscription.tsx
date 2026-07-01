@@ -27,6 +27,7 @@ import {
 } from "@/services/tiers";
 import { getOfferings as getRcOfferings } from "@/services/revenuecat";
 import { LinearGradient } from "expo-linear-gradient";
+import { useSafeBack } from "@/hooks/useSafeBack";
 import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
@@ -480,10 +481,12 @@ export default function SubscriptionScreen(): JSX.Element {
     return map;
   }, [rcSubPkgs]);
 
+  const safeBack = useSafeBack();
+
   const handleBack = useCallback((): void => {
     h.selection();
-    router.back();
-  }, [router, h]);
+    safeBack();
+  }, [safeBack, h]);
 
   /** True while offerings or customer info are still being fetched from RevenueCat. */
   const stillLoading: boolean = isOfferingsLoading || isCustomerInfoLoading;

@@ -5,6 +5,7 @@ import { useProfile } from "@/providers/ProfileProvider";
 import { useHaptics } from "@/hooks/useHaptics";
 import { useQueryClient } from "@tanstack/react-query";
 import Constants from "expo-constants";
+import { useSafeBack } from "@/hooks/useSafeBack";
 import { useRouter } from "expo-router";
 import {
   AlertTriangle,
@@ -949,6 +950,7 @@ const AdminOverrideRow = memo(function AdminOverrideRow({
 
 export default function SettingsScreen(): JSX.Element {
   const router = useRouter();
+  const safeBack = useSafeBack();
   const { user, signOutState, resetPassword, resetPasswordState } = useAuth();
   const {
     profile,
@@ -1558,7 +1560,7 @@ export default function SettingsScreen(): JSX.Element {
     <SafeAreaView edges={["top"]} style={s.safe}>
       <View style={s.header}>
         <Pressable
-          onPress={() => { router.back(); }}
+          onPress={() => { safeBack(); }}
           style={({ pressed }) => [s.backBtn, pressed && { opacity: 0.6 }]}
         >
           <ArrowLeft color={pal.text} size={20} />

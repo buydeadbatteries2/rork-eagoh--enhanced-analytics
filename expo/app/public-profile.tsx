@@ -36,7 +36,8 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useSafeBack } from "@/hooks/useSafeBack";
+import { useLocalSearchParams } from "expo-router";
 import { supabase } from "@/lib/supabase";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import { getKnowledgeCredentials, type KnowledgeCredentialsRow } from "@/services/knowledgeCredentials";
@@ -352,7 +353,7 @@ const SectionHeader = memo(function SectionHeader({
 // ── Main screen ────────────────────────────────────────────────────────────
 
 export default function PublicProfileScreen(): JSX.Element {
-  const router = useRouter();
+  const safeBack = useSafeBack();
   const { userId: routeUserId } = useLocalSearchParams<{ userId: string }>();
   const pal = palette;
   const s = useMemo(() => createStyles(pal), [pal]);
@@ -499,7 +500,7 @@ export default function PublicProfileScreen(): JSX.Element {
             </LinearGradient>
           )}
           <Pressable
-            onPress={() => { router.back(); }}
+            onPress={() => { safeBack(); }}
             style={({ pressed }) => [s.backBtn, pressed && { opacity: 0.6 }]}
           >
             <ArrowLeft color={pal.text} size={20} />

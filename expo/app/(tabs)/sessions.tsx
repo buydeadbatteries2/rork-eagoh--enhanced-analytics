@@ -77,7 +77,7 @@ import { useEagohs } from "@/providers/EagohProvider";
 import { canUseSessionType, getSessionEligibility } from "@/services/permissions";
 import { INTELLIGENCE_DOMAINS, getDomainColor, normalizeDomainId } from "@/services/domains";
 import { guardDomainRequest } from "@/services/domainGuard";
-import { getQuickCheckCost, runQuickCheck, runQuickAnalytics, runStandardSession, runDeepDive, runPremiumEvent, getSessionCost, type AnalystSessionType, type AnalystRequestKind, type AnalystErrorCode, type ConversationMessage, type Grounding, type Source } from "@/services/analyst";
+import { getQuickCheckCost, runQuickCheck, runQuickAnalytics, runStandardSession, runDeepDive, runPremiumEvent, getSessionCost, type AnalystSessionType, type AnalystRequestKind, type AnalystErrorCode, type ConversationMessage, type PersonalGrounding } from "@/services/analyst";
 import {
   createThread,
   addMessage,
@@ -158,7 +158,7 @@ const sessionTypes: SessionType[] = [
   { id: "my-rankings", name: "My Rankings", description: "Leaderboard positions & badges", costRange: "Free", minCost: 0, maxCost: 0, model: "Rankings View", duration: "Live", tone: "gold", active: true },
 ];
 
-type ChatMessage = { id: string; sender: "user" | "analyst"; text: string; confidence?: number; cost?: number; grounding?: Grounding; sources?: Source[] };
+type ChatMessage = { id: string; sender: "user" | "analyst"; text: string; confidence?: number; cost?: number; grounding?: PersonalGrounding };
 
 function toneColor(tone: SessionTone): string {
   if (tone === "gold") return palette.gold;
@@ -664,7 +664,7 @@ function AnalystChatThread({
 
         setMessages([
           { id: userMsg.id, sender: "user", text: prompt, cost },
-          { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding, sources: result.sources },
+          { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding },
         ]);
       } catch (dbErr: unknown) {
         const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
@@ -774,13 +774,13 @@ function AnalystChatThread({
       setMessages((prev) => [
         ...prev,
         { id: userMsg.id, sender: "user", text, cost },
-        { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding, sources: result.sources },
+        { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding },
       ]);
     } catch {
       setMessages((prev) => [
         ...prev,
         { id: `u-${Date.now()}`, sender: "user", text, cost },
-        { id: `a-${Date.now()}`, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding, sources: result.sources },
+        { id: `a-${Date.now()}`, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding },
       ]);
       setError("Could not save to history.");
     }
@@ -895,58 +895,43 @@ function AnalystChatThread({
             <Text style={msg.sender === "analyst" ? styles.msgAnalystText : styles.msgUserText}>{msg.text}</Text>
             {msg.confidence ? <Text style={styles.msgMeta}>Confidence {msg.confidence}%</Text> : null}
             {msg.cost ? <Text style={styles.msgCost}>{msg.cost} Neurons</Text> : null}
-            {/* Grounding display for analyst messages */}
+            {/* Personal Intelligence grounding display for analyst messages */}
             {msg.sender === "analyst" && msg.grounding ? (
               <View style={styles.groundingWrap}>
                 <View style={styles.groundingDivider} />
                 <View style={styles.groundingRow}>
-                  <Globe color={palette.muted} size={11} />
-                  <Text style={styles.groundingTitle}>Intelligence Sources</Text>
+                  <BrainCircuit color={palette.cyan} size={11} />
+                  <Text style={styles.groundingTitle}>Personal Intelligence</Text>
                 </View>
                 <View style={styles.groundingItems}>
-                  {msg.grounding.openIntelligenceUsed ? (
+                  {msg.grounding.personalOpenIntelligenceUsed ? (
                     <View style={styles.groundingItem}>
-                      <BrainCircuit color={palette.cyan} size={10} />
+                      <Check color={palette.success} size={10} />
                       <Text style={styles.groundingItemText}>
-                        Open Intelligence: {msg.grounding.openIntelligenceCount} entr{msg.grounding.openIntelligenceCount === 1 ? 'y' : 'ies'} used
+                        {msg.grounding.personalOpenIntelligenceCount} entr{msg.grounding.personalOpenIntelligenceCount === 1 ? 'y' : 'ies'} used
                       </Text>
                     </View>
-                  ) : null}
-                  {msg.grounding.externalSearchUsed ? (
+                  ) : msg.grounding.personalOpenIntelligenceCount === 0 ? (
                     <View style={styles.groundingItem}>
-                      <Search color={palette.gold} size={10} />
-                      <Text style={styles.groundingItemText}>
-                        Current Research: {msg.grounding.sourceCount} source{msg.grounding.sourceCount !== 1 ? 's' : ''} used
-                      </Text>
+                      <Search color={palette.muted} size={10} />
+                      <Text style={styles.groundingItemText}>No relevant entries found</Text>
                     </View>
                   ) : null}
-                  {!msg.grounding.openIntelligenceUsed && !msg.grounding.externalSearchUsed ? (
-                    <View style={styles.groundingItem}>
-                      <Cpu color={palette.muted} size={10} />
-                      <Text style={styles.groundingItemText}>Trained knowledge only</Text>
-                    </View>
-                  ) : null}
+                </View>
+              </View>
+            ) : msg.sender === "analyst" ? (
+              <View style={styles.groundingWrap}>
+                <View style={styles.groundingDivider} />
+                <View style={styles.groundingRow}>
+                  <BrainCircuit color={palette.muted} size={11} />
+                  <Text style={styles.groundingTitle}>Personal Intelligence</Text>
+                </View>
+                <View style={styles.groundingItems}>
                   <View style={styles.groundingItem}>
-                    <MessageSquare color={palette.muted} size={10} />
-                    <Text style={styles.groundingItemText}>Conversation Context: included</Text>
+                    <Cpu color={palette.muted} size={10} />
+                    <Text style={styles.groundingItemText}>Not available for the default shell</Text>
                   </View>
                 </View>
-                {/* External sources expandable list */}
-                {msg.sources && msg.sources.length > 0 ? (
-                  <View style={styles.sourcesWrap}>
-                    {msg.sources.map((src, i) => (
-                      <View key={i} style={styles.sourceRow}>
-                        <Text style={styles.sourceIndex}>{i + 1}.</Text>
-                        <View style={styles.sourceInfo}>
-                          <Text style={styles.sourceTitle} numberOfLines={1}>{src.title}</Text>
-                          {src.publisher ? (
-                            <Text style={styles.sourcePublisher} numberOfLines={1}>{src.publisher}{src.publishedAt ? ` · ${src.publishedAt}` : ''}</Text>
-                          ) : null}
-                        </View>
-                      </View>
-                    ))}
-                  </View>
-                ) : null}
               </View>
             ) : null}
           </View>

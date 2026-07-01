@@ -48,18 +48,9 @@ export type ConversationMessage = {
   content: string;
 };
 
-export type Source = {
-  title: string;
-  publisher?: string;
-  url?: string;
-  publishedAt?: string;
-};
-
-export type Grounding = {
-  openIntelligenceUsed: boolean;
-  openIntelligenceCount: number;
-  externalSearchUsed: boolean;
-  sourceCount: number;
+export type PersonalGrounding = {
+  personalOpenIntelligenceUsed: boolean;
+  personalOpenIntelligenceCount: number;
 };
 
 export type AnalystCallInput = {
@@ -79,8 +70,7 @@ export type AnalystCallResult = {
   model: string;
   sessionType: AnalystSessionType;
   confidence: number;
-  grounding: Grounding;
-  sources?: Source[];
+  grounding: PersonalGrounding;
 };
 
 /** Specific error codes returned by the Cloudflare worker. */
@@ -417,8 +407,7 @@ async function callAnalyst(
     model?: string;
     sessionType?: AnalystSessionType;
     confidence?: number;
-    grounding?: Grounding;
-    sources?: Source[];
+    grounding?: PersonalGrounding;
     error?: string;
     errorCode?: string;
   };
@@ -446,7 +435,7 @@ async function callAnalyst(
     hasReply: !!data.reply,
     model: data.model ?? "unknown",
     grounding: data.grounding
-      ? `OI:${data.grounding.openIntelligenceCount}/search:${data.grounding.externalSearchUsed}/src:${data.grounding.sourceCount}`
+      ? `personalOI:${data.grounding.personalOpenIntelligenceCount}`
       : "none",
   });
 
@@ -480,12 +469,9 @@ async function callAnalyst(
     sessionType: input.sessionType,
     confidence: data.confidence ?? budget.baseConfidence,
     grounding: data.grounding ?? {
-      openIntelligenceUsed: false,
-      openIntelligenceCount: 0,
-      externalSearchUsed: false,
-      sourceCount: 0,
+      personalOpenIntelligenceUsed: false,
+      personalOpenIntelligenceCount: 0,
     },
-    sources: data.sources,
   };
 }
 

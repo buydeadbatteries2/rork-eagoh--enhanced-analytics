@@ -6,15 +6,17 @@
  * Every analyst session (Quick Check, Quick Analysis, Standard Analysis,
  * Oracle Deep Dive, Premium Event) routes through this worker.
  *
- * The worker:
+ * Phase 1 — Personal Open Intelligence grounding:
  *   1. Authenticates the user via Supabase JWT
  *   2. Verifies EAGOH ownership
  *   3. Retrieves & ranks relevant private Open Intelligence
- *   4. Optionally fetches current external search data
- *   5. Builds a structured, source-labeled prompt
- *   6. Calls OpenAI and returns the grounded response
+ *   4. Builds a structured, source-labeled prompt
+ *   5. Calls OpenAI and returns the grounded response
  *
  * No API keys, private OI content, or service-role tokens ever reach the client.
+ *   - External web search is deferred to a later phase.
+ *   - Faction and Exchange intelligence are deferred to later phases.
+ *   - The worker does NOT fabricate web search results or citations.
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
@@ -49,18 +51,9 @@ type AnalystRequest = {
   conversationContext?: ConversationMessage[];
 };
 
-type Source = {
-  title: string;
-  publisher?: string;
-  url?: string;
-  publishedAt?: string;
-};
-
-type Grounding = {
-  openIntelligenceUsed: boolean;
-  openIntelligenceCount: number;
-  externalSearchUsed: boolean;
-  sourceCount: number;
+type PersonalGrounding = {
+  personalOpenIntelligenceUsed: boolean;
+  personalOpenIntelligenceCount: number;
 };
 
 type AnalystResponse =
@@ -70,8 +63,7 @@ type AnalystResponse =
       model: string;
       sessionType: SessionType;
       confidence: number;
-      grounding: Grounding;
-      sources?: Source[];
+      grounding: PersonalGrounding;
     }
   | {
       ok: false;
@@ -171,7 +163,7 @@ async function verifyEagohOwnership(
  * Retrieve Open Intelligence entries for an EAGOH owned by the user.
  * Only returns entries that are not deleted/archived and have valid status.
  */
-async function retrieveOpenIntelligence(
+async function retrievePersonalOpenIntelligence(
   supabase: SupabaseClient,
   userId: string,
   eagohId: string,
@@ -328,7 +320,7 @@ function sessionOILimit(sessionType: SessionType): number {
     case "quick-analytics": return 6;
     case "standard": return 10;
     case "oracle": return 16;
-    case "premium-event": return 8;
+    case "premium-event": return 10;
   }
 }
 
@@ -387,143 +379,12 @@ Created: ${date}
 Content: ${content}`;
   });
 
-  const text = `OPEN INTELLIGENCE — USER-PROVIDED (${entries.length} entries)
-Open Intelligence is private, user-provided knowledge. Treat it as potentially valuable but not automatically verified. Consider confidence, quality, validation status, recency, and potential conflicts with current external sources.
+  const text = `PERSONAL OPEN INTELLIGENCE — USER PROVIDED (${entries.length} entries)
+Personal Open Intelligence is private, user-provided knowledge. Treat it as potentially valuable real-world experience, but not automatically verified fact. Consider relevance, confidence, validation status, quality, and recency.
 
 ${blocks.join("\n\n")}`;
 
   return { text, count: entries.length };
-}
-
-// ── External Search ──────────────────────────────────────────────────────────
-
-/**
- * Determine whether external/current search is likely beneficial for this query.
- * Uses keyword-based freshness detection.
- */
-function shouldUseExternalSearch(prompt: string, sessionType: SessionType): boolean {
-  const lower = prompt.toLowerCase();
-
-  // Freshness-triggering keywords
-  const freshnessKeywords = [
-    "score", "scores", "result", "results", "tonight", "today", "yesterday",
-    "this week", "this month", "upcoming", "next game", "next match",
-    "injury", "injured", "roster", "roster move", "trade", "traded",
-    "current", "latest", "recent", "recently", "just announced",
-    "breaking", "update", "updated", "live", "now", "happening",
-    "schedule", "scheduled", "lineup", "starting", "bench",
-    "odds", "betting", "spread", "over/under",
-    "release date", "premiere", "box office", "ratings",
-    "stock", "market", "price", "earnings", "quarterly",
-    "regulation", "policy", "law", "bill", "vote",
-  ];
-
-  const hasFreshnessKeyword = freshnessKeywords.some((kw) => lower.includes(kw));
-
-  // Oracle and Premium Event always use search for deeper coverage
-  if (sessionType === "oracle" || sessionType === "premium-event") return true;
-
-  // Quick Check only uses search when explicitly freshness-sensitive
-  if (sessionType === "quick-check") return hasFreshnessKeyword;
-
-  // Quick Analysis and Standard use search when freshness keywords are present
-  return hasFreshnessKeyword;
-}
-
-/**
- * Perform external web search via a lightweight approach.
- *
- * Current implementation: uses OpenAI's model with explicit web-search-aware
- * system instructions. In a future iteration this can be swapped for a
- * dedicated search API (Brave, Exa, Perplexity).
- *
- * Returns an array of sources (if available) and search result text.
- */
-async function performExternalSearch(
-  prompt: string,
-  sessionType: SessionType,
-  openaiApiKey: string,
-): Promise<{ text: string; sources: Source[]; used: boolean }> {
-  if (!shouldUseExternalSearch(prompt, sessionType)) {
-    return { text: "", sources: [], used: false };
-  }
-
-  try {
-    // Use OpenAI with web-search-aware instructions for current data
-    const searchPrompt = `Search the web for current, factual information about the following query. 
-Return only verified facts with clear source attribution. If you cannot find current information, 
-state that clearly rather than fabricating details.
-
-Query: ${prompt.slice(0, 400)}
-
-Format your response as:
-FINDINGS:
-<concise factual summary, 2-4 sentences>
-
-SOURCES:
-- Title: <source title> | Publisher: <publisher name> | URL: <source url> | Date: <publication date>`;
-
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${openaiApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are a research assistant. Provide current, factual information with source attribution. Never fabricate sources, URLs, or data. If you don't have current data, say so clearly.",
-          },
-          { role: "user", content: searchPrompt },
-        ],
-        temperature: 0.3,
-        max_tokens: 500,
-      }),
-    });
-
-    if (!res.ok) {
-      console.warn("[analyst] external search failed", res.status);
-      return { text: "", sources: [], used: false };
-    }
-
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = data.choices?.[0]?.message?.content?.trim();
-
-    if (!content) {
-      return { text: "", sources: [], used: false };
-    }
-
-    // Parse sources from the response
-    const sources: Source[] = [];
-    const sourceRegex = /Title:\s*(.+?)\s*\|\s*Publisher:\s*(.+?)\s*\|\s*URL:\s*(.+?)\s*\|\s*Date:\s*(.+?)$/gm;
-    let match;
-    while ((match = sourceRegex.exec(content)) !== null) {
-      sources.push({
-        title: match[1].trim(),
-        publisher: match[2].trim() || undefined,
-        url: match[3].trim() || undefined,
-        publishedAt: match[4].trim() || undefined,
-      });
-    }
-
-    // Extract findings text (everything before SOURCES:)
-    const findingsMatch = content.match(/FINDINGS:\s*([\s\S]*?)(?:SOURCES:|$)/i);
-    const findings = findingsMatch?.[1]?.trim() ?? "";
-
-    return {
-      text: findings,
-      sources,
-      used: sources.length > 0 || findings.length > 0,
-    };
-  } catch (err) {
-    console.warn("[analyst] external search exception", err instanceof Error ? err.message : "unknown");
-    return { text: "", sources: [], used: false };
-  }
 }
 
 // ── Prompt Building ──────────────────────────────────────────────────────────
@@ -533,13 +394,13 @@ function getSessionInstruction(sessionType: SessionType): string {
     case "oracle":
       return "Deliver a deep tactical read with emotionally aware risk framing. Explore multiple scenarios, address counterarguments, and quantify uncertainty where appropriate. Keep it concise yet premium.";
     case "quick-analytics":
-      return "Deliver a short tactical analytics read with clear confidence language. Compare against available Open Intelligence where relevant.";
+      return "Deliver a short tactical analytics read with clear confidence language. Compare against available Personal Open Intelligence where relevant.";
     case "quick-check":
       return "Deliver a fast, direct signal check in three sentences or fewer. No preamble. No filler. Surface the highest-confidence read.";
     case "premium-event":
-      return "Deliver an event-focused intelligence breakdown. Analyze timing, matchups, narratives, and critical moments. Emphasize source freshness.";
+      return "Deliver an event-focused intelligence breakdown. Analyze timing, matchups, narratives, and critical moments.";
     default:
-      return "Deliver a balanced EAGOH analyst response with tactical intelligence, emotional awareness, and confidence caveats. Explicitly handle any conflicts between user-provided intelligence and external sources.";
+      return "Deliver a balanced EAGOH analyst response with tactical intelligence, emotional awareness, and confidence caveats. When Personal Open Intelligence is provided, integrate it thoughtfully without treating it as verified fact.";
   }
 }
 
@@ -571,8 +432,6 @@ function buildSystemPrompt(params: {
   kind: string;
   eagohMeta?: { name: string; domain: string } | null;
   oiContext: string;
-  externalContext: string;
-  externalSearchUsed: boolean;
 }): string {
   const sections: string[] = [];
 
@@ -580,6 +439,8 @@ function buildSystemPrompt(params: {
   sections.push(
     "You are the EAGOH Analyst: intelligent, emotionally aware, tactical, premium, and futuristic.",
     "Do not claim certainty. Do not mention internal implementation, tools, or knowledge cutoff dates.",
+    "Do not fabricate web search results, URLs, citations, or pretend to have searched the internet.",
+    "Only use the Personal Open Intelligence provided below (when present) alongside your trained knowledge.",
   );
 
   // 2. Session depth and response format
@@ -605,13 +466,20 @@ function buildSystemPrompt(params: {
   }
 
   // 4. Source handling instructions
-  sections.push(
-    "SOURCE HANDLING:",
-    "- When Open Intelligence is provided below, treat it as private user knowledge — potentially valuable but not automatically verified.",
-    "- When external research is provided, distinguish it from user-provided intelligence.",
-    "- If Open Intelligence conflicts with external sources, identify the conflict explicitly: 'Your Open Intelligence suggests X, while current external sources indicate Y.'",
-    "- Never silently discard the user's observations. Preserve them as a perspective even when contradicted.",
-  );
+  if (params.oiContext) {
+    sections.push(
+      "SOURCE HANDLING:",
+      "- Personal Open Intelligence is provided below. Treat it as private user knowledge — potentially valuable but not automatically verified.",
+      "- Conflicting signals between your trained knowledge and the user's Personal Open Intelligence should be surfaced explicitly: 'Your Personal Intelligence suggests X, while general knowledge indicates Y.'",
+      "- Never silently discard the user's observations. Preserve them as a perspective.",
+    );
+  } else {
+    sections.push(
+      "SOURCE HANDLING:",
+      "- No personal intelligence was found for this query. Base your response on trained knowledge and conversation context.",
+      "- Do not claim or imply that personal intelligence was used.",
+    );
+  }
 
   return sections.join("\n\n");
 }
@@ -622,27 +490,14 @@ function buildSystemPrompt(params: {
 function buildMessages(params: {
   systemPrompt: string;
   oiContext: string;
-  externalContext: string;
-  externalSearchUsed: boolean;
   conversationContext: ConversationMessage[];
   prompt: string;
 }): Array<{ role: "system" | "user" | "assistant"; content: string }> {
   const systemParts = [params.systemPrompt];
 
-  // Add OI context
+  // Add OI context as a clearly labeled section
   if (params.oiContext) {
     systemParts.push(params.oiContext);
-  }
-
-  // Add external research
-  if (params.externalSearchUsed && params.externalContext) {
-    systemParts.push(
-      `CURRENT EXTERNAL RESEARCH:\n${params.externalContext}\n\nNote: The above is current external research data. Distinguish this from user-provided Open Intelligence below, if present.`,
-    );
-  } else if (!params.externalSearchUsed && params.oiContext) {
-    systemParts.push(
-      "NOTE: Current external research was not used for this response. The analysis is based on the EAGOH's trained knowledge and user-provided Open Intelligence only.",
-    );
   }
 
   const systemContent = systemParts.join("\n\n---\n\n");
@@ -651,9 +506,9 @@ function buildMessages(params: {
     { role: "system", content: systemContent },
   ];
 
-  // Conversation context (limited to last 10 exchanges, role-aware)
+  // Conversation context (limited to last 10 exchanges = 20 messages)
   if (params.conversationContext.length > 0) {
-    const recent = params.conversationContext.slice(-20); // last 10 exchanges = 20 messages
+    const recent = params.conversationContext.slice(-20);
     for (const msg of recent) {
       messages.push({
         role: msg.role === "user" ? "user" : "assistant",
@@ -742,9 +597,8 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
     hasConversationContext: (payload.conversationContext?.length ?? 0) > 0,
   });
 
-  // ── EAGOH ownership verification ─────────────────────────────────────────
+  // ── EAGOH ownership verification & Personal OI retrieval ──────────────────
   let eagohMeta: { name: string; domain: string } | null = null;
-  let oiEntries: OpenIntelligenceRow[] = [];
   let oiContext = "";
   let oiCount = 0;
 
@@ -762,25 +616,29 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
       domain: eagoh.domain ?? "general",
     };
 
-    // Retrieve & rank OI entries
-    const rawEntries = await retrieveOpenIntelligence(supabase, userId, payload.eagohId, 50);
+    // Retrieve & rank personal OI entries
+    const rawEntries = await retrievePersonalOpenIntelligence(supabase, userId, payload.eagohId, 50);
     const limit = sessionOILimit(sessionType);
     const tokenBudget = sessionOITokenBudget(sessionType);
 
     if (rawEntries.length > 0) {
       const ranked = rankEntries(rawEntries, prompt, Math.min(limit, rawEntries.length));
       const formatted = formatOIContext(ranked, tokenBudget);
-      oiEntries = ranked;
       oiContext = formatted.text;
       oiCount = formatted.count;
-    }
-  }
 
-  // ── External search ──────────────────────────────────────────────────────
-  const searchResult = await performExternalSearch(prompt, sessionType, env.OPENAI_API_KEY);
-  const externalContext = searchResult.text;
-  const externalSearchUsed = searchResult.used;
-  const sources = searchResult.sources;
+      console.log("[analyst] OI retrieval", {
+        totalEntries: rawEntries.length,
+        rankedCount: ranked.length,
+        selectedCount: oiCount,
+        sessionType,
+      });
+    } else {
+      console.log("[analyst] OI retrieval: no entries found for this EAGOH");
+    }
+  } else {
+    console.log("[analyst] virtual Quick Check — skipping personal OI retrieval");
+  }
 
   // ── Build prompt ─────────────────────────────────────────────────────────
   const systemPrompt = buildSystemPrompt({
@@ -789,15 +647,11 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
     kind,
     eagohMeta,
     oiContext,
-    externalContext,
-    externalSearchUsed,
   });
 
   const messages = buildMessages({
     systemPrompt,
-    oiContext, // already included in systemPrompt above — don't duplicate
-    externalContext: "", // already included in systemPrompt
-    externalSearchUsed,
+    oiContext,
     conversationContext: payload.conversationContext ?? [],
     prompt: safePrompt,
   });
@@ -870,19 +724,16 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
         "premium-event": 90,
       };
 
-      const grounding: Grounding = {
-        openIntelligenceUsed: oiCount > 0,
-        openIntelligenceCount: oiCount,
-        externalSearchUsed,
-        sourceCount: sources.length,
+      const grounding: PersonalGrounding = {
+        personalOpenIntelligenceUsed: oiCount > 0,
+        personalOpenIntelligenceCount: oiCount,
       };
 
       console.log("[analyst] success", {
         replyLen: reply.length,
-        oiUsed: grounding.openIntelligenceUsed,
-        oiCount: grounding.openIntelligenceCount,
-        externalSearchUsed: grounding.externalSearchUsed,
-        sourceCount: grounding.sourceCount,
+        personalOIUsed: grounding.personalOpenIntelligenceUsed,
+        personalOICount: grounding.personalOpenIntelligenceCount,
+        hasEagoh: !!payload.eagohId,
       });
 
       return jsonResponse({
@@ -892,7 +743,6 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
         sessionType,
         confidence: confidenceMap[sessionType],
         grounding,
-        sources: sources.length > 0 ? sources : undefined,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";

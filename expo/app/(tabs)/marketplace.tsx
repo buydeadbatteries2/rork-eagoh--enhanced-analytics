@@ -1152,7 +1152,17 @@ function EditListingModal({
     }
   }, [listing?.id]);
 
-  const handleUpdate = async () => {
+  useEffect(() => {
+    if (!visible) return;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      Keyboard.dismiss();
+      onClose();
+      return true;
+    });
+    return () => sub.remove();
+  }, [visible, onClose]);
+
+  const handleUpdate = useCallback(async () => {
     Keyboard.dismiss();
     if (!listing?.id) return;
     try {
@@ -1168,21 +1178,12 @@ function EditListingModal({
     } catch (err: unknown) {
       Alert.alert("Error", (err as Error).message ?? "Failed to update listing.");
     }
-  };
+  }, [listing?.id, price25, price50, price75, price100, h, onUpdated, onClose]);
 
+  // All early returns must come AFTER all hooks
   if (!listing) return <></>;
 
   const eagoh = listing.eagoh;
-
-  useEffect(() => {
-    if (!visible) return;
-    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
-      Keyboard.dismiss();
-      onClose();
-      return true;
-    });
-    return () => sub.remove();
-  }, [visible, onClose]);
 
   if (!visible) return <></>;
 

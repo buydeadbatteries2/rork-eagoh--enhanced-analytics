@@ -51,6 +51,15 @@ export type ConversationMessage = {
 export type PersonalGrounding = {
   personalOpenIntelligenceUsed: boolean;
   personalOpenIntelligenceCount: number;
+  externalSearchUsed: boolean;
+  sourceCount: number;
+};
+
+export type AnalystSource = {
+  title: string;
+  url: string;
+  publisher?: string;
+  publishedAt?: string;
 };
 
 export type AnalystCallInput = {
@@ -71,6 +80,7 @@ export type AnalystCallResult = {
   sessionType: AnalystSessionType;
   confidence: number;
   grounding: PersonalGrounding;
+  sources: AnalystSource[];
 };
 
 /** Specific error codes returned by the Cloudflare worker. */
@@ -408,6 +418,7 @@ async function callAnalyst(
     sessionType?: AnalystSessionType;
     confidence?: number;
     grounding?: PersonalGrounding;
+    sources?: AnalystSource[];
     error?: string;
     errorCode?: string;
   };
@@ -435,7 +446,7 @@ async function callAnalyst(
     hasReply: !!data.reply,
     model: data.model ?? "unknown",
     grounding: data.grounding
-      ? `personalOI:${data.grounding.personalOpenIntelligenceCount}`
+      ? `personalOI:${data.grounding.personalOpenIntelligenceCount} extSearch:${data.grounding.externalSearchUsed ? data.grounding.sourceCount : 0}`
       : "none",
   });
 
@@ -471,7 +482,10 @@ async function callAnalyst(
     grounding: data.grounding ?? {
       personalOpenIntelligenceUsed: false,
       personalOpenIntelligenceCount: 0,
+      externalSearchUsed: false,
+      sourceCount: 0,
     },
+    sources: data.sources ?? [],
   };
 }
 

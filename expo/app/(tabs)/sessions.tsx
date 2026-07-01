@@ -56,6 +56,7 @@ import {
   Image,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -77,7 +78,7 @@ import { useEagohs } from "@/providers/EagohProvider";
 import { canUseSessionType, getSessionEligibility } from "@/services/permissions";
 import { INTELLIGENCE_DOMAINS, getDomainColor, normalizeDomainId } from "@/services/domains";
 import { guardDomainRequest } from "@/services/domainGuard";
-import { getQuickCheckCost, runQuickCheck, runQuickAnalytics, runStandardSession, runDeepDive, runPremiumEvent, getSessionCost, type AnalystSessionType, type AnalystRequestKind, type AnalystErrorCode, type ConversationMessage, type PersonalGrounding } from "@/services/analyst";
+import { getQuickCheckCost, runQuickCheck, runQuickAnalytics, runStandardSession, runDeepDive, runPremiumEvent, getSessionCost, type AnalystSessionType, type AnalystRequestKind, type AnalystErrorCode, type ConversationMessage, type PersonalGrounding, type AnalystSource } from "@/services/analyst";
 import {
   createThread,
   addMessage,
@@ -158,7 +159,7 @@ const sessionTypes: SessionType[] = [
   { id: "my-rankings", name: "My Rankings", description: "Leaderboard positions & badges", costRange: "Free", minCost: 0, maxCost: 0, model: "Rankings View", duration: "Live", tone: "gold", active: true },
 ];
 
-type ChatMessage = { id: string; sender: "user" | "analyst"; text: string; confidence?: number; cost?: number; grounding?: PersonalGrounding };
+type ChatMessage = { id: string; sender: "user" | "analyst"; text: string; confidence?: number; cost?: number; grounding?: PersonalGrounding; sources?: AnalystSource[] };
 
 function toneColor(tone: SessionTone): string {
   if (tone === "gold") return palette.gold;
@@ -487,6 +488,7 @@ function AnalystChatThread({
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(threadId ?? null);
   const [isInitialising, setIsInitialising] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialisedRef = useRef(false);
 
@@ -664,7 +666,7 @@ function AnalystChatThread({
 
         setMessages([
           { id: userMsg.id, sender: "user", text: prompt, cost },
-          { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding },
+          { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding, sources: result.sources },
         ]);
       } catch (dbErr: unknown) {
         const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
@@ -774,13 +776,13 @@ function AnalystChatThread({
       setMessages((prev) => [
         ...prev,
         { id: userMsg.id, sender: "user", text, cost },
-        { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding },
+        { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding, sources: result.sources },
       ]);
     } catch {
       setMessages((prev) => [
         ...prev,
         { id: `u-${Date.now()}`, sender: "user", text, cost },
-        { id: `a-${Date.now()}`, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding },
+        { id: `a-${Date.now()}`, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding, sources: result.sources },
       ]);
       setError("Could not save to history.");
     }
@@ -895,10 +897,11 @@ function AnalystChatThread({
             <Text style={msg.sender === "analyst" ? styles.msgAnalystText : styles.msgUserText}>{msg.text}</Text>
             {msg.confidence ? <Text style={styles.msgMeta}>Confidence {msg.confidence}%</Text> : null}
             {msg.cost ? <Text style={styles.msgCost}>{msg.cost} Neurons</Text> : null}
-            {/* Personal Intelligence grounding display for analyst messages */}
+            {/* Intelligence Sources grounding display for analyst messages */}
             {msg.sender === "analyst" && msg.grounding ? (
               <View style={styles.groundingWrap}>
                 <View style={styles.groundingDivider} />
+                {/* Personal Intelligence */}
                 <View style={styles.groundingRow}>
                   <BrainCircuit color={palette.cyan} size={11} />
                   <Text style={styles.groundingTitle}>Personal Intelligence</Text>
@@ -918,13 +921,97 @@ function AnalystChatThread({
                     </View>
                   ) : null}
                 </View>
+                {/* External Research */}
+                <View style={[styles.groundingRow, { marginTop: 8 }]}>
+                  <Globe color={msg.grounding.externalSearchUsed ? palette.success : palette.muted} size={11} />
+                  <Text style={[styles.groundingTitle, { color: msg.grounding.externalSearchUsed ? palette.success : palette.muted }]}>
+                    Current Research
+                  </Text>
+                </View>
+                <View style={styles.groundingItems}>
+                  {msg.grounding.externalSearchUsed ? (
+                    <View style={styles.groundingItem}>
+                      <Check color={palette.success} size={10} />
+                      <Text style={styles.groundingItemText}>
+                        {msg.grounding.sourceCount} source{msg.grounding.sourceCount === 1 ? '' : 's'} used
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={styles.groundingItem}>
+                      <Search color={palette.muted} size={10} />
+                      <Text style={styles.groundingItemText}>
+                        {msg.grounding.sourceCount === 0 ? 'No current research used' : 'Current research unavailable'}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                {/* Expandable source list */}
+                {msg.sources && msg.sources.length > 0 ? (
+                  <View style={styles.sourcesSection}>
+                    <Pressable
+                      onPress={() => {
+                        setExpandedSources((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(msg.id)) {
+                            next.delete(msg.id);
+                          } else {
+                            next.add(msg.id);
+                          }
+                          return next;
+                        });
+                      }}
+                      style={({ pressed }) => [
+                        styles.sourceToggleBtn,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={styles.sourceToggleText}>
+                        {expandedSources.has(msg.id) ? 'Hide' : 'View'} sources
+                      </Text>
+                      {expandedSources.has(msg.id) ? (
+                        <ChevronUp color={palette.cyan} size={12} />
+                      ) : (
+                        <ChevronDown color={palette.cyan} size={12} />
+                      )}
+                    </Pressable>
+                    {expandedSources.has(msg.id) ? (
+                      <View style={styles.sourcesList}>
+                        {msg.sources.map((src, idx) => (
+                          <Pressable
+                            key={`${msg.id}-src-${idx}`}
+                            onPress={() => {
+                              try {
+                                const validatedUrl = new URL(src.url);
+                                if (validatedUrl.protocol === 'https:' || validatedUrl.protocol === 'http:') {
+                                  Linking.openURL(src.url);
+                                }
+                              } catch {
+                                // Invalid URL — silently skip
+                              }
+                            }}
+                            style={({ pressed: p }) => [
+                              styles.sourceItem,
+                              p && styles.pressed,
+                            ]}
+                          >
+                            <View style={styles.sourceItemContent}>
+                              <Text style={styles.sourceItemTitle} numberOfLines={1}>{src.title}</Text>
+                              <Text style={styles.sourceItemUrl} numberOfLines={1}>{src.url}</Text>
+                            </View>
+                            <ChevronRight color={palette.muted} size={12} />
+                          </Pressable>
+                        ))}
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
             ) : msg.sender === "analyst" ? (
               <View style={styles.groundingWrap}>
                 <View style={styles.groundingDivider} />
                 <View style={styles.groundingRow}>
                   <BrainCircuit color={palette.muted} size={11} />
-                  <Text style={styles.groundingTitle}>Personal Intelligence</Text>
+                  <Text style={[styles.groundingTitle, { color: palette.muted }]}>Intelligence Sources</Text>
                 </View>
                 <View style={styles.groundingItems}>
                   <View style={styles.groundingItem}>
@@ -3208,5 +3295,57 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: "500",
     marginTop: 1,
+  },
+  // ── Expandable source list styles ──
+  sourcesSection: {
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.06)",
+    paddingTop: 8,
+  },
+  sourceToggleBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: "rgba(108,230,255,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(108,230,255,0.15)",
+  },
+  sourceToggleText: {
+    color: palette.cyan,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  sourcesList: {
+    marginTop: 6,
+    gap: 4,
+  },
+  sourceItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.06)",
+    gap: 8,
+  },
+  sourceItemContent: {
+    flex: 1,
+    gap: 2,
+  },
+  sourceItemTitle: {
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  sourceItemUrl: {
+    color: palette.muted,
+    fontSize: 9,
+    fontWeight: "500",
   },
 });

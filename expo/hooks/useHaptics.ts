@@ -21,14 +21,11 @@ export function useHaptics(): {
   warning: () => void;
   error: () => void;
 } {
-  // Safe access — useProfile may return undefined if the context
-  // is not yet available (initial auth loading, provider init, etc.)
-  let profileContext: ReturnType<typeof useProfile> | undefined;
-  try {
-    profileContext = useProfile();
-  } catch {
-    // Context not available — all haptics will be no-ops
-  }
+  // Safe access — useProfile may return a context where profile is null
+  // during initial auth loading. Hooks MUST NOT be wrapped in try/catch
+  // as it violates React's Rules of Hooks by making hook registration
+  // non-deterministic across renders.
+  const profileContext = useProfile();
 
   const enabled =
     (profileContext?.profile?.preferences?.hapticsEnabled ?? true) !== false;

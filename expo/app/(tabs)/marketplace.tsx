@@ -1616,7 +1616,7 @@ export default function MarketplaceScreen(): JSX.Element {
   const h = useHaptics();
   const router = useRouter();
   const { user } = useAuth();
-  const { profile } = useProfile();
+  const { profile, effectiveSubscriptionTier } = useProfile();
   const { balances } = useEdge();
   const { palette: pal } = useAppTheme();
 
@@ -1644,7 +1644,6 @@ export default function MarketplaceScreen(): JSX.Element {
   const [showSourceInfo, setShowSourceInfo] = useState(false);
   const [publicProfileVendorId, setPublicProfileVendorId] = useState<string | null>(null);
 
-  const { effectiveSubscriptionTier } = useProfile();
   const isPaid = canTransact(effectiveSubscriptionTier);
 
   const loadData = useCallback(async () => {

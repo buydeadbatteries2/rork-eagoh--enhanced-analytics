@@ -13,15 +13,15 @@
  *   4. Builds a structured, source-labeled prompt
  *   5. Calls OpenAI and returns the grounded response
  *
- * Phase 2 — Real external web search:
+ * Phase 2 — Real external web search via Responses API:
  *   1. Determines whether current research is needed
- *   2. Calls OpenAI Responses API with web_search tool
- *   3. Extracts source annotations (real URLs, titles)
+ *   2. Calls OpenAI Responses API (POST /v1/responses) with web_search tool
+ *   3. Extracts source annotations from official API response
  *   4. Includes research summary in the final prompt
  *   5. Labels sources clearly and handles OI/external conflicts
  *
- * The worker uses the Responses API (POST /v1/responses) for search
- * and Chat Completions (POST /v1/chat/completions) for the final answer.
+ * Search model: gpt-4o (supports web_search tool natively)
+ * Final answer: gpt-4o-mini via Chat Completions API
  *
  * No API keys, private OI content, or service-role tokens ever reach the client.
  */
@@ -365,14 +365,16 @@ ${blocks.join("\n\n")}`;
 
 // ── External Web Search ──────────────────────────────────────────────────────
 
-/**
- * Determines whether external web search is needed based on the prompt
- * and session type. Uses a deterministic keyword heuristic.
+/** The model used for the OpenAI Responses API web-search call.
+ *  gpt-4o supports the `web_search` tool natively. */
+const SEARCH_MODEL = "gpt-4o" as const;
+
+/** Determines whether external web search is needed based on the prompt
+ *  and session type. Uses a deterministic keyword heuristic.
  *
- * Premium Event sessions always enable search.
- * Freshness-related keywords (current, latest, today, scores, etc.)
- * trigger search for other session types.
- */
+ *  Premium Event sessions always enable search.
+ *  Freshness-related keywords (current, latest, today, scores, etc.)
+ *  trigger search for other session types. */
 function shouldUseExternalSearch(prompt: string, sessionType: SessionType): boolean {
   if (sessionType === "premium-event") return true;
 
@@ -480,11 +482,13 @@ function extractTitleFromUrl(url: string): string {
 /**
  * Extract source annotations from an OpenAI Responses API response.
  *
- * Looks for:
- *   - web_search_call items → action.sources (URLs from search results)
- *   - message items → content blocks → url_citation annotations (titles + URLs)
+ * Parses `url_citation` annotations from message output_text blocks.
+ * These are the official source annotations returned by the web_search tool.
  *
- * Deduplicates by normalized URL.
+ * Also attempts to pull URLs from `web_search_call` result items when present,
+ * though the primary source of title+URL pairs is url_citation annotations.
+ *
+ * Deduplicates by normalized URL and rejects malformed/non-HTTP URLs.
  */
 function extractSources(data: Record<string, unknown>): Source[] {
   const sources: Source[] = [];
@@ -494,14 +498,28 @@ function extractSources(data: Record<string, unknown>): Source[] {
   if (!output || !Array.isArray(output)) return sources;
 
   for (const item of output) {
-    // web_search_call: contains raw search result URLs
+    // web_search_call: may contain result URLs in various sub-structures
     if (item.type === "web_search_call") {
-      const action = item.action as Record<string, unknown> | undefined;
+      // Try web_search_call.results (newer API format)
+      const wsResults = (item as Record<string, unknown>).web_search_call as Record<string, unknown> | undefined;
+      const results = wsResults?.results as Array<{ url?: string; title?: string }> | undefined;
+      if (results) {
+        for (const r of results) {
+          const normalizedUrl = (r.url ?? "").trim().replace(/\/$/, "");
+          if (normalizedUrl && isValidHttpUrl(normalizedUrl) && !seenUrls.has(normalizedUrl)) {
+            seenUrls.add(normalizedUrl);
+            sources.push({ title: r.title || extractTitleFromUrl(normalizedUrl), url: normalizedUrl });
+          }
+        }
+      }
+
+      // Also try legacy action.sources for backward compatibility
+      const action = (item as Record<string, unknown>).action as Record<string, unknown> | undefined;
       const srcs = action?.sources as Array<{ type?: string; url?: string }> | undefined;
       if (srcs) {
         for (const src of srcs) {
           const normalizedUrl = (src.url ?? "").trim().replace(/\/$/, "");
-          if (src.type === "url" && normalizedUrl && !seenUrls.has(normalizedUrl)) {
+          if (src.type === "url" && normalizedUrl && isValidHttpUrl(normalizedUrl) && !seenUrls.has(normalizedUrl)) {
             seenUrls.add(normalizedUrl);
             sources.push({ title: extractTitleFromUrl(normalizedUrl), url: normalizedUrl });
           }
@@ -511,19 +529,21 @@ function extractSources(data: Record<string, unknown>): Source[] {
 
     // message: may contain url_citation annotations with proper titles
     if (item.type === "message") {
-      const content = item.content as Array<Record<string, unknown>> | undefined;
+      const content = (item as Record<string, unknown>).content as Array<Record<string, unknown>> | undefined;
       if (content) {
         for (const block of content) {
           if (block.type === "output_text") {
-            const annotations = block.annotations as Array<Record<string, unknown>> | undefined;
+            const annotations = (block as Record<string, unknown>).annotations as Array<Record<string, unknown>> | undefined;
             if (annotations) {
               for (const ann of annotations) {
                 if (ann.type === "url_citation") {
-                  const normalizedUrl = ((ann.url as string) ?? "").trim().replace(/\/$/, "");
-                  if (normalizedUrl && !seenUrls.has(normalizedUrl)) {
+                  const annRecord = ann as Record<string, unknown>;
+                  const url = (annRecord.url as string) ?? "";
+                  const normalizedUrl = url.trim().replace(/\/$/, "");
+                  if (normalizedUrl && isValidHttpUrl(normalizedUrl) && !seenUrls.has(normalizedUrl)) {
                     seenUrls.add(normalizedUrl);
                     sources.push({
-                      title: (ann.title as string) || extractTitleFromUrl(normalizedUrl),
+                      title: (annRecord.title as string) || extractTitleFromUrl(normalizedUrl),
                       url: normalizedUrl,
                     });
                   }
@@ -536,15 +556,17 @@ function extractSources(data: Record<string, unknown>): Source[] {
     }
   }
 
-  // Validate URLs
-  return sources.filter((s) => {
-    try {
-      const parsed = new URL(s.url);
-      return parsed.protocol === "https:" || parsed.protocol === "http:";
-    } catch {
-      return false;
-    }
-  });
+  return sources;
+}
+
+/** Validate a URL string is a proper HTTP/HTTPS URL. */
+function isValidHttpUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -572,10 +594,11 @@ function extractSearchSummary(data: Record<string, unknown>): string {
 }
 
 /**
- * Perform real web search via OpenAI Responses API with web_search tool.
+ * Perform real web search via OpenAI Responses API with `web_search` tool.
  *
- * Returns structured results with verified source annotations.
- * Never fabricates URLs, titles, or publishers.
+ * Uses `gpt-4o` (which supports the web_search tool natively) with the
+ * official Responses endpoint. Returns only source annotations produced by
+ * the actual tool execution — never fabricates URLs, titles, or publishers.
  */
 async function performWebSearch(
   query: string,
@@ -592,22 +615,28 @@ async function performWebSearch(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: SEARCH_MODEL,
         input: query,
         tools: [
           {
             type: "web_search" as const,
+            user_location: { type: "approximate" as const },
             search_context_size: contextSize,
           },
         ],
-        max_output_tokens: 1500,
-        temperature: 0.3,
+        max_output_tokens: 2500,
+        temperature: 0.2,
       }),
     });
 
     if (!response.ok) {
       const status = response.status;
-      console.warn("[analyst] web search API error", { status, queryLen: query.length });
+      let errorDetail = "";
+      try {
+        const errBody = await response.text();
+        errorDetail = errBody.slice(0, 300);
+      } catch { /* ignore */ }
+      console.warn("[analyst] web search API error", { status, queryLen: query.length, detail: errorDetail });
       return {
         used: false,
         summary: "",
@@ -617,6 +646,18 @@ async function performWebSearch(
     }
 
     const data = (await response.json()) as Record<string, unknown>;
+
+    // Verify the web_search tool was actually executed by the API
+    const output = data.output as Array<Record<string, unknown>> | undefined;
+    const hasWebSearchCall = output?.some((item) => item.type === "web_search_call");
+
+    if (!hasWebSearchCall) {
+      console.warn("[analyst] web search tool was NOT executed — model may not support web_search", {
+        model: SEARCH_MODEL,
+        outputTypes: output?.map((i) => i.type).join(", ") ?? "none",
+      });
+    }
+
     const sources = extractSources(data);
     const summary = extractSearchSummary(data);
 
@@ -624,10 +665,11 @@ async function performWebSearch(
       sourceCount: sources.length,
       summaryLen: summary.length,
       contextSize,
+      toolExecuted: hasWebSearchCall,
     });
 
     return {
-      used: sources.length > 0 || summary.length > 0,
+      used: hasWebSearchCall && (sources.length > 0 || summary.length > 0),
       summary: summary || "No relevant current information was found.",
       sources,
     };

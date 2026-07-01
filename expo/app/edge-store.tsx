@@ -16,6 +16,7 @@ import { useProfile } from "@/providers/ProfileProvider";
 import { useRevenueCat } from "@/providers/RevenueCatProvider";
 import { NEURON_PRODUCT_AMOUNTS } from "@/services/revenuecat";
 import { EDGE_PACKS, type EdgePack, isMockPurchaseAllowed, recordNeuronPurchaseOnce } from "@/services/edgeStore";
+import { canPurchaseNeuronPacks } from "@/services/permissions";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import {
@@ -23,6 +24,7 @@ import {
   ArrowLeft,
   BadgeCheck,
   Coins,
+  LockKeyhole,
   Infinity,
   RefreshCw,
   ShieldCheck,
@@ -405,7 +407,7 @@ export default function EdgeStoreScreen(): JSX.Element {
   const h = useHaptics();
   const router = useRouter();
   const { user } = useAuth();
-  const { profile } = useProfile();
+  const { profile, effectiveSubscriptionTier } = useProfile();
   const { balances, purchase: creditEdge, isMutating } = useEdge();
   const {
     configured: rcConfigured,
@@ -618,6 +620,9 @@ export default function EdgeStoreScreen(): JSX.Element {
   // Disable when a mutation is in flight
   const disabled = isMutating || purchasing || isPurchasing;
 
+  // Free users cannot purchase Neuron packs
+  const canBuyPacks = canPurchaseNeuronPacks(effectiveSubscriptionTier);
+
   return (
     <SafeAreaView edges={["top"]} style={[styles.safe, { backgroundColor: pal.void }]}>
       {/* Header */}
@@ -696,42 +701,96 @@ export default function EdgeStoreScreen(): JSX.Element {
           </Text>
         </View>
 
-        {/* Pack header */}
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <Coins color={palette.gold} size={18} />
-          <Text style={{ color: palette.text, fontSize: 16, fontWeight: "900" as const }}>Neuron Packs</Text>
-        </View>
+        {canBuyPacks ? (
+          <>
+            {/* Pack header */}
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Coins color={palette.gold} size={18} />
+              <Text style={{ color: palette.text, fontSize: 16, fontWeight: "900" as const }}>Neuron Packs</Text>
+            </View>
 
-        {/* Pack cards — empty state only as absolute last resort */}
-        {displayPacks.length > 0 ? (
-          <View style={styles.packGrid}>
-            {displayPacks.map(({ edgePack, rcPackage }) => (
-              <PackCard
-                key={edgePack.productId}
-                pack={edgePack}
-                rcPackage={rcPackage ?? {
-                  identifier: edgePack.productId,
-                  offeringIdentifier: "default",
-                  packageType: "CUSTOM" as const,
-                  product: {
-                    identifier: edgePack.productId,
-                    price: edgePack.priceUsd,
-                    priceString: `$${edgePack.priceUsd.toFixed(2)}`,
-                    currencyCode: "USD",
-                    title: edgePack.label,
-                    description: `${edgePack.edgeAmount} Neurons`,
-                    productCategory: "NON_SUBSCRIPTION" as const,
-                  } as PurchasesPackage["product"],
-                } as unknown as PurchasesPackage}
-                onPress={() => handleSelectPack(edgePack, rcPackage)}
-                disabled={disabled || !canRealPurchase}
-              />
-            ))}
-          </View>
+            {/* Pack cards — empty state only as absolute last resort */}
+            {displayPacks.length > 0 ? (
+              <View style={styles.packGrid}>
+                {displayPacks.map(({ edgePack, rcPackage }) => (
+                  <PackCard
+                    key={edgePack.productId}
+                    pack={edgePack}
+                    rcPackage={rcPackage ?? {
+                      identifier: edgePack.productId,
+                      offeringIdentifier: "default",
+                      packageType: "CUSTOM" as const,
+                      product: {
+                        identifier: edgePack.productId,
+                        price: edgePack.priceUsd,
+                        priceString: `$${edgePack.priceUsd.toFixed(2)}`,
+                        currencyCode: "USD",
+                        title: edgePack.label,
+                        description: `${edgePack.edgeAmount} Neurons`,
+                        productCategory: "NON_SUBSCRIPTION" as const,
+                      } as PurchasesPackage["product"],
+                    } as unknown as PurchasesPackage}
+                    onPress={() => handleSelectPack(edgePack, rcPackage)}
+                    disabled={disabled || !canRealPurchase}
+                  />
+                ))}
+              </View>
+            ) : (
+              <View style={styles.emptyState}>
+                <AlertTriangle color={palette.muted} size={20} />
+                <Text style={styles.emptyStateText}>Neuron packs could not be loaded. Please try again.</Text>
+              </View>
+            )}
+          </>
         ) : (
-          <View style={styles.emptyState}>
-            <AlertTriangle color={palette.muted} size={20} />
-            <Text style={styles.emptyStateText}>Neuron packs could not be loaded. Please try again.</Text>
+          /* Free user locked state */
+          <View style={{
+            padding: 24,
+            borderRadius: 5,
+            borderWidth: 1,
+            borderColor: "rgba(108,230,255,0.18)",
+            backgroundColor: "rgba(108,230,255,0.04)",
+            alignItems: "center",
+            gap: 14,
+          }}>
+            <LockKeyhole color={palette.cyan} size={32} />
+            <Text style={{
+              color: palette.text,
+              fontSize: 15,
+              fontWeight: "800" as const,
+              textAlign: "center" as const,
+              lineHeight: 22,
+            }}>
+              Neuron packs are available for subscribers only.
+            </Text>
+            <Text style={{
+              color: palette.muted,
+              fontSize: 13,
+              fontWeight: "600" as const,
+              textAlign: "center" as const,
+              lineHeight: 19,
+            }}>
+              Upgrade to unlock extra neurons.
+            </Text>
+            <Pressable
+              onPress={() => {
+                h.medium();
+                router.push("/subscription");
+              }}
+              style={({ pressed }) => ({
+                paddingHorizontal: 32,
+                paddingVertical: 12,
+                borderRadius: 5,
+                backgroundColor: palette.gold,
+                opacity: pressed ? 0.8 : 1,
+              })}
+            >
+              <Text style={{
+                color: palette.void,
+                fontSize: 14,
+                fontWeight: "900" as const,
+              }}>Upgrade</Text>
+            </Pressable>
           </View>
         )}
 

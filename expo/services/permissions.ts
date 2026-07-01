@@ -75,6 +75,11 @@ export function canListOnExchange(tier: SubscriptionTier): boolean {
   return tier !== "free";
 }
 
+/** Free users may never purchase Neuron packs from the store. */
+export function canPurchaseNeuronPacks(tier: SubscriptionTier): boolean {
+  return tier !== "free";
+}
+
 /** Free users may never create, rename, or reforge EAGOHs. */
 export function canCreateEagoh(tier: SubscriptionTier): boolean {
   return tier !== "free";

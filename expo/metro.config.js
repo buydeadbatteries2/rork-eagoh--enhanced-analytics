@@ -2,25 +2,43 @@ const { getDefaultConfig } = require("expo/metro-config");
 const { withRorkMetro } = require("@rork-ai/toolkit-sdk/metro");
 const path = require("path");
 
-const config = getDefaultConfig(__dirname);
+let config = getDefaultConfig(__dirname);
+config = withRorkMetro(config);
 
-// --- Hermes compatibility fixes for production iOS builds ---
-//
-// Two errors occur when Hermes compiles the JS bundle for release:
-//
-// 1. @tanstack/react-query ESM uses native #private fields → Hermes can't parse
-// 2. @supabase/supabase-js uses dynamic import() for @opentelemetry/api → Hermes can't parse
-//
-// Fix 1: Disable package "exports" resolution so Metro uses the "main" field (CJS)
-//        instead of "exports" field (ESM). CJS builds use transpiled helpers,
-//        not native #private fields.
-config.resolver.unstable_enablePackageExports = false;
+// Redirect server-side-only packages (pulled in by @rork-ai/toolkit-sdk's
+// ai + @ai-sdk/react dependencies) to empty mocks so Metro stops traversing
+// their dependency trees. Without this, Metro tries to bundle:
+//   @ai-sdk/gateway -> @vercel/oidc (has no "main" field)
+// and the iOS archive build fails with a module resolution error.
+const serverMockPath = path.join(__dirname, "polyfills/server-mock.js");
+const otelMockPath = path.join(__dirname, "polyfills/opentelemetry-mock.js");
 
-// Fix 2: Map @opentelemetry/api to a no-op mock so the dynamic import() in
-//        @supabase/supabase-js resolves to a static module Hermes can handle.
-config.resolver.extraNodeModules = {
-  ...config.resolver.extraNodeModules,
-  "@opentelemetry/api": path.resolve(__dirname, "polyfills/opentelemetry-mock.js"),
+const originalResolve = config.resolver?.resolveRequest;
+
+config.resolver = {
+  ...config.resolver,
+  resolveRequest: (context, moduleName, platform) => {
+    // Server-side AI SDK packages — never used in the React Native client
+    if (
+      moduleName === "@vercel/oidc" ||
+      moduleName === "@ai-sdk/gateway"
+    ) {
+      return { type: "sourceFile", filePath: serverMockPath };
+    }
+
+    // @supabase/supabase-js dynamically imports @opentelemetry/api for trace
+    // propagation; Hermes cannot compile dynamic import() expressions
+    if (moduleName === "@opentelemetry/api") {
+      return { type: "sourceFile", filePath: otelMockPath };
+    }
+
+    // Fall through to withRorkMetro's resolver (or Metro's default)
+    return (originalResolve || context.resolveRequest)(
+      context,
+      moduleName,
+      platform
+    );
+  },
 };
 
-module.exports = withRorkMetro(config);
+module.exports = config;

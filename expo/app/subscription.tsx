@@ -486,7 +486,11 @@ export default function SubscriptionScreen(): JSX.Element {
 
   const handleBack = useCallback((): void => {
     h.selection();
-    router.back();
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/(tabs)");
+    }
   }, [router, h]);
 
   /** Whether mock subscription test mode is allowed (dev only, opt-in). */

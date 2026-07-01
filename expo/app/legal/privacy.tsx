@@ -62,7 +62,7 @@ export default function PrivacyScreen(): JSX.Element {
     <SafeAreaView edges={["top"]} style={styles.safe}>
       <View style={styles.header}>
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => { if (router.canGoBack()) { router.back(); } else { router.replace("/(tabs)"); } }}
           style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.6 }]}
         >
           <ArrowLeft color={palette.text} size={20} />

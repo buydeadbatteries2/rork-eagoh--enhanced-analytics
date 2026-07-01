@@ -1558,7 +1558,7 @@ export default function SettingsScreen(): JSX.Element {
     <SafeAreaView edges={["top"]} style={s.safe}>
       <View style={s.header}>
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => { if (router.canGoBack()) { router.back(); } else { router.replace("/(tabs)"); } }}
           style={({ pressed }) => [s.backBtn, pressed && { opacity: 0.6 }]}
         >
           <ArrowLeft color={pal.text} size={20} />

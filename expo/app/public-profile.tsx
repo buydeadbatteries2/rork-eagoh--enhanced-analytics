@@ -499,7 +499,7 @@ export default function PublicProfileScreen(): JSX.Element {
             </LinearGradient>
           )}
           <Pressable
-            onPress={() => router.back()}
+            onPress={() => { if (router.canGoBack()) { router.back(); } else { router.replace("/(tabs)"); } }}
             style={({ pressed }) => [s.backBtn, pressed && { opacity: 0.6 }]}
           >
             <ArrowLeft color={pal.text} size={20} />

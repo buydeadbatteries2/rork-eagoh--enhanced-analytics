@@ -479,7 +479,11 @@ export default function EdgeStoreScreen(): JSX.Element {
 
   const handleBack = useCallback((): void => {
     h.selection();
-    router.back();
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/(tabs)");
+    }
   }, [router, h]);
 
   const handleSelectPack = useCallback(

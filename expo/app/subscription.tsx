@@ -233,7 +233,7 @@ const styles = StyleSheet.create({
 
 // ── Sub-component: Preview Tier Card (Expo Go / preview) ──────────────────
 
-function PreviewTierCard({ tier }: { tier: Exclude<SubscriptionTier, "free"> }): JSX.Element {
+function PreviewTierCard({ tier, onTestSubscribe, isSubscribing }: { tier: Exclude<SubscriptionTier, "free">; onTestSubscribe?: (tier: Exclude<SubscriptionTier, "free">) => void; isSubscribing?: boolean }): JSX.Element {
   const c = TIER_ACCENTS[tier];
   const label = TIER_LABELS[tier];
   const allocation = TIER_MONTHLY_ALLOCATION[tier];
@@ -276,12 +276,36 @@ function PreviewTierCard({ tier }: { tier: Exclude<SubscriptionTier, "free"> }):
             </View>
           ))}
         </View>
-        <Pressable
-          disabled
-          style={[styles.subscribeBtn, { backgroundColor: "rgba(255,255,255,0.03)", borderColor: palette.line }]}
-        >
-          <Text style={[styles.subscribeBtnText, { color: palette.muted }]}>Available in TestFlight</Text>
-        </Pressable>
+        {onTestSubscribe ? (
+          <Pressable
+            onPress={() => onTestSubscribe(tier)}
+            disabled={isSubscribing}
+            style={({ pressed }) => [
+              styles.subscribeBtn,
+              { backgroundColor: c.accent, borderColor: c.accent },
+              pressed && { opacity: 0.8 },
+              isSubscribing && { opacity: 0.5 },
+            ]}
+          >
+            {isSubscribing ? (
+              <ActivityIndicator color={palette.void} size="small" />
+            ) : (
+              <>
+                <Sparkles color={palette.void} size={16} />
+                <Text style={[styles.subscribeBtnText, { color: palette.void }]}>
+                  Test {label}
+                </Text>
+              </>
+            )}
+          </Pressable>
+        ) : (
+          <Pressable
+            disabled
+            style={[styles.subscribeBtn, { backgroundColor: "rgba(255,255,255,0.03)", borderColor: palette.line }]}
+          >
+            <Text style={[styles.subscribeBtnText, { color: palette.muted }]}>Available in TestFlight</Text>
+          </Pressable>
+        )}
       </View>
     </View>
   );
@@ -465,9 +489,15 @@ export default function SubscriptionScreen(): JSX.Element {
     router.back();
   }, [router, h]);
 
+  /** Whether mock subscription test mode is allowed (dev only, opt-in). */
+  const canMockSubscribe = __DEV__ && !rcConfigured;
+
   const handleSubscribe = useCallback(
     async (pkg: PurchasesPackage): Promise<void> => {
-      if (!user?.id) return;
+      if (!user?.id) {
+        Alert.alert("Sign In Required", "Please sign in before purchasing a subscription.");
+        return;
+      }
       h.heavy();
       const pid = pkg.product.identifier;
       const tier = subscriptionTierFromProductId(pid);
@@ -481,19 +511,56 @@ export default function SubscriptionScreen(): JSX.Element {
       setPurchaseSuccess(false);
 
       try {
-        const purchaseResult = await rcPurchase(pkg);
-        const activeSubs = purchaseResult.customerInfo.activeSubscriptions;
-        if (__DEV__) {
-          console.log("[Subscription] Purchase success — active subs:", activeSubs);
+        if (rcConfigured) {
+          // ── Real RevenueCat purchase (native build / TestFlight) ────
+          const purchaseResult = await rcPurchase(pkg);
+          const activeSubs = purchaseResult.customerInfo.activeSubscriptions;
+          if (__DEV__) {
+            console.log("[Subscription] Purchase success — active subs:", activeSubs);
+          }
+
+          setPurchaseSuccess(true);
+
+          const tierLabel = TIER_LABELS[tier as keyof typeof TIER_LABELS];
+          Alert.alert(
+            "Subscription Activated",
+            `Welcome to ${tierLabel}! Your benefits are now active.`,
+          );
+        } else if (__DEV__) {
+          // ── Dev test subscription (Expo Go / Rork preview) ──────────
+          // RevenueCat is not available — set the tier directly for testing.
+          // This only works in __DEV__ and never in production.
+          const tierLabel = TIER_LABELS[tier];
+          Alert.alert(
+            "Dev Test Subscription",
+            `${tierLabel} subscription activated for testing.\n\nTo test real purchases, install via TestFlight.`,
+            [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: `Activate ${tierLabel}`,
+                onPress: async () => {
+                  // Directly update Supabase profile tier for testing
+                  const { supabase } = await import("@/lib/supabase");
+                  const { error } = await supabase
+                    .from("profiles")
+                    .update({ subscription_tier: tier, updated_at: new Date().toISOString() })
+                    .eq("id", user.id);
+                  if (error) {
+                    Alert.alert("Error", "Failed to update subscription tier: " + error.message);
+                  } else {
+                    setPurchaseSuccess(true);
+                    Alert.alert("Dev Tier Set", `${tierLabel} tier activated (test mode).`);
+                  }
+                },
+              },
+            ],
+          );
+        } else {
+          Alert.alert(
+            "Purchases Unavailable",
+            "Subscriptions require the App Store. Please install via TestFlight to purchase.",
+          );
         }
-
-        setPurchaseSuccess(true);
-
-        const tierLabel = TIER_LABELS[tier as keyof typeof TIER_LABELS];
-        Alert.alert(
-          "Subscription Activated",
-          `Welcome to ${tierLabel}! Your benefits are now active.`,
-        );
       } catch (err: unknown) {
         const errObj = err as { userCancelled?: boolean; message?: string };
         if (errObj?.userCancelled) {
@@ -509,7 +576,40 @@ export default function SubscriptionScreen(): JSX.Element {
         setPurchasingTier(null);
       }
     },
-    [user?.id, rcPurchase, h],
+    [user?.id, rcPurchase, rcConfigured, h],
+  );
+
+  const handleTestSubscribe = useCallback(
+    async (tier: Exclude<SubscriptionTier, "free">): Promise<void> => {
+      if (!user?.id) {
+        Alert.alert("Sign In Required", "Please sign in before testing a subscription.");
+        return;
+      }
+      h.heavy();
+      setPurchasingTier(tier);
+      setPurchaseSuccess(false);
+
+      try {
+        const { supabase } = await import("@/lib/supabase");
+        const { error } = await supabase
+          .from("profiles")
+          .update({ subscription_tier: tier, updated_at: new Date().toISOString() })
+          .eq("id", user.id);
+        if (error) {
+          Alert.alert("Error", "Failed to update subscription tier: " + error.message);
+        } else {
+          setPurchaseSuccess(true);
+          const tierLabel = TIER_LABELS[tier];
+          Alert.alert("Dev Tier Set", `${tierLabel} tier has been activated for testing.\n\nTo test real purchases, install via TestFlight.`);
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        Alert.alert("Error", msg);
+      } finally {
+        setPurchasingTier(null);
+      }
+    },
+    [user?.id, h],
   );
 
   const handleRestore = useCallback(async (): Promise<void> => {
@@ -589,9 +689,21 @@ export default function SubscriptionScreen(): JSX.Element {
           {/* Preview tier cards (disabled) */}
           {isPreview ? (
             <>
-              <PreviewTierCard tier="pro" />
-              <PreviewTierCard tier="oracle_elite" />
-              <PreviewTierCard tier="syndicate" />
+              <PreviewTierCard
+                tier="pro"
+                onTestSubscribe={__DEV__ ? handleTestSubscribe : undefined}
+                isSubscribing={isPurchasing && purchasingTier === "pro"}
+              />
+              <PreviewTierCard
+                tier="oracle_elite"
+                onTestSubscribe={__DEV__ ? handleTestSubscribe : undefined}
+                isSubscribing={isPurchasing && purchasingTier === "oracle_elite"}
+              />
+              <PreviewTierCard
+                tier="syndicate"
+                onTestSubscribe={__DEV__ ? handleTestSubscribe : undefined}
+                isSubscribing={isPurchasing && purchasingTier === "syndicate"}
+              />
             </>
           ) : (
             <View style={styles.statusCenter}>

@@ -20,7 +20,7 @@ import Purchases, {
   type PurchasesPackage,
 } from "react-native-purchases";
 import type { SubscriptionTier } from "@/services/tiers";
-import { SUBSCRIPTION_PRODUCT_IDS } from "@/services/tiers";
+import { SUBSCRIPTION_PRODUCT_IDS, TEST_STORE_SUBSCRIPTION_ALIASES } from "@/services/tiers";
 
 // ── Runtime detection ───────────────────────────────────────────────────────
 
@@ -240,10 +240,18 @@ export function getRevenueCatSubscriptionTier(
 
 // ── Product mapping ────────────────────────────────────────────────────────
 
-/** Map a RevenueCat product identifier to subscription tier. */
+/** Map a RevenueCat product identifier to subscription tier. Handles both production and Test Store product IDs. */
 export function subscriptionTierFromProductId(productId: string): SubscriptionTier | null {
+  // Direct match against known subscription product IDs
   for (const [tier, id] of Object.entries(SUBSCRIPTION_PRODUCT_IDS)) {
     if (id === productId) return tier as SubscriptionTier;
+  }
+  // Check Test Store aliases — maps test product IDs to their real counterparts
+  const aliased = TEST_STORE_SUBSCRIPTION_ALIASES[productId];
+  if (aliased) {
+    for (const [tier, id] of Object.entries(SUBSCRIPTION_PRODUCT_IDS)) {
+      if (id === aliased) return tier as SubscriptionTier;
+    }
   }
   return null;
 }

@@ -52,7 +52,7 @@ export default function DisclaimerScreen(): JSX.Element {
     <SafeAreaView edges={["top"]} style={styles.safe}>
       <View style={styles.header}>
         <Pressable
-          onPress={() => { if (router.canGoBack()) { router.back(); } else { router.replace("/(tabs)"); } }}
+          onPress={() => { router.back(); }}
           style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.6 }]}
         >
           <ArrowLeft color={palette.text} size={20} />

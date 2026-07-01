@@ -482,11 +482,7 @@ export default function SubscriptionScreen(): JSX.Element {
 
   const handleBack = useCallback((): void => {
     h.selection();
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace("/(tabs)");
-    }
+    router.back();
   }, [router, h]);
 
   /** True while offerings or customer info are still being fetched from RevenueCat. */

@@ -53,12 +53,14 @@ export type UserProfile = {
   public_display_title: string | null;
   is_social_verified: boolean;
   social_verified_platform: string | null;
+  last_rollover_at: string | null;
+  last_allocation: number;
   created_at?: string;
   updated_at?: string;
 };
 
 /** Users can never update admin override fields from the app. Only service_role / Supabase dashboard can. */
-export type ProfileUpdate = Partial<Omit<UserProfile, "id" | "created_at" | "updated_at" | "admin_tier_override" | "admin_tier_expires_at" | "admin_tier_note">>;
+export type ProfileUpdate = Partial<Omit<UserProfile, "id" | "created_at" | "updated_at" | "admin_tier_override" | "admin_tier_expires_at" | "admin_tier_note">> & { last_rollover_at?: string | null; last_allocation?: number };
 
 const DEFAULT_PROFILE = (id: string, username?: string | null): UserProfile => ({
   id,
@@ -77,6 +79,8 @@ const DEFAULT_PROFILE = (id: string, username?: string | null): UserProfile => (
   public_display_title: null,
   is_social_verified: false,
   social_verified_platform: null,
+  last_rollover_at: null,
+  last_allocation: 0,
 });
 
 export async function fetchProfile(userId: string): Promise<UserProfile | null> {
@@ -88,9 +92,33 @@ export async function fetchProfile(userId: string): Promise<UserProfile | null> 
 export async function ensureProfile(userId: string, username?: string | null): Promise<UserProfile> {
   const existing = await fetchProfile(userId);
   if (existing) return existing;
-  const base = DEFAULT_PROFILE(userId, username);
+
+  // New free-tier user: grant the initial 25 subscription Neurons.
+  const { FREE_INITIAL_ALLOCATION } = await import("@/services/edge");
+  const base = { ...DEFAULT_PROFILE(userId, username), edge_subscription: FREE_INITIAL_ALLOCATION };
   const { data, error } = await supabase.from("profiles").insert(base).select("*").single();
   if (error) throw error;
+
+  const newProfile = data as UserProfile;
+
+  // Log the initial allocation transaction.
+  try {
+    const { supabase: sb } = await import("@/lib/supabase");
+    await sb.from("edge_transactions").insert({
+      user_id: userId,
+      kind: "addition",
+      reason: "subscription_allocation",
+      amount: FREE_INITIAL_ALLOCATION,
+      bucket: "subscription",
+      from_subscription: 0,
+      from_purchased: 0,
+      balance_subscription_after: FREE_INITIAL_ALLOCATION,
+      balance_purchased_after: 0,
+      note: `Free tier initial allocation (${FREE_INITIAL_ALLOCATION} Neurons)`,
+    });
+  } catch {
+    // Non-critical — the allocation log is best-effort.
+  }
 
   // Provision the default dormant EAGOH shell in the background.
   // Failure here should not block profile creation.
@@ -102,7 +130,7 @@ export async function ensureProfile(userId: string, username?: string | null): P
     // Best-effort; the app will try again on next profile fetch if needed.
   }
 
-  return data as UserProfile;
+  return newProfile;
 }
 
 export async function updateProfile(userId: string, patch: ProfileUpdate): Promise<UserProfile> {

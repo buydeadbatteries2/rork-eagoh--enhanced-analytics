@@ -1,6 +1,6 @@
 import createContextHook from "@nkzw/create-context-hook";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useAuth } from "@/providers/AuthProvider";
 import {
   ensureProfile,
@@ -24,6 +24,19 @@ import {
   spendEdge as spendEdgeService,
   type EdgeReason,
 } from "@/services/edge";
+
+// ── Helpers ──────────────────────────────────────────────────────────────
+
+/** Returns true when lastRolloverAt is null or in a past calendar month. */
+function needsMonthlyAllocation(lastRolloverAt: string | null | undefined): boolean {
+  if (!lastRolloverAt) return true;
+  const last = new Date(lastRolloverAt);
+  const now = new Date();
+  return (
+    last.getUTCFullYear() < now.getUTCFullYear() ||
+    (last.getUTCFullYear() === now.getUTCFullYear() && last.getUTCMonth() < now.getUTCMonth())
+  );
+}
 
 /**
  * ProfileProvider – owns the React Query cache for the current user's profile
@@ -132,6 +145,28 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
   });
 
   const balances = profile ? getBalances(profile) : { subscription: 0, purchased: 0, total: 0 };
+
+  // ── Auto-allocation: grant free tier Neurons on first login and monthly thereafter ──
+  const allocRanRef = useRef(false);
+  useEffect(() => {
+    if (!profile || !userId) return;
+    if (allocRanRef.current) return;
+    const tier = getEffectiveSubscriptionTier(profile);
+    if (tier !== "free") return;
+
+    // Only grant if the user hasn't received allocation this calendar month.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const lastRollover: string | null = (profile as any).last_rollover_at ?? null;
+    if (!needsMonthlyAllocation(lastRollover)) return;
+
+    allocRanRef.current = true;
+    applyMonthlyRolloverService(userId, profile, tier).then((next) => {
+      queryClient.setQueryData(profileKey(userId), next);
+    }).catch((err) => {
+      console.warn("[ProfileProvider] auto-allocation failed:", (err as Error).message);
+      allocRanRef.current = false; // retry next mount
+    });
+  }, [profile, userId, queryClient]);
 
   const effectiveSubscriptionTier: SubscriptionTier = getEffectiveSubscriptionTier(profile);
   const isAdminOverrideActive: boolean = hasActiveAdminOverride(profile);

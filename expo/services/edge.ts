@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { getQuickCheckCost } from "@/services/analyst";
-import { updateProfile, type UserProfile } from "@/services/profile";
+import { getEffectiveSubscriptionTier, updateProfile, type UserProfile } from "@/services/profile";
 import type { SubscriptionTier } from "@/services/tiers";
 
 /**
@@ -84,13 +84,17 @@ export function getForgeCost(mode: "initial" | "full_reforge" | "partial_reforge
   return EDGE_COSTS.forge_partial_reforge;
 }
 
-/** Monthly subscription Neuron allocations per tier. Free tier receives 25 Neurons monthly. */
+/** Monthly subscription Neuron allocations per tier. */
 export const TIER_MONTHLY_ALLOCATION: Record<SubscriptionTier, number> = {
   free: 25,
   pro: 600,
   oracle_elite: 1400,
   syndicate: 3700,
 };
+
+/** Free tier receives 25 Neurons on their first month, then 10 per month thereafter. */
+export const FREE_INITIAL_ALLOCATION = 25;
+export const FREE_RECURRING_ALLOCATION = 10;
 
 /** Maximum number of user-forged EAGOHs per tier. Default shells are excluded. */
 export const TIER_MAX_EAGOHS: Record<SubscriptionTier, number> = {
@@ -108,9 +112,17 @@ export const TIER_MULTIPLIER: Record<SubscriptionTier, number> = {
   syndicate: 1.5,
 };
 
-/** Rollover cap and retention requirement (10% each). */
+/** Rollover cap and retention requirement (10% each). Free tier never rolls over. */
 export const ROLLOVER_CAP_PCT = 0.1;
 export const ROLLOVER_RETENTION_PCT = 0.1;
+
+/**
+ * Returns the free tier allocation for this period.
+ * First month: 25. Subsequent months: 10.
+ */
+export function getFreeTierAllocation(lastAllocation: number | undefined | null): number {
+  return lastAllocation && lastAllocation > 0 ? FREE_RECURRING_ALLOCATION : FREE_INITIAL_ALLOCATION;
+}
 
 export function getBalances(
   profile: Pick<UserProfile, "edge_subscription" | "edge_purchased">,
@@ -140,6 +152,11 @@ export async function spendEdge(
 ): Promise<UserProfile> {
   const cost = Math.max(0, Math.floor(amount));
   if (cost === 0) return profile;
+
+  // Free tier may only spend on Quick Check. Effective tier respects admin overrides.
+  if (getEffectiveSubscriptionTier(profile) === "free" && reason !== "quick_check") {
+    throw new Error("Upgrade to Pro or higher to use this feature.");
+  }
 
   const { total, subscription, purchased } = getBalances(profile);
   if (cost > total) throw new Error("Insufficient Neuron balance");
@@ -251,8 +268,40 @@ export async function applyMonthlyRollover(
   profile: UserProfile,
   tier: SubscriptionTier,
 ): Promise<UserProfile> {
+  const now = new Date().toISOString();
+
+  // ── Free tier: no rollover, capped allocation ──────────────────────
+  if (tier === "free") {
+    const lastAlloc = profile.last_allocation;
+    const allocation = getFreeTierAllocation(lastAlloc);
+
+    // Set subscription balance directly to the allocation (cap, no rollover).
+    // Purchased neurons are never touched.
+    const next = await updateProfile(userId, {
+      edge_subscription: allocation,
+      last_rollover_at: now,
+      last_allocation: allocation,
+    });
+
+    await logTransaction({
+      user_id: userId,
+      kind: "addition",
+      reason: "subscription_allocation",
+      amount: allocation,
+      bucket: "subscription",
+      from_subscription: 0,
+      from_purchased: 0,
+      balance_subscription_after: allocation,
+      balance_purchased_after: profile.edge_purchased ?? 0,
+      note: `Free tier monthly allocation (${allocation} Neurons, no rollover)`,
+    });
+
+    return next;
+  }
+
+  // ── Paid tiers: standard rollover + allocation ─────────────────────
   const allocation = TIER_MONTHLY_ALLOCATION[tier] ?? 0;
-  const priorAllocation = Math.max(0, (profile as UserProfile & { last_allocation?: number }).last_allocation ?? allocation);
+  const priorAllocation = Math.max(0, profile.last_allocation ?? allocation);
   const currentSub = Math.max(0, profile.edge_subscription ?? 0);
 
   const retentionThreshold = Math.floor(priorAllocation * ROLLOVER_RETENTION_PCT);
@@ -263,8 +312,7 @@ export async function applyMonthlyRollover(
 
   const next = await updateProfile(userId, {
     edge_subscription: nextSub,
-    // @ts-expect-error – column exists in schema, optional in TS type
-    last_rollover_at: new Date().toISOString(),
+    last_rollover_at: now,
     last_allocation: allocation,
   });
 

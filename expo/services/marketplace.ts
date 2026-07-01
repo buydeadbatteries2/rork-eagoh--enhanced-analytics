@@ -47,7 +47,54 @@ function collectDomainDnaValues(dna: string[] | undefined | null): string {
  *   - Pro, Oracle Elite, and Syndicate can buy and sell.
  *   - No platform fee — credits transfer buyer → vendor.
  *   - Sync expires automatically after selected days.
+ *
+ * CRITICAL RLS POLICY REQUIRED (run in Supabase SQL Editor):
+ *   The `eagohs_marketplace_select` policy must exist on public.eagohs
+ *   so that the eagoh join returns data for listings owned by other users.
+ *   Without it, eagoh images only display for the signed-in user's own
+ *   EAGOHs. See expo/supabase-schema.sql lines 169-175.
  */
+
+// ── Image Resolution ──────────────────────────────────────────────────
+
+/**
+ * Resolves the best displayable EAGOH image URL from marketplace-joined data.
+ *
+ * EAGOH images are stored as `image_url` / `image_thumb_url` on the eagohs row.
+ * These are typically remote HTTPS URLs (Rork toolkit CDN) or data URIs.
+ * Local device URIs (file://, content://, blob:) are NOT usable by other users.
+ */
+export function resolveMarketplaceEagohImage(
+  eagoh: { image_url?: string | null; image_thumb_url?: string | null } | null | undefined,
+): string | null {
+  if (!eagoh) return null;
+
+  const raw = eagoh.image_thumb_url ?? eagoh.image_url;
+  if (!raw) return null;
+
+  // Accept remote HTTPS URLs and data URIs (base64 images)
+  if (raw.startsWith("https://") || raw.startsWith("data:")) {
+    return raw;
+  }
+
+  // Reject local device URIs — these only work on the device that created them
+  if (
+    raw.startsWith("file://") ||
+    raw.startsWith("content://") ||
+    raw.startsWith("blob:")
+  ) {
+    if (__DEV__) {
+      console.warn("[marketplace] ignoring local-only EAGOH image URI", raw.slice(0, 60));
+    }
+    return null;
+  }
+
+  // Unknown scheme — return as-is but log a warning
+  if (__DEV__) {
+    console.warn("[marketplace] unknown EAGOH image URI scheme", raw.slice(0, 60));
+  }
+  return raw;
+}
 
 // ── Types ──────────────────────────────────────────────────────────────
 

@@ -70,6 +70,7 @@ import {
   listActiveListings,
   purchaseSync,
   recalculateVendorStats,
+  resolveMarketplaceEagohImage,
   toggleListingActive,
   updateListing,
   type EnrichedListing,
@@ -324,7 +325,19 @@ const ListingCard = memo(function ListingCard({
   const eagohRank: RankTier = (reputation?.rank as RankTier) ?? "Dormant";
   const repScore = reputation?.reputation_score ?? 0;
   const rkColor = rankColor(eagohRank);
-  const imageUrl = eagoh?.image_thumb_url ?? eagoh?.image_url ?? null;
+  const imageUrl = resolveMarketplaceEagohImage(eagoh);
+
+  // Dev diagnostics — logs image resolution data for marketplace troubleshooting
+  if (__DEV__ && imageUrl === null && eagoh != null) {
+    console.log("[Exchange Listing Image] MISSING", {
+      listingId: item.id,
+      sellerId: item.vendor_id,
+      eagohId: item.eagoh_id,
+      rawImageUrl: (eagoh as Record<string, unknown>).image_url,
+      rawImageThumbUrl: (eagoh as Record<string, unknown>).image_thumb_url,
+      resolvedImageUri: imageUrl,
+    });
+  }
 
   // Fixed card width for horizontal carousel — taller rectangular shape
   const cardWidth = 320;
@@ -545,7 +558,7 @@ function PurchaseModal({
 
   const eagoh = listing.eagoh;
   const totalCost = computeTotalCost(listing, selectedLevel, selectedDays);
-  const imageUrl = eagoh?.image_thumb_url ?? eagoh?.image_url ?? null;
+  const imageUrl = resolveMarketplaceEagohImage(eagoh);
 
   // Source Info computed values
   const eagohRank: RankTier = (reputation?.rank as RankTier) ?? "Dormant";
@@ -1213,7 +1226,7 @@ function EditListingModal({
               {/* EAGOH preview */}
               <View style={styles.editEagohPreview}>
                 <View style={styles.editEagohImage}>
-                  <OptimizedEagohImage tone="cyan" label={eagoh?.name ?? "EAGOH"} size="banner" imageUrl={eagoh?.image_thumb_url ?? eagoh?.image_url ?? null} />
+                  <OptimizedEagohImage tone="cyan" label={eagoh?.name ?? "EAGOH"} size="banner" imageUrl={resolveMarketplaceEagohImage(eagoh)} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.modalEagohName}>{eagoh?.name ?? "Unnamed"}</Text>
@@ -1299,7 +1312,7 @@ const CarouselListingCard = memo(function CarouselListingCard({
       ]}
     >
       <View style={styles.carouselCardImage}>
-        <OptimizedEagohImage tone="cyan" label={eagoh?.name ?? "Unnamed"} size="compact" imageUrl={eagoh?.image_thumb_url ?? eagoh?.image_url ?? null} />
+        <OptimizedEagohImage tone="cyan" label={eagoh?.name ?? "Unnamed"} size="compact" imageUrl={resolveMarketplaceEagohImage(eagoh)} />
       </View>
       <View style={styles.carouselCardInfo}>
         <Text style={styles.carouselCardName} numberOfLines={1}>{eagoh?.name ?? "Unnamed"}</Text>
@@ -1401,7 +1414,7 @@ const MyListingCard = memo(function MyListingCard({
   const eagoh = item.eagoh;
   const eagohRank: RankTier = (reputation?.rank as RankTier) ?? "Dormant";
   const rkColor = rankColor(eagohRank);
-  const imageUrl = eagoh?.image_thumb_url ?? eagoh?.image_url ?? null;
+  const imageUrl = resolveMarketplaceEagohImage(eagoh);
   const tone: RenderTone = eagohRank === "Syndicate Prime" || eagohRank === "Oracle" ? "gold" : eagohRank === "Diamond" ? "cyan" : "violet";
   const minPrice = [item.price_25_per_day, item.price_50_per_day, item.price_75_per_day, item.price_100_per_day]
     .filter((p) => p > 0)

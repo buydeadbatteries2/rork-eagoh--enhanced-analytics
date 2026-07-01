@@ -165,7 +165,12 @@ create policy "eagohs_self_insert" on public.eagohs for insert with check (auth.
 create policy "eagohs_self_update" on public.eagohs for update using (auth.uid() = user_id);
 create policy "eagohs_self_delete" on public.eagohs for delete using (auth.uid() = user_id);
 
--- Marketplace: anyone can read EAGOHs that have an active listing (public browsing)
+-- ═══════════════════════════════════════════════════════════════════════
+-- CRITICAL: Marketplace image visibility depends on this policy.
+-- Without it, the eagoh join in marketplace_listings queries returns NULL
+-- for EAGOHs owned by other users, and their images will not display.
+-- This policy is read-only — it does NOT grant write access.
+-- ═══════════════════════════════════════════════════════════════════════
 create policy "eagohs_marketplace_select" on public.eagohs
   for select using (
     exists (

@@ -1646,33 +1646,6 @@ export default function MarketplaceScreen(): JSX.Element {
   const { effectiveSubscriptionTier } = useProfile();
   const isPaid = canTransact(effectiveSubscriptionTier);
 
-  // ── Free-tier lock ──────────────────────────────────────────────
-  if (!isPaid) {
-    return (
-      <SafeAreaView style={styles.safe} edges={["top"]}>
-        <View style={styles.lockedRoot}>
-          <LinearGradient colors={["rgba(54,245,255,0.06)", "rgba(10,18,30,0.72)", "rgba(3,6,11,0.96)"]} style={StyleSheet.absoluteFill} />
-          <View style={styles.lockedContent}>
-            <View style={[styles.lockedIcon, { borderColor: "rgba(54,245,255,0.35)" }]}>
-              <ArrowRightLeft color={palette.cyan} size={40} />
-            </View>
-            <Text style={styles.lockedTitle}>Exchange requires Pro or higher.</Text>
-            <Text style={styles.lockedSubtitle}>
-              Upgrade to Pro or higher to browse, buy, and sell EAGOH intelligence syncs on the Exchange.
-            </Text>
-            <Pressable
-              onPress={() => router.push("/subscription" as never)}
-              style={({ pressed }) => [styles.lockedCta, pressed && { opacity: 0.85 }]}
-            >
-              <Crown color={palette.void} size={16} />
-              <Text style={styles.lockedCtaText}>View Plans</Text>
-            </Pressable>
-          </View>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
   const loadData = useCallback(async () => {
     if (!user?.id) { setLoading(false); return; }
     try {
@@ -2017,6 +1990,33 @@ export default function MarketplaceScreen(): JSX.Element {
     if (tab !== "browse") return null;
     return <MktSponsoredCarousel userId={user?.id ?? null} />;
   }, [tab, user?.id]);
+
+  // ── Free-tier lock ──────────────────────────────────────────────
+  if (!isPaid) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top"]}>
+        <View style={styles.lockedRoot}>
+          <LinearGradient colors={["rgba(54,245,255,0.06)", "rgba(10,18,30,0.72)", "rgba(3,6,11,0.96)"]} style={StyleSheet.absoluteFill} />
+          <View style={styles.lockedContent}>
+            <View style={[styles.lockedIcon, { borderColor: "rgba(54,245,255,0.35)" }]}>
+              <ArrowRightLeft color={palette.cyan} size={40} />
+            </View>
+            <Text style={styles.lockedTitle}>Exchange requires Pro or higher.</Text>
+            <Text style={styles.lockedSubtitle}>
+              Upgrade to Pro or higher to browse, buy, and sell EAGOH intelligence syncs on the Exchange.
+            </Text>
+            <Pressable
+              onPress={() => router.push("/subscription" as never)}
+              style={({ pressed }) => [styles.lockedCta, pressed && { opacity: 0.85 }]}
+            >
+              <Crown color={palette.void} size={16} />
+              <Text style={styles.lockedCtaText}>View Plans</Text>
+            </Pressable>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <View style={[styles.root, { backgroundColor: pal.void }]}>

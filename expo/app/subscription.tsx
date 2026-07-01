@@ -25,6 +25,7 @@ import {
   subscriptionTierFromProductId,
   type SubscriptionTier,
 } from "@/services/tiers";
+import { getOfferings as getRcOfferings } from "@/services/revenuecat";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import {
@@ -323,7 +324,7 @@ function TierCard({
   tier: Exclude<SubscriptionTier, "free">;
   rcPackage: PurchasesPackage | null;
   isCurrent: boolean;
-  onSubscribe: (pkg: PurchasesPackage) => void;
+  onSubscribe: (pkg: PurchasesPackage | null, t: Exclude<SubscriptionTier, "free">) => void;
   isPurchasing: boolean;
 }): JSX.Element {
   const c = TIER_ACCENTS[tier];
@@ -332,11 +333,10 @@ function TierCard({
   const maxEagohs = TIER_MAX_EAGOHS[tier];
   const benefits = TIER_BENEFITS[tier];
 
-  const priceStr = rcPackage?.product.priceString ?? "Unavailable";
-  const periodStr = rcPackage?.product.subscriptionPeriod
+  const priceStr: string | null = rcPackage?.product.priceString ?? null;
+  const periodStr: string = rcPackage?.product.subscriptionPeriod
     ? `per ${rcPackage.product.subscriptionPeriod}`
     : "";
-  const canPurchase = !!rcPackage;
 
   return (
     <View style={[styles.tierCard, { borderColor: isCurrent ? c.accent : c.border }]}>
@@ -350,7 +350,7 @@ function TierCard({
           </View>
           <View style={{ alignItems: "flex-end" as const }}>
             <Text style={[styles.tierPrice, { color: palette.text }]}>
-              {rcPackage ? priceStr : "—"}
+              {priceStr ?? "—"}
             </Text>
             {periodStr ? (
               <Text style={[styles.tierPeriod, { color: palette.muted }]}>{periodStr}</Text>
@@ -395,10 +395,18 @@ function TierCard({
           ))}
         </View>
 
-        {/* Subscribe button */}
-        {canPurchase && !isCurrent ? (
+        {/* Subscribe button — always rendered */}
+        {isCurrent ? (
           <Pressable
-            onPress={() => onSubscribe(rcPackage!)}
+            disabled
+            style={[styles.subscribeBtn, { backgroundColor: c.soft, borderColor: c.border }]}
+          >
+            <ShieldCheck color={c.accent} size={16} />
+            <Text style={[styles.subscribeBtnText, { color: c.accent }]}>Current Plan</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            onPress={() => onSubscribe(rcPackage, tier)}
             disabled={isPurchasing}
             style={({ pressed }) => [
               styles.subscribeBtn,
@@ -413,23 +421,11 @@ function TierCard({
               <>
                 <Sparkles color={palette.void} size={16} />
                 <Text style={[styles.subscribeBtnText, { color: palette.void }]}>
-                  Subscribe to {label}
+                  {priceStr ? `Subscribe to ${label}` : `Subscribe`}
                 </Text>
               </>
             )}
           </Pressable>
-        ) : canPurchase && isCurrent ? (
-          <Pressable
-            disabled
-            style={[styles.subscribeBtn, { backgroundColor: c.soft, borderColor: c.border }]}
-          >
-            <ShieldCheck color={c.accent} size={16} />
-            <Text style={[styles.subscribeBtnText, { color: c.accent }]}>Current Plan</Text>
-          </Pressable>
-        ) : (
-          <View style={[styles.subscribeBtn, { backgroundColor: "rgba(255,255,255,0.03)", borderColor: palette.line }]}>
-            <Text style={[styles.subscribeBtnText, { color: palette.muted }]}>Loading price…</Text>
-          </View>
         )}
       </View>
     </View>
@@ -493,31 +489,56 @@ export default function SubscriptionScreen(): JSX.Element {
     }
   }, [router, h]);
 
-  /** Whether mock subscription test mode is allowed (dev only, opt-in). */
-  const canMockSubscribe = __DEV__ && !rcConfigured;
+  /** True while offerings or customer info are still being fetched from RevenueCat. */
+  const stillLoading: boolean = isOfferingsLoading || isCustomerInfoLoading;
 
   const handleSubscribe = useCallback(
-    async (pkg: PurchasesPackage): Promise<void> => {
+    async (pkg: PurchasesPackage | null, tier: Exclude<SubscriptionTier, "free">): Promise<void> => {
       if (!user?.id) {
         Alert.alert("Sign In Required", "Please sign in before purchasing a subscription.");
         return;
       }
       h.heavy();
-      const pid = pkg.product.identifier;
-      const tier = subscriptionTierFromProductId(pid);
-
-      if (!tier || tier === "free") {
-        Alert.alert("Error", "Unknown subscription product.");
-        return;
-      }
 
       setPurchasingTier(tier);
       setPurchaseSuccess(false);
 
       try {
         if (rcConfigured) {
-          // ── Real RevenueCat purchase (native build / TestFlight) ────
-          const purchaseResult = await rcPurchase(pkg);
+          // ── Resolve the package if not provided ──────────────────
+          let resolvedPkg = pkg;
+          if (!resolvedPkg) {
+            // Package not pre-loaded — fetch offerings now and search for it
+            if (__DEV__) {
+              console.log(`[Subscription] Package not cached for ${tier} — searching offerings dynamically`);
+            }
+            try {
+              const { allOfferings: freshOfferings } = await getRcOfferings();
+              for (const off of freshOfferings) {
+                for (const freshPkg of off.availablePackages) {
+                  const freshTier = subscriptionTierFromProductId(freshPkg.product.identifier);
+                  if (freshTier === tier) {
+                    resolvedPkg = freshPkg;
+                    break;
+                  }
+                }
+                if (resolvedPkg) break;
+              }
+            } catch (lookupErr) {
+              console.warn("[Subscription] Dynamic offering lookup failed:", lookupErr);
+            }
+
+            if (!resolvedPkg) {
+              Alert.alert(
+                "Product Not Found",
+                `The ${TIER_LABELS[tier]} subscription product could not be found. Please ensure your App Store products are correctly configured and try again.`,
+              );
+              return;
+            }
+          }
+
+          // ── Purchase the resolved package ────────────────────────
+          const purchaseResult = await rcPurchase(resolvedPkg);
           const activeSubs = purchaseResult.customerInfo.activeSubscriptions;
           if (__DEV__) {
             console.log("[Subscription] Purchase success — active subs:", activeSubs);
@@ -525,7 +546,7 @@ export default function SubscriptionScreen(): JSX.Element {
 
           setPurchaseSuccess(true);
 
-          const tierLabel = TIER_LABELS[tier as keyof typeof TIER_LABELS];
+          const tierLabel = TIER_LABELS[tier];
           Alert.alert(
             "Subscription Activated",
             `Welcome to ${tierLabel}! Your benefits are now active.`,
@@ -574,6 +595,7 @@ export default function SubscriptionScreen(): JSX.Element {
           }
         } else {
           const msg = errObj?.message ?? "Purchase failed";
+          console.warn("[Subscription] Purchase error:", msg);
           Alert.alert("Purchase Failed", msg);
         }
       } finally {
@@ -673,63 +695,57 @@ export default function SubscriptionScreen(): JSX.Element {
           </Pressable>
           <Text style={styles.headerTitle}>Subscription</Text>
         </View>
-        <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          {/* Hero card */}
-          <View style={styles.heroCard}>
-            <LinearGradient colors={["rgba(255,184,77,0.10)", "rgba(10,18,30,0.84)", "rgba(3,6,11,0.96)"]} style={styles.heroGradient} />
-            <View style={styles.heroBody}>
-              <View style={styles.heroIconWrap}>
-                <Crown color={palette.gold} size={28} />
+        {isPreview ? (
+          <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            {/* Hero card */}
+            <View style={styles.heroCard}>
+              <LinearGradient colors={["rgba(255,184,77,0.10)", "rgba(10,18,30,0.84)", "rgba(3,6,11,0.96)"]} style={styles.heroGradient} />
+              <View style={styles.heroBody}>
+                <View style={styles.heroIconWrap}>
+                  <Crown color={palette.gold} size={28} />
+                </View>
+                <Text style={styles.heroTitle}>Choose Your Plan</Text>
+                <Text style={styles.heroSubtitle}>
+                  Store purchases require a development build or TestFlight. Previewing subscription tiers below.
+                </Text>
               </View>
-              <Text style={styles.heroTitle}>Choose Your Plan</Text>
-              <Text style={styles.heroSubtitle}>
-                {isPreview
-                  ? "Store purchases require a development build or TestFlight. Previewing subscription tiers below."
-                  : "Unlock the full power of EAGOH intelligence. All plans include a monthly Neuron allocation, EAGOH slots, and exclusive features."}
-              </Text>
             </View>
-          </View>
 
-          {/* Preview tier cards (disabled) */}
-          {isPreview ? (
-            <>
-              <PreviewTierCard
-                tier="pro"
-                onTestSubscribe={__DEV__ ? handleTestSubscribe : undefined}
-                isSubscribing={isPurchasing && purchasingTier === "pro"}
-              />
-              <PreviewTierCard
-                tier="oracle_elite"
-                onTestSubscribe={__DEV__ ? handleTestSubscribe : undefined}
-                isSubscribing={isPurchasing && purchasingTier === "oracle_elite"}
-              />
-              <PreviewTierCard
-                tier="syndicate"
-                onTestSubscribe={__DEV__ ? handleTestSubscribe : undefined}
-                isSubscribing={isPurchasing && purchasingTier === "syndicate"}
-              />
-            </>
-          ) : (
-            <View style={styles.statusCenter}>
-              <Coins color={palette.muted} size={40} />
-              <Text style={styles.statusTitle}>App Store Unavailable</Text>
-              <Text style={styles.statusSubtitle}>
-                Subscriptions require the iOS App Store. This feature is not available in the current build environment.
-              </Text>
-              <Pressable onPress={handleRetry} style={({ pressed }) => [styles.retryBtn, pressed && { opacity: 0.7 }]}>
-                <RefreshCw color={palette.cyan} size={16} />
-                <Text style={styles.retryBtnText}>Retry</Text>
-              </Pressable>
-            </View>
-          )}
-        </ScrollView>
+            {/* Preview tier cards (disabled) */}
+            <PreviewTierCard
+              tier="pro"
+              onTestSubscribe={__DEV__ ? handleTestSubscribe : undefined}
+              isSubscribing={isPurchasing && purchasingTier === "pro"}
+            />
+            <PreviewTierCard
+              tier="oracle_elite"
+              onTestSubscribe={__DEV__ ? handleTestSubscribe : undefined}
+              isSubscribing={isPurchasing && purchasingTier === "oracle_elite"}
+            />
+            <PreviewTierCard
+              tier="syndicate"
+              onTestSubscribe={__DEV__ ? handleTestSubscribe : undefined}
+              isSubscribing={isPurchasing && purchasingTier === "syndicate"}
+            />
+          </ScrollView>
+        ) : (
+          <View style={styles.statusCenter}>
+            <Coins color={palette.muted} size={40} />
+            <Text style={styles.statusTitle}>App Store Unavailable</Text>
+            <Text style={styles.statusSubtitle}>
+              Subscriptions require the iOS App Store. This feature is not available in the current build environment.
+            </Text>
+            <Pressable onPress={handleRetry} style={({ pressed }) => [styles.retryBtn, pressed && { opacity: 0.7 }]}>
+              <RefreshCw color={palette.cyan} size={16} />
+              <Text style={styles.retryBtnText}>Retry</Text>
+            </Pressable>
+          </View>
+        )}
       </SafeAreaView>
     );
   }
 
-  // ── Loading but configured ─────────────────────────────────────────────
-
-  const stillLoading = isOfferingsLoading || isCustomerInfoLoading;
+  // ── RevenueCat configured — always show tier cards ────────────────────
 
   return (
     <SafeAreaView edges={["top"]} style={styles.safe}>
@@ -789,32 +805,28 @@ export default function SubscriptionScreen(): JSX.Element {
           </View>
         ) : null}
 
-        {/* Tier cards */}
-        {!stillLoading ? (
-          <>
-            <TierCard
-              tier="pro"
-              rcPackage={tierPackages.pro}
-              isCurrent={currentTier === "pro" && !purchaseSuccess}
-              onSubscribe={handleSubscribe}
-              isPurchasing={isPurchasing && purchasingTier === "pro"}
-            />
-            <TierCard
-              tier="oracle_elite"
-              rcPackage={tierPackages.oracle_elite}
-              isCurrent={currentTier === "oracle_elite" && !purchaseSuccess}
-              onSubscribe={handleSubscribe}
-              isPurchasing={isPurchasing && purchasingTier === "oracle_elite"}
-            />
-            <TierCard
-              tier="syndicate"
-              rcPackage={tierPackages.syndicate}
-              isCurrent={currentTier === "syndicate" && !purchaseSuccess}
-              onSubscribe={handleSubscribe}
-              isPurchasing={isPurchasing && purchasingTier === "syndicate"}
-            />
-          </>
-        ) : null}
+        {/* Tier cards — always render, even if packages haven't loaded yet */}
+        <TierCard
+          tier="pro"
+          rcPackage={tierPackages.pro}
+          isCurrent={currentTier === "pro" && !purchaseSuccess}
+          onSubscribe={handleSubscribe}
+          isPurchasing={isPurchasing && purchasingTier === "pro"}
+        />
+        <TierCard
+          tier="oracle_elite"
+          rcPackage={tierPackages.oracle_elite}
+          isCurrent={currentTier === "oracle_elite" && !purchaseSuccess}
+          onSubscribe={handleSubscribe}
+          isPurchasing={isPurchasing && purchasingTier === "oracle_elite"}
+        />
+        <TierCard
+          tier="syndicate"
+          rcPackage={tierPackages.syndicate}
+          isCurrent={currentTier === "syndicate" && !purchaseSuccess}
+          onSubscribe={handleSubscribe}
+          isPurchasing={isPurchasing && purchasingTier === "syndicate"}
+        />
 
         {/* Restore purchases */}
         <Pressable

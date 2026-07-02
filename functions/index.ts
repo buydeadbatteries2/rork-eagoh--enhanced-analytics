@@ -1,5 +1,5 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker (Phase 5B schema sync)
+ * EAGOH Analyst Chat — Cloudflare Worker (Phase 5B schema sync — verified)
  *
  * Secure server-side intelligence grounding system.
  * Column names synchronized with live Supabase schema.
@@ -3047,8 +3047,9 @@ async function handleUpdateOIEntry(request: Request, env: Env): Promise<Response
 
   // 3. Save version history BEFORE updating the active entry
   const currentVersion = entryRow.version_number ?? 1;
-  const changeType = isMajorEdit ? "edit" : "edit";
-
+  // All user-initiated edits use change_type = 'edit' (never minor_edit/major_edit).
+  // isMajorEdit only controls whether version_number is incremented and reputation
+  // is recalculated downstream — it does not change the change_type value.
   const { error: versionErr } = await serviceClient
     .from("open_intelligence_versions")
     .insert({
@@ -3062,7 +3063,7 @@ async function handleUpdateOIEntry(request: Request, env: Env): Promise<Response
       previous_validation_status: entryRow.validation_status,
       previous_quality_score: entryRow.quality_score,
       previous_influence_score: entryRow.influence_score,
-      change_type: changeType,
+      change_type: "edit",
       changed_by: userId,
     });
 

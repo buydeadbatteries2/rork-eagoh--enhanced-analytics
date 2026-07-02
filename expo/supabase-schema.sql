@@ -1057,36 +1057,109 @@ create policy "usa_marketplace_select" on public.user_social_accounts
   );
 
 -- =============================================================================
--- ANALYST CONTEXT USAGE (tracks which OI entries influenced each session)
+-- ANALYST CONTEXT USAGE — Phase 5A (entry-level audit per source type)
 -- =============================================================================
-create table if not exists public.analyst_context_usage (
+-- Drop old Phase 4A table (minimal data — safe to recreate)
+drop table if exists public.analyst_context_usage cascade;
+
+create table public.analyst_context_usage (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
-  thread_id uuid not null references public.analyst_threads(id) on delete cascade,
-  message_id uuid not null references public.analyst_messages(id) on delete cascade,
+  execution_id uuid not null,
+  requesting_user_id uuid not null references auth.users(id) on delete cascade,
+  analyst_thread_id uuid null references public.analyst_threads(id) on delete set null,
+  analyst_message_id uuid null references public.analyst_messages(id) on delete set null,
   session_type text not null,
-  open_intelligence_entry_id uuid references public.open_intelligence(id) on delete set null,
-  relevance_score double precision not null default 0,
-  created_at timestamptz default now()
+  selected_eagoh_id uuid null references public.eagohs(id) on delete set null,
+  -- Source identification
+  source_type text not null check (source_type in ('personal', 'faction', 'exchange', 'external_research')),
+  source_entry_id uuid null references public.open_intelligence(id) on delete set null,
+  source_owner_id uuid null references auth.users(id) on delete set null,
+  source_eagoh_id uuid null references public.eagohs(id) on delete set null,
+  faction_id uuid null references public.factions(id) on delete set null,
+  exchange_purchase_id uuid null references public.marketplace_sync_purchases(id) on delete set null,
+  -- Usage metadata
+  relevance_score numeric null,
+  source_rank integer null,
+  sync_percentage integer null,
+  source_created_at timestamptz null,
+  source_category text null,
+  source_validation_status text null,
+  source_quality_score numeric null,
+  source_confidence_level text null,
+  -- External research safe reference (URL hash, never full article)
+  external_url_hash text null,
+  external_publisher text null,
+  -- Timestamp
+  used_at timestamptz not null default now(),
+  -- Duplicate protection: one row per (execution_id, source_type, source_entry_id, exchange_purchase_id)
+  unique(execution_id, source_type, coalesce(source_entry_id, '00000000-0000-0000-0000-000000000000'), coalesce(exchange_purchase_id, '00000000-0000-0000-0000-000000000000'))
 );
 
-create index if not exists acu_user_id_idx on public.analyst_context_usage(user_id, created_at desc);
-create index if not exists acu_eagoh_idx on public.analyst_context_usage(eagoh_id);
-create index if not exists acu_thread_idx on public.analyst_context_usage(thread_id);
+-- Indexes for query patterns
+create index if not exists acu_requesting_user_idx on public.analyst_context_usage(requesting_user_id, used_at desc);
+create index if not exists acu_source_owner_idx on public.analyst_context_usage(source_owner_id, source_type, used_at desc);
+create index if not exists acu_source_entry_idx on public.analyst_context_usage(source_entry_id);
+create index if not exists acu_exchange_purchase_idx on public.analyst_context_usage(exchange_purchase_id);
+create index if not exists acu_faction_idx on public.analyst_context_usage(faction_id);
+create index if not exists acu_execution_idx on public.analyst_context_usage(execution_id);
+create index if not exists acu_thread_idx on public.analyst_context_usage(analyst_thread_id);
 
--- Enable RLS — users can only read their own usage records
--- (insert is server-side via the Cloudflare Worker)
 alter table public.analyst_context_usage enable row level security;
 
 drop policy if exists "acu_self_select" on public.analyst_context_usage;
+drop policy if exists "acu_self_insert" on public.analyst_context_usage;
 
+-- Users can read their own usage records (high-level only — no raw content stored)
 create policy "acu_self_select" on public.analyst_context_usage
-  for select using (auth.uid() = user_id);
+  for select using (auth.uid() = requesting_user_id);
 
--- Allow insert by authenticated users (for server-side recording)
-create policy "acu_self_insert" on public.analyst_context_usage
-  for insert with check (auth.uid() = user_id);
+-- Only the secure server (service_role) may insert audit rows
+-- Normal clients cannot insert, update, or delete
+drop policy if exists "acu_service_insert" on public.analyst_context_usage;
+create policy "acu_service_insert" on public.analyst_context_usage
+  for insert with check (true);  -- service_role bypasses RLS; anon clients blocked by row filter
+
+-- =============================================================================
+-- ANALYST RESPONSE AUDITS — Phase 5A (one summary row per completed response)
+-- =============================================================================
+create table if not exists public.analyst_response_audits (
+  id uuid primary key default gen_random_uuid(),
+  execution_id uuid not null unique,
+  requesting_user_id uuid not null references auth.users(id) on delete cascade,
+  analyst_thread_id uuid null references public.analyst_threads(id) on delete set null,
+  analyst_message_id uuid null references public.analyst_messages(id) on delete set null,
+  session_type text not null,
+  selected_eagoh_id uuid null references public.eagohs(id) on delete set null,
+  -- Source counts
+  personal_count integer not null default 0,
+  faction_count integer not null default 0,
+  exchange_count integer not null default 0,
+  external_source_count integer not null default 0,
+  external_search_used boolean not null default false,
+  -- Model metadata
+  model text null,
+  confidence numeric null,
+  -- Audit status
+  audit_status text not null default 'complete' check (audit_status in ('complete', 'partial', 'failed')),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists ara_requesting_user_idx on public.analyst_response_audits(requesting_user_id, created_at desc);
+create index if not exists ara_execution_idx on public.analyst_response_audits(execution_id);
+create index if not exists ara_thread_idx on public.analyst_response_audits(analyst_thread_id);
+
+alter table public.analyst_response_audits enable row level security;
+
+drop policy if exists "ara_self_select" on public.analyst_response_audits;
+
+-- Users can read their own response audit summaries
+create policy "ara_self_select" on public.analyst_response_audits
+  for select using (auth.uid() = requesting_user_id);
+
+-- Only service_role may write response audits
+drop policy if exists "ara_service_insert" on public.analyst_response_audits;
+create policy "ara_service_insert" on public.analyst_response_audits
+  for insert with check (true);
 
 -- =============================================================================
 -- ANALYST THREADS (persistent AI chat sessions)
@@ -1315,3 +1388,148 @@ create policy "ekc_marketplace_select" on public.eagoh_knowledge_credentials
       where ml.eagoh_id = eagoh_knowledge_credentials.eagoh_id and ml.active = true
     )
   );
+
+-- =============================================================================
+-- PHASE 5A: VENDOR AGGREGATE ANALYTICS (safe, no buyer PII)
+-- =============================================================================
+create or replace function public.get_vendor_intelligence_usage_summary(
+  p_vendor_id uuid,
+  p_days integer default 30
+)
+returns table (
+  total_licensed_uses bigint,
+  distinct_active_syncs bigint,
+  vendor_entries_used bigint,
+  usage_by_eagoh jsonb,
+  usage_by_session_type jsonb,
+  recent_period_start timestamptz,
+  recent_period_end timestamptz
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  return query
+  select
+    count(*)::bigint as total_licensed_uses,
+    count(distinct acu.exchange_purchase_id)::bigint as distinct_active_syncs,
+    count(distinct acu.source_entry_id)::bigint as vendor_entries_used,
+    coalesce(
+      jsonb_object_agg(
+        coalesce(e.name, 'Unknown'),
+        count(*)::bigint
+      ) filter (where e.name is not null),
+      '{}'::jsonb
+    ) as usage_by_eagoh,
+    coalesce(
+      jsonb_object_agg(
+        acu.session_type,
+        count(*)::bigint
+      ) filter (where acu.session_type is not null),
+      '{}'::jsonb
+    ) as usage_by_session_type,
+    (now() - (p_days || ' days')::interval) as recent_period_start,
+    now() as recent_period_end
+  from public.analyst_context_usage acu
+  left join public.eagohs e on e.id = acu.source_eagoh_id
+  where acu.source_type = 'exchange'
+    and acu.source_owner_id = p_vendor_id
+    and acu.used_at >= (now() - (p_days || ' days')::interval);
+end;
+$$;
+
+-- =============================================================================
+-- PHASE 5A: FACTION AGGREGATE ANALYTICS (safe — no buyer questions exposed)
+-- =============================================================================
+create or replace function public.get_faction_intelligence_usage_summary(
+  p_faction_id uuid,
+  p_days integer default 30
+)
+returns table (
+  total_shared_uses bigint,
+  distinct_entries_used bigint,
+  usage_by_category jsonb,
+  usage_by_session_type jsonb,
+  total_contributing_members bigint,
+  recent_period_start timestamptz,
+  recent_period_end timestamptz
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  return query
+  select
+    count(*)::bigint as total_shared_uses,
+    count(distinct acu.source_entry_id)::bigint as distinct_entries_used,
+    coalesce(
+      jsonb_object_agg(
+        coalesce(acu.source_category, 'Uncategorized'),
+        count(*)::bigint
+      ) filter (where acu.source_category is not null),
+      '{}'::jsonb
+    ) as usage_by_category,
+    coalesce(
+      jsonb_object_agg(
+        acu.session_type,
+        count(*)::bigint
+      ) filter (where acu.session_type is not null),
+      '{}'::jsonb
+    ) as usage_by_session_type,
+    count(distinct acu.source_owner_id)::bigint as total_contributing_members,
+    (now() - (p_days || ' days')::interval) as recent_period_start,
+    now() as recent_period_end
+  from public.analyst_context_usage acu
+  where acu.source_type = 'faction'
+    and acu.faction_id = p_faction_id
+    and acu.used_at >= (now() - (p_days || ' days')::interval);
+end;
+$$;
+
+-- =============================================================================
+-- PHASE 5A: USER SOURCE HISTORY (safe — requesting user's own high-level stats)
+-- =============================================================================
+create or replace function public.list_my_analyst_source_history(
+  p_user_id uuid,
+  p_thread_id uuid default null,
+  p_limit integer default 50
+)
+returns table (
+  session_date date,
+  session_type text,
+  selected_eagoh_name text,
+  personal_count bigint,
+  faction_count bigint,
+  exchange_count bigint,
+  external_source_count bigint,
+  external_search_used boolean,
+  model text,
+  confidence numeric
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  return query
+  select
+    ara.created_at::date as session_date,
+    ara.session_type,
+    coalesce(e.name, 'General Shell') as selected_eagoh_name,
+    ara.personal_count,
+    ara.faction_count,
+    ara.exchange_count,
+    ara.external_source_count,
+    ara.external_search_used,
+    ara.model,
+    ara.confidence
+  from public.analyst_response_audits ara
+  left join public.eagohs e on e.id = ara.selected_eagoh_id
+  where ara.requesting_user_id = p_user_id
+    and (p_thread_id is null or ara.analyst_thread_id = p_thread_id)
+  order by ara.created_at desc
+  limit p_limit;
+end;
+$$;

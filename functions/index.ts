@@ -66,6 +66,8 @@ type AnalystRequest = {
   personality?: string;
   kind?: string;
   conversationContext?: ConversationMessage[];
+  threadId?: string | null;
+  messageId?: string | null;
 };
 
 type Source = {
@@ -177,6 +179,40 @@ type ExchangeResearchResult = {
   entries: OpenIntelligenceRow[];
   syncCount: number;
   vendorEagohCount: number;
+  /** Map from entry ID to its exchange purchase ID for audit tracking */
+  entryPurchaseMap: Map<string, { purchaseId: string; syncPercentage: number }>;
+};
+
+/** Faction OI entry with contributor and faction tracking for audit. */
+type FactionOIEntry = OpenIntelligenceRow & {
+  faction_id: string;
+  contributor_user_id: string;
+};
+
+/** Unified audit entry record for batch insert. */
+type AuditEntryRecord = {
+  execution_id: string;
+  requesting_user_id: string;
+  source_type: "personal" | "faction" | "exchange" | "external_research";
+  source_entry_id: string | null;
+  source_owner_id: string | null;
+  source_eagoh_id: string | null;
+  faction_id: string | null;
+  exchange_purchase_id: string | null;
+  relevance_score: number | null;
+  source_rank: number | null;
+  sync_percentage: number | null;
+  source_created_at: string | null;
+  source_category: string | null;
+  source_validation_status: string | null;
+  source_quality_score: number | null;
+  source_confidence_level: string | null;
+  external_url_hash: string | null;
+  external_publisher: string | null;
+  session_type: string;
+  selected_eagoh_id: string | null;
+  analyst_thread_id: string | null;
+  analyst_message_id: string | null;
 };
 
 // ── Service-role Supabase client ─────────────────────────────────────────────
@@ -327,13 +363,13 @@ async function retrieveFactionOpenIntelligence(
   userId: string,
   query: string,
   sessionType: SessionType,
-): Promise<OpenIntelligenceRow[]> {
+): Promise<{ entries: FactionOIEntry[]; allRanked: FactionOIEntry[] }> {
+  const emptyResult = { entries: [] as FactionOIEntry[], allRanked: [] as FactionOIEntry[] };
   const memberships = await getEligibleFactionMemberships(supabase, userId);
-  if (memberships.length === 0) return [];
+  if (memberships.length === 0) return emptyResult;
 
   const factionIds = memberships.map((m) => m.factionId);
 
-  // Load shared intelligence records for these factions
   const { data: sharedRows, error: sharedErr } = await supabase
     .from("faction_shared_intelligence")
     .select("oi_entry_id, user_id, faction_id")
@@ -343,18 +379,22 @@ async function retrieveFactionOpenIntelligence(
 
   if (sharedErr || !sharedRows || sharedRows.length === 0) {
     if (sharedErr) console.warn("[analyst] faction shared intel query failed", sharedErr.message);
-    return [];
+    return emptyResult;
   }
 
-  // Exclude the requesting user's own entries (already in personal OI)
-  const foreignRows = (sharedRows as Array<{ oi_entry_id: string; user_id: string }>)
-    .filter((r) => r.user_id !== userId);
+  const typed = sharedRows as Array<{ oi_entry_id: string; user_id: string; faction_id: string }>;
+  const foreignRows = typed.filter((r) => r.user_id !== userId);
+  if (foreignRows.length === 0) return emptyResult;
 
-  if (foreignRows.length === 0) return [];
+  const factionMap = new Map<string, { faction_id: string; contributor_user_id: string }>();
+  for (const r of foreignRows) {
+    if (!factionMap.has(r.oi_entry_id)) {
+      factionMap.set(r.oi_entry_id, { faction_id: r.faction_id, contributor_user_id: r.user_id });
+    }
+  }
 
   const entryIds = [...new Set(foreignRows.map((r) => r.oi_entry_id))];
 
-  // Fetch the actual OI entries
   const { data: entries, error: entriesErr } = await supabase
     .from("open_intelligence")
     .select("*")
@@ -363,16 +403,19 @@ async function retrieveFactionOpenIntelligence(
 
   if (entriesErr || !entries || entries.length === 0) {
     if (entriesErr) console.warn("[analyst] faction OI entry fetch failed", entriesErr.message);
-    return [];
+    return emptyResult;
   }
 
   const rawEntries = entries as OpenIntelligenceRow[];
 
-  // Rank and limit
-  const limit = sessionFactionOILimit(sessionType);
-  const ranked = rankEntries(rawEntries, query, Math.min(limit, rawEntries.length));
+  const factionEntries: FactionOIEntry[] = rawEntries.map((e) => {
+    const meta = factionMap.get(e.id);
+    return { ...e, faction_id: meta?.faction_id ?? "", contributor_user_id: meta?.contributor_user_id ?? "" };
+  });
 
-  return ranked;
+  const limit = sessionFactionOILimit(sessionType);
+  const ranked = rankEntries(factionEntries, query, Math.min(limit, factionEntries.length));
+  return { entries: ranked, allRanked: factionEntries };
 }
 
 // ── Session Faction Entry Limits ─────────────────────────────────────────────
@@ -715,7 +758,7 @@ async function retrieveExchangeOpenIntelligence(
   const syncs = await getActiveExchangeSyncs(serviceClient, userId);
 
   if (syncs.length === 0) {
-    return { used: false, entries: [], syncCount: 0, vendorEagohCount: 0 };
+    return { used: false, entries: [], syncCount: 0, vendorEagohCount: 0, entryPurchaseMap: new Map() };
   }
 
   // Collect unique vendor EAGOH IDs
@@ -765,7 +808,7 @@ async function retrieveExchangeOpenIntelligence(
   }
 
   if (allEligible.length === 0) {
-    return { used: false, entries: [], syncCount: syncs.length, vendorEagohCount: vendorEagohIds.length };
+    return { used: false, entries: [], syncCount: syncs.length, vendorEagohCount: vendorEagohIds.length, entryPurchaseMap: new Map() };
   }
 
   // Apply stable cohort + percentage for each vendor EAGOH
@@ -799,11 +842,29 @@ async function retrieveExchangeOpenIntelligence(
     sessionType,
   });
 
+  // Build purchase tracking map for audit
+  const entryPurchaseMap = new Map<string, { purchaseId: string; syncPercentage: number }>();
+  for (const [eagohId, entries] of eligibleMap) {
+    const pct = pctMap.get(eagohId) ?? 0;
+    const matchingSync = syncs.find((s) => s.vendorEagohId === eagohId);
+    if (matchingSync && pct > 0) {
+      for (const entry of entries) {
+        if (!entryPurchaseMap.has(entry.id)) {
+          entryPurchaseMap.set(entry.id, {
+            purchaseId: matchingSync.purchaseId,
+            syncPercentage: pct,
+          });
+        }
+      }
+    }
+  }
+
   return {
     used: ranked.length > 0,
     entries: ranked,
     syncCount: syncs.length,
     vendorEagohCount: vendorEagohIds.length,
+    entryPurchaseMap,
   };
 }
 
@@ -1257,40 +1318,129 @@ function formatExternalResearchContext(result: ExternalResearchResult): string {
   return parts.join("\n\n");
 }
 
-// ── Analyst Context Usage Audit ──────────────────────────────────────────────
+// ── Audit Utilities ──────────────────────────────────────────────────────────
+
+/** Simple hash for external URLs to avoid storing full URLs in audit. */
+function hashUrl(url: string): string {
+  let hash = 0;
+  for (let i = 0; i < url.length; i++) {
+    const char = url.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return "url_" + Math.abs(hash).toString(16).slice(0, 12);
+}
+
+/** Normalize a domain from a URL for external publisher tracking. */
+function extractPublisher(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "unknown";
+  }
+}
+
+// ── Phase 5A: Comprehensive Audit Recording ───────────────────────────────────
 
 /**
- * Log analyst context usage for Exchange intelligence auditing.
- * Only logs when Exchange entries were used. Best-effort — never fails the session.
+ * Write complete audit records for all source types used in an analyst response.
+ *
+ * Writes ONE analyst_response_audits summary row and batch-inserts all
+ * analyst_context_usage detail rows. Uses the service_role client.
+ * Best-effort — never fails the analyst session.
+ *
+ * If individual source rows fail but the summary succeeds, audit_status = 'partial'.
  */
-async function logContextUsage(
-  serviceClient: SupabaseClient | null,
+async function writeAuditRecords(
+  serviceClient: SupabaseClient,
   params: {
+    executionId: string;
     userId: string;
-    sourceType: string;
-    sourceOwnerId?: string;
-    sourceEagohId?: string;
-    oiEntryId?: string;
     sessionType: string;
-    threadId: string;
-    relevanceScore?: number;
+    selectedEagohId: string | null;
+    threadId: string | null;
+    messageId: string | null;
+    model: string;
+    confidence: number;
+    auditEntries: AuditEntryRecord[];
+    externalSearchUsed: boolean;
   },
 ): Promise<void> {
-  if (!serviceClient) return;
   try {
-    await serviceClient.from("analyst_context_usage").insert({
-      requesting_user_id: params.userId,
-      source_type: params.sourceType,
-      source_owner_id: params.sourceOwnerId ?? null,
-      source_eagoh_id: params.sourceEagohId ?? null,
-      open_intelligence_entry_id: params.oiEntryId ?? null,
-      session_type: params.sessionType,
-      thread_id: params.threadId,
-      relevance_score: params.relevanceScore ?? null,
-      used_at: new Date().toISOString(),
-    });
-  } catch {
-    // Best-effort audit logging — don't fail the session
+    const personalCount = params.auditEntries.filter((e) => e.source_type === "personal").length;
+    const factionCount = params.auditEntries.filter((e) => e.source_type === "faction").length;
+    const exchangeCount = params.auditEntries.filter((e) => e.source_type === "exchange").length;
+    const externalCount = params.auditEntries.filter((e) => e.source_type === "external_research").length;
+
+    // 1. Write the response-level audit summary
+    const { error: summaryErr } = await serviceClient
+      .from("analyst_response_audits")
+      .insert({
+        execution_id: params.executionId,
+        requesting_user_id: params.userId,
+        analyst_thread_id: params.threadId ?? null,
+        analyst_message_id: params.messageId ?? null,
+        session_type: params.sessionType,
+        selected_eagoh_id: params.selectedEagohId ?? null,
+        personal_count: personalCount,
+        faction_count: factionCount,
+        exchange_count: exchangeCount,
+        external_source_count: externalCount,
+        external_search_used: params.externalSearchUsed,
+        model: params.model,
+        confidence: params.confidence,
+        audit_status: "complete",
+      });
+
+    if (summaryErr) {
+      console.warn("[analyst] audit summary insert failed", summaryErr.message);
+      return;
+    }
+
+    // 2. Batch-insert all context usage detail rows
+    if (params.auditEntries.length > 0) {
+      const rows = params.auditEntries.map((e) => ({
+        execution_id: params.executionId,
+        requesting_user_id: params.userId,
+        analyst_thread_id: params.threadId ?? null,
+        analyst_message_id: params.messageId ?? null,
+        session_type: params.sessionType,
+        selected_eagoh_id: params.selectedEagohId ?? null,
+        source_type: e.source_type,
+        source_entry_id: e.source_entry_id,
+        source_owner_id: e.source_owner_id,
+        source_eagoh_id: e.source_eagoh_id,
+        faction_id: e.faction_id,
+        exchange_purchase_id: e.exchange_purchase_id,
+        relevance_score: e.relevance_score,
+        source_rank: e.source_rank,
+        sync_percentage: e.sync_percentage,
+        source_created_at: e.source_created_at,
+        source_category: e.source_category,
+        source_validation_status: e.source_validation_status,
+        source_quality_score: e.source_quality_score,
+        source_confidence_level: e.source_confidence_level,
+        external_url_hash: e.external_url_hash,
+        external_publisher: e.external_publisher,
+        used_at: new Date().toISOString(),
+      }));
+
+      const { error: detailErr } = await serviceClient
+        .from("analyst_context_usage")
+        .insert(rows);
+
+      if (detailErr) {
+        console.warn("[analyst] audit detail batch insert failed", detailErr.message);
+        await serviceClient
+          .from("analyst_response_audits")
+          .update({ audit_status: "partial" })
+          .eq("execution_id", params.executionId);
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "unknown";
+    console.warn("[analyst] audit write exception", msg);
+    // Don't fail the session — audit is best-effort
   }
 }
 
@@ -1554,6 +1704,9 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
   const personality = payload.personality ?? "tactical";
   const kind = payload.kind ?? "general";
   const safePrompt = prompt.slice(0, 1200);
+  const executionId = crypto.randomUUID();
+  const threadId = payload.threadId ?? null;
+  const messageId = payload.messageId ?? null;
 
   console.log("[analyst] request", {
     userId,
@@ -1567,6 +1720,7 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
   let eagohMeta: { name: string; domain: string } | null = null;
   let oiContext = "";
   let oiCount = 0;
+  let rankedPersonalEntries: OpenIntelligenceRow[] = [];
 
   if (payload.eagohId) {
     const eagoh = await verifyEagohOwnership(supabase, payload.eagohId, userId);
@@ -1588,6 +1742,7 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
 
     if (rawEntries.length > 0) {
       const ranked = rankEntries(rawEntries, prompt, Math.min(limit, rawEntries.length));
+      rankedPersonalEntries = ranked;
       const formatted = formatOIContext(ranked, tokenBudget);
       oiContext = formatted.text;
       oiCount = formatted.count;
@@ -1608,16 +1763,18 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
   // ── Faction Intelligence retrieval ──────────────────────────────────────
   let factionOIContext = "";
   let factionOICount = 0;
+  let rankedFactionEntries: FactionOIEntry[] = [];
 
   // Only retrieve faction intelligence for paid users with an active faction
   const isPaid = await isPaidUser(supabase, userId);
   if (isPaid) {
-    const factionEntries = await retrieveFactionOpenIntelligence(supabase, userId, prompt, sessionType);
-    if (factionEntries.length > 0) {
+    const factionResult = await retrieveFactionOpenIntelligence(supabase, userId, prompt, sessionType);
+    if (factionResult.entries.length > 0) {
       const factionTokenBudget = sessionOITokenBudget(sessionType);
-      const factionFormatted = formatFactionOIContext(factionEntries, factionTokenBudget);
+      const factionFormatted = formatFactionOIContext(factionResult.entries, factionTokenBudget);
       factionOIContext = factionFormatted.text;
       factionOICount = factionFormatted.count;
+      rankedFactionEntries = factionResult.entries;
 
       console.log("[analyst] Faction OI retrieval", {
         factionCount: factionOICount,
@@ -1635,6 +1792,8 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
   let exchangeOICount = 0;
   let exchangeSyncCount = 0;
   let exchangeVendorEagohCount = 0;
+  let rankedExchangeEntries: OpenIntelligenceRow[] = [];
+  let exchangePurchaseMap: Map<string, { purchaseId: string; syncPercentage: number }> = new Map();
 
   // Only retrieve Exchange intelligence for paid users
   if (isPaid) {
@@ -1649,19 +1808,8 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
         const exchangeFormatted = formatExchangeOIContext(exchangeResult, exchangeTokenBudget);
         exchangeOIContext = exchangeFormatted.text;
         exchangeOICount = exchangeFormatted.count;
-
-        // Audit logging for Exchange entries
-        for (const entry of exchangeResult.entries) {
-          void logContextUsage(serviceClient, {
-            userId,
-            sourceType: "exchange",
-            sourceOwnerId: entry.user_id,
-            sourceEagohId: entry.eagoh_id,
-            oiEntryId: entry.id,
-            sessionType,
-            threadId: "",
-          });
-        }
+        rankedExchangeEntries = exchangeResult.entries;
+        exchangePurchaseMap = exchangeResult.entryPurchaseMap;
 
         console.log("[analyst] Exchange OI retrieval", {
           exchangeCount: exchangeOICount,
@@ -1824,6 +1972,143 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
         sourceCount: grounding.sourceCount,
         hasEagoh: !!payload.eagohId,
       });
+
+      // ── Phase 5A: Write audit records (best-effort, never fails the session) ──
+      const auditClient = getServiceRoleClient(env);
+      if (auditClient) {
+        const confidence = confidenceMap[sessionType];
+        const auditEntries: AuditEntryRecord[] = [];
+
+        // Personal OI entries
+        for (let i = 0; i < rankedPersonalEntries.length; i++) {
+          const e = rankedPersonalEntries[i];
+          auditEntries.push({
+            execution_id: executionId,
+            requesting_user_id: userId,
+            source_type: "personal",
+            source_entry_id: e.id,
+            source_owner_id: e.user_id,
+            source_eagoh_id: e.eagoh_id,
+            faction_id: null,
+            exchange_purchase_id: null,
+            relevance_score: null,
+            source_rank: i + 1,
+            sync_percentage: null,
+            source_created_at: e.created_at,
+            source_category: e.selected_category ?? null,
+            source_validation_status: e.validation_status,
+            source_quality_score: e.quality_score,
+            source_confidence_level: e.confidence_level,
+            external_url_hash: null,
+            external_publisher: null,
+            session_type: sessionType,
+            selected_eagoh_id: payload.eagohId ?? null,
+            analyst_thread_id: threadId,
+            analyst_message_id: messageId,
+          });
+        }
+
+        // Faction OI entries
+        for (let i = 0; i < rankedFactionEntries.length; i++) {
+          const e = rankedFactionEntries[i];
+          auditEntries.push({
+            execution_id: executionId,
+            requesting_user_id: userId,
+            source_type: "faction",
+            source_entry_id: e.id,
+            source_owner_id: e.contributor_user_id,
+            source_eagoh_id: e.eagoh_id,
+            faction_id: e.faction_id,
+            exchange_purchase_id: null,
+            relevance_score: null,
+            source_rank: i + 1,
+            sync_percentage: null,
+            source_created_at: e.created_at,
+            source_category: e.selected_category ?? null,
+            source_validation_status: e.validation_status,
+            source_quality_score: e.quality_score,
+            source_confidence_level: e.confidence_level,
+            external_url_hash: null,
+            external_publisher: null,
+            session_type: sessionType,
+            selected_eagoh_id: payload.eagohId ?? null,
+            analyst_thread_id: threadId,
+            analyst_message_id: messageId,
+          });
+        }
+
+        // Exchange OI entries
+        for (let i = 0; i < rankedExchangeEntries.length; i++) {
+          const e = rankedExchangeEntries[i];
+          const purchaseInfo = exchangePurchaseMap.get(e.id);
+          auditEntries.push({
+            execution_id: executionId,
+            requesting_user_id: userId,
+            source_type: "exchange",
+            source_entry_id: e.id,
+            source_owner_id: e.user_id,
+            source_eagoh_id: e.eagoh_id,
+            faction_id: null,
+            exchange_purchase_id: purchaseInfo?.purchaseId ?? null,
+            relevance_score: null,
+            source_rank: i + 1,
+            sync_percentage: purchaseInfo?.syncPercentage ?? null,
+            source_created_at: e.created_at,
+            source_category: e.selected_category ?? null,
+            source_validation_status: e.validation_status,
+            source_quality_score: e.quality_score,
+            source_confidence_level: e.confidence_level,
+            external_url_hash: null,
+            external_publisher: null,
+            session_type: sessionType,
+            selected_eagoh_id: payload.eagohId ?? null,
+            analyst_thread_id: threadId,
+            analyst_message_id: messageId,
+          });
+        }
+
+        // External research sources
+        for (let i = 0; i < externalResearchResult.sources.length; i++) {
+          const src = externalResearchResult.sources[i];
+          auditEntries.push({
+            execution_id: executionId,
+            requesting_user_id: userId,
+            source_type: "external_research",
+            source_entry_id: null,
+            source_owner_id: null,
+            source_eagoh_id: null,
+            faction_id: null,
+            exchange_purchase_id: null,
+            relevance_score: null,
+            source_rank: i + 1,
+            sync_percentage: null,
+            source_created_at: null,
+            source_category: null,
+            source_validation_status: null,
+            source_quality_score: null,
+            source_confidence_level: null,
+            external_url_hash: hashUrl(src.url),
+            external_publisher: extractPublisher(src.url),
+            session_type: sessionType,
+            selected_eagoh_id: payload.eagohId ?? null,
+            analyst_thread_id: threadId,
+            analyst_message_id: messageId,
+          });
+        }
+
+        void writeAuditRecords(auditClient, {
+          executionId,
+          userId,
+          sessionType,
+          selectedEagohId: payload.eagohId ?? null,
+          threadId,
+          messageId,
+          model: "gpt-4o-mini",
+          confidence,
+          auditEntries,
+          externalSearchUsed: externalResearchResult.used,
+        });
+      }
 
       return jsonResponse({
         ok: true,

@@ -1,5 +1,5 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker
+ * EAGOH Analyst Chat — Cloudflare Worker (Phase 5B corrected)
  *
  * Secure server-side intelligence grounding system.
  *
@@ -152,11 +152,12 @@ type OpenIntelligenceRow = {
   updated_at: string;
 };
 
-/** Validation statuses used in Phase 5B. */
+/** Validation statuses used in Phase 5B — includes disputed (reduced weight at ranking). */
 const VALID_USEABLE_STATUSES = [
   "pending_review",
   "community_supported",
   "externally_supported",
+  "disputed",
 ] as const;
 
 /** Validation statuses that must be excluded from analyst context. */
@@ -2060,11 +2061,29 @@ function buildMessages(params: {
  * Quality means presentation and usefulness, NOT guaranteed truth.
  * Returns a score from 0–100.
  */
+/**
+ * Evaluate Open Intelligence quality server-side.
+ *
+ * Scores observable qualities: detail, clarity, specificity, relevance,
+ * internal consistency, supporting context, category/tag alignment, and
+ * non-duplicative content.
+ *
+ * Quality means presentation and usefulness, NOT guaranteed truth.
+ * Returns a score from 0–100.
+ *
+ * Full spec signature: content, entryType, category, subtags, customTags,
+ * confidenceLevel, userId. The userId is accepted for future per-user
+ * baseline calibration but does not affect the score directly.
+ */
 function evaluateOpenIntelligenceQuality(params: {
   content: string;
+  entryType?: string | null;
   category?: string | null;
+  subtags?: string[] | null;
+  customTags?: string[] | null;
   tags?: string[] | null;
   confidenceLevel: string;
+  userId?: string;
 }): number {
   const text = params.content.trim();
   if (text.length === 0) return 0;
@@ -2089,11 +2108,20 @@ function evaluateOpenIntelligenceQuality(params: {
   const numbers = (text.match(/\b\d+(?:\.\d+)?/g) ?? []).length;
   score += Math.min(15, properNouns * 3 + numbers * 2);
 
-  // 4. Category/tag alignment — having tags shows deliberate categorization
-  const tagCount = (params.tags ?? []).length + (params.category ? 1 : 0);
+  // 4. Category/tag alignment — deliberate categorization
+  const allTags = [...(params.subtags ?? []), ...(params.customTags ?? []), ...(params.tags ?? [])];
+  const tagCount = allTags.length + (params.category ? 1 : 0);
   score += Math.min(10, tagCount * 3);
 
-  // 5. Confidence alignment — higher confidence claims get slight quality credit
+  // 5. Entry-type depth bonus — deeper entries get slightly more credit
+  const entryTypeBonus: Record<string, number> = {
+    quick_observation: 0,
+    basic_deep_entry: 4,
+    advanced_deep_entry: 8,
+  };
+  score += entryTypeBonus[params.entryType ?? ""] ?? 0;
+
+  // 6. Confidence alignment — higher confidence claims get slight quality credit
   // (but quality is about presentation, not truth)
   const confidenceBoost: Record<string, number> = {
     verified_observation: 5,
@@ -2103,18 +2131,17 @@ function evaluateOpenIntelligenceQuality(params: {
   };
   score += confidenceBoost[params.confidenceLevel] ?? 2;
 
-  // 6. Supporting context: mentions of sources, references, evidence
+  // 7. Supporting context: mentions of sources, references, evidence
   const supportKeywords = ["because", "according to", "source", "evidence", "observed", "measured", "reported", "data", "study", "analysis"];
   const lowerText = text.toLowerCase();
   const supportCount = supportKeywords.filter((k) => lowerText.includes(k)).length;
   score += Math.min(10, supportCount * 3);
 
-  // 7. Internal consistency: absence of obvious contradictions
-  // (simplified check — look for negation patterns that might indicate contradictions)
+  // 8. Internal consistency: absence of obvious contradictions
   const negationPairs = (text.match(/\bnot\b|\bnever\b|\bcannot\b|\bcan't\b|\bdon't\b/gi) ?? []).length;
-  if (negationPairs <= 2) score += 5; // few negations = more consistent tone
+  if (negationPairs <= 2) score += 5;
 
-  // 8. Non-duplicative content — penalize repeated phrases
+  // 9. Non-duplicative content — penalize repeated phrases (keyword stuffing)
   const words = text.toLowerCase().split(/\s+/);
   const wordFreq = new Map<string, number>();
   for (const w of words) {
@@ -2124,7 +2151,31 @@ function evaluateOpenIntelligenceQuality(params: {
   if (repeatedWords === 0) score += 5;
   else score -= Math.min(10, repeatedWords * 2);
 
+  // 10. Low-effort detection: very short, meaningless, or keyword-stuffed content
+  const meaningfulWords = words.filter((w) => w.length > 2).length;
+  if (meaningfulWords < 5) score -= 15;
+
   return Math.max(0, Math.min(100, score));
+}
+
+/**
+ * Compute an influence baseline (0–100) from quality, confidence, and entry type.
+ * Server-authoritative — the client must not set influence_score directly.
+ */
+function computeInfluenceBaseline(qualityScore: number, confidenceLevel: string, entryType?: string | null): number {
+  const confidenceMultiplier: Record<string, number> = {
+    verified_observation: 1.15,
+    strong_confidence: 1.0,
+    moderate_confidence: 0.85,
+    weak_suspicion: 0.65,
+  };
+  const typeMultiplier: Record<string, number> = {
+    quick_observation: 0.8,
+    basic_deep_entry: 1.0,
+    advanced_deep_entry: 1.15,
+  };
+  const raw = qualityScore * 0.7 * (confidenceMultiplier[confidenceLevel] ?? 0.8) * (typeMultiplier[entryType ?? ""] ?? 1.0) + qualityScore * 0.3;
+  return Math.max(0, Math.min(100, Math.round(raw)));
 }
 
 /** Simple hash for duplicate detection. */
@@ -2707,7 +2758,7 @@ async function handleEvaluateQuality(request: Request, env: Env): Promise<Respon
   // Fetch entry — only the owner can request quality evaluation
   const { data: entry, error } = await serviceClient
     .from("open_intelligence")
-    .select("id, user_id, content, selected_category, selected_subtags, custom_tags, confidence_level, quality_score, validation_status, content_hash, duplicate_flag")
+    .select("id, user_id, content, entry_type, selected_category, selected_subtags, custom_tags, confidence_level, quality_score, validation_status, content_hash, duplicate_flag")
     .eq("id", payload.entryId)
     .maybeSingle();
 
@@ -2716,7 +2767,7 @@ async function handleEvaluateQuality(request: Request, env: Env): Promise<Respon
   }
 
   const entryRow = entry as {
-    id: string; user_id: string; content: string; selected_category: string | null;
+    id: string; user_id: string; content: string; entry_type: string; selected_category: string | null;
     selected_subtags: string[] | null; custom_tags: string[] | null;
     confidence_level: string; quality_score: number; validation_status: string;
     content_hash: string | null; duplicate_flag: boolean;
@@ -2726,13 +2777,19 @@ async function handleEvaluateQuality(request: Request, env: Env): Promise<Respon
     return jsonResponse({ ok: false, error: "Only the entry owner can request quality evaluation." }, 403);
   }
 
-  // Evaluate quality
+  // Evaluate quality with full spec signature
   const newQuality = evaluateOpenIntelligenceQuality({
     content: entryRow.content,
+    entryType: entryRow.entry_type,
     category: entryRow.selected_category,
-    tags: [...(entryRow.selected_subtags ?? []), ...(entryRow.custom_tags ?? [])],
+    subtags: entryRow.selected_subtags,
+    customTags: entryRow.custom_tags,
     confidenceLevel: entryRow.confidence_level,
+    userId,
   });
+
+  // Compute server-authoritative influence baseline
+  const newInfluence = computeInfluenceBaseline(newQuality, entryRow.confidence_level, entryRow.entry_type);
 
   // Check for duplicates among the user's other entries
   const { data: otherEntries } = await serviceClient
@@ -2747,11 +2804,12 @@ async function handleEvaluateQuality(request: Request, env: Env): Promise<Respon
     ? findDuplicate(otherEntries as Array<{ id: string; content: string; content_hash: string | null }>, entryRow.content, newHash)
     : null;
 
-  // Update entry with new quality score, content hash, and duplicate flag
+  // Update entry with server-authoritative quality, influence, content hash, and duplicate flag
   await serviceClient
     .from("open_intelligence")
     .update({
       quality_score: newQuality,
+      influence_score: newInfluence,
       content_hash: newHash,
       duplicate_flag: duplicateOf !== null,
       duplicate_of: duplicateOf,
@@ -2761,8 +2819,174 @@ async function handleEvaluateQuality(request: Request, env: Env): Promise<Respon
   return jsonResponse({
     ok: true,
     qualityScore: newQuality,
+    influenceScore: newInfluence,
     duplicateDetected: duplicateOf !== null,
     duplicateOf: duplicateOf,
+  });
+}
+
+// ── Phase 5B: OI Update Handler (version history + dispute preservation) ─────
+
+async function handleUpdateOIEntry(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  let payload: {
+    entryId: string;
+    content?: string;
+    confidenceLevel?: string;
+    selectedCategory?: string | null;
+    selectedSubtags?: string[] | null;
+    customTags?: string[] | null;
+    exchangeShareEnabled?: boolean;
+  };
+  try {
+    payload = (await request.json()) as typeof payload;
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request." }, 400);
+  }
+
+  // Authenticate
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) {
+    return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+  }
+
+  // 1. Fetch the entry — verify ownership
+  const { data: entry, error: entryErr } = await serviceClient
+    .from("open_intelligence")
+    .select("id, user_id, content, confidence_level, selected_category, selected_subtags, custom_tags, exchange_share_enabled, validation_status, version_number, active_dispute_count")
+    .eq("id", payload.entryId)
+    .maybeSingle();
+
+  if (entryErr || !entry) {
+    return jsonResponse({ ok: false, error: "Entry not found." }, 404);
+  }
+
+  const entryRow = entry as {
+    id: string; user_id: string; content: string; confidence_level: string;
+    selected_category: string | null; selected_subtags: string[] | null;
+    custom_tags: string[] | null; exchange_share_enabled: boolean;
+    validation_status: string; version_number: number; active_dispute_count: number;
+  };
+
+  if (entryRow.user_id !== userId) {
+    return jsonResponse({ ok: false, error: "Only the entry owner can update this entry." }, 403);
+  }
+
+  // 2. Determine if this is a major edit (content changed) vs minor (tags/settings only)
+  const newContent = payload.content?.trim() ?? entryRow.content;
+  const isMajorEdit = payload.content !== undefined && newContent !== entryRow.content;
+
+  // 3. Save version history BEFORE updating the active entry
+  const currentVersion = entryRow.version_number ?? 1;
+  const changeType = isMajorEdit ? "major_edit" : "minor_edit";
+
+  const { error: versionErr } = await serviceClient
+    .from("open_intelligence_versions")
+    .insert({
+      entry_id: payload.entryId,
+      version_number: currentVersion,
+      previous_content: entryRow.content,
+      previous_tags: JSON.stringify(entryRow.selected_subtags ?? []),
+      previous_category: entryRow.selected_category,
+      previous_confidence: entryRow.confidence_level,
+      previous_validation_status: entryRow.validation_status,
+      change_type: changeType,
+      changed_by: userId,
+    });
+
+  if (versionErr) {
+    console.warn("[oi-update] version history insert failed", versionErr.message);
+    // Non-fatal — proceed with update
+  }
+
+  // 4. Build update object — only allow client to set user-editable fields.
+  //    quality_score, influence_score, content_hash, duplicate_flag are
+  //    overwritten by the DB trigger (evaluate_oi_quality_trigger).
+  //    validation_status is preserved unless the entry is rejected/withdrawn.
+  const updateFields: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+  };
+
+  if (payload.content !== undefined) {
+    updateFields.content = newContent;
+    updateFields.character_count_no_spaces = newContent.replace(/\s/g, "").length;
+  }
+  if (payload.confidenceLevel !== undefined) {
+    updateFields.confidence_level = payload.confidenceLevel;
+  }
+  if (payload.selectedCategory !== undefined) {
+    updateFields.selected_category = payload.selectedCategory;
+  }
+  if (payload.selectedSubtags !== undefined) {
+    updateFields.selected_subtags = payload.selectedSubtags;
+  }
+  if (payload.customTags !== undefined) {
+    updateFields.custom_tags = payload.customTags;
+  }
+  if (payload.exchangeShareEnabled !== undefined) {
+    updateFields.exchange_share_enabled = payload.exchangeShareEnabled;
+  }
+
+  // Major content edit: increment version and mark for reevaluation.
+  // Do NOT reset dispute history — disputes survive edits.
+  if (isMajorEdit) {
+    updateFields.version_number = currentVersion + 1;
+    updateFields.last_major_edit_at = new Date().toISOString();
+    // If entry was pending_review, keep it pending (needs reevaluation).
+    // If it was community_supported or externally_supported, keep the status
+    // but mark for reevaluation. Disputed entries stay disputed.
+  }
+
+  // 5. Update the entry — the DB trigger overwrites quality/influence/hash/duplicate
+  const { data: updated, error: updateErr } = await serviceClient
+    .from("open_intelligence")
+    .update(updateFields)
+    .eq("id", payload.entryId)
+    .select("id, quality_score, influence_score, content_hash, duplicate_flag, version_number")
+    .single();
+
+  if (updateErr) {
+    console.warn("[oi-update] update failed", updateErr.message);
+    return jsonResponse({ ok: false, error: "Failed to update entry." }, 500);
+  }
+
+  const updatedRow = updated as {
+    id: string; quality_score: number; influence_score: number;
+    content_hash: string | null; duplicate_flag: boolean; version_number: number;
+  };
+
+  // 6. Best-effort: recalculate contributor reputation after a major edit
+  if (isMajorEdit) {
+    try {
+      await serviceClient.rpc("recalculate_contributor_reputation", { p_user_id: userId });
+    } catch (e) {
+      console.warn("[oi-update] reputation recalc failed", e instanceof Error ? e.message : "unknown");
+    }
+  }
+
+  return jsonResponse({
+    ok: true,
+    entry: {
+      id: updatedRow.id,
+      qualityScore: updatedRow.quality_score,
+      influenceScore: updatedRow.influence_score,
+      contentHash: updatedRow.content_hash,
+      duplicateFlag: updatedRow.duplicate_flag,
+      versionNumber: updatedRow.version_number,
+    },
   });
 }
 
@@ -3319,6 +3543,11 @@ export default {
     // Phase 5B: Server-side quality evaluation
     if (url.pathname === "/quality/evaluate" && request.method === "POST") {
       return handleEvaluateQuality(request, env);
+    }
+
+    // Phase 5B: OI entry update (version history + dispute preservation)
+    if (url.pathname === "/oi/update" && request.method === "POST") {
+      return handleUpdateOIEntry(request, env);
     }
 
     return jsonResponse({ ok: false, error: "Not found" }, 404);

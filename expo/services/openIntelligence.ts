@@ -164,7 +164,14 @@ export interface QualityScoreResult {
 }
 
 /**
- * Local mock quality scoring.
+ * PREVIEW ONLY — local quality scoring for immediate UI feedback.
+ *
+ * The authoritative quality_score, influence_score, content_hash, and
+ * duplicate_flag are calculated server-side by the DB trigger
+ * (evaluate_oi_quality_trigger) and the worker's evaluateOpenIntelligenceQuality.
+ * Client-submitted values for these fields are overwritten on insert/update.
+ *
+ * Do NOT rely on this score for ranking, validation, or reputation.
  *
  * Factors:
  *   - specificity (entity/name mentions)
@@ -303,14 +310,9 @@ export async function submitEntry(input: SubmitEntryInput): Promise<SubmitEntryR
     return { ok: false, error: "Neuron deduction failed. Try again.", edgeCost };
   }
 
-  // Compute quality
-  const score = computeQualityScore({
-    content: cleanContent,
-    entryType: input.entryType,
-    confidenceLevel: input.confidenceLevel,
-    tag: input.tag,
-  });
-
+  // Quality score is PREVIEW only — the DB trigger (evaluate_oi_quality_trigger)
+  // overwrites quality_score, influence_score, content_hash, and duplicate_flag
+  // with server-authoritative values on insert. We send placeholder 0s.
   const subtags = input.selectedSubtags ?? [];
   const customTags = input.customTags ?? [];
   const formattedTag = formatTagField(subtags, customTags);
@@ -324,9 +326,9 @@ export async function submitEntry(input: SubmitEntryInput): Promise<SubmitEntryR
     content: cleanContent,
     character_count_no_spaces: charCountNoSpaces,
     confidence_level: input.confidenceLevel,
-    quality_score: score.qualityScore,
+    quality_score: 0, // overwritten by DB trigger
     validation_status: "pending_review",
-    influence_score: score.influenceScore,
+    influence_score: 0, // overwritten by DB trigger
     selected_category: input.selectedCategory ?? null,
     selected_subtags: subtags.length > 0 ? subtags : null,
     custom_tags: customTags.length > 0 ? customTags : null,
@@ -399,6 +401,89 @@ export async function countEntriesForEagoh(eagohId: string): Promise<number> {
     .eq("eagoh_id", eagohId);
   if (error) throw error;
   return count ?? 0;
+}
+
+// ── Phase 5B: Server-side update (version history + dispute preservation) ─────
+
+export interface UpdateEntryInput {
+  entryId: string;
+  content?: string;
+  confidenceLevel?: ConfidenceLevel;
+  selectedCategory?: string | null;
+  selectedSubtags?: string[] | null;
+  customTags?: string[] | null;
+  exchangeShareEnabled?: boolean;
+}
+
+export interface UpdateEntryResult {
+  ok: boolean;
+  entry?: {
+    id: string;
+    qualityScore: number;
+    influenceScore: number;
+    contentHash: string | null;
+    duplicateFlag: boolean;
+    versionNumber: number;
+  };
+  error?: string;
+}
+
+/**
+ * Update an Open Intelligence entry through the server-side worker.
+ *
+ * The worker:
+ *   1. Verifies ownership
+ *   2. Saves a version history record (preserving dispute history)
+ *   3. Increments version_number on major content edits
+ *   4. The DB trigger overwrites quality_score, influence_score, content_hash,
+ *      and duplicate_flag with server-authoritative values
+ *   5. Recalculates contributor reputation on major edits
+ *
+ * Client-submitted quality/influence/hash/duplicate values are ignored.
+ */
+export async function updateEntry(input: UpdateEntryInput): Promise<UpdateEntryResult> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData?.session?.access_token;
+  if (!accessToken) {
+    return { ok: false, error: "Not authenticated." };
+  }
+
+  const functionsUrl = process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL;
+  if (!functionsUrl) {
+    return { ok: false, error: "Backend not configured." };
+  }
+
+  try {
+    const res = await fetch(`${functionsUrl}/oi/update`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(input),
+    });
+
+    const data = (await res.json()) as UpdateEntryResult;
+    return data;
+  } catch (err) {
+    console.warn("[open-intelligence] update failed", err);
+    return { ok: false, error: "Network error. Try again." };
+  }
+}
+
+/**
+ * Toggle Exchange sharing on an Open Intelligence entry.
+ *
+ * This is a convenience wrapper around updateEntry that only changes
+ * exchange_share_enabled. When a vendor disables sharing, the entry
+ * immediately stops being used in future analyst Exchange retrieval.
+ * Existing purchased access does not override withdrawal.
+ */
+export async function toggleExchangeShare(
+  entryId: string,
+  enabled: boolean,
+): Promise<UpdateEntryResult> {
+  return updateEntry({ entryId, exchangeShareEnabled: enabled });
 }
 
 /** Re-export helpers */

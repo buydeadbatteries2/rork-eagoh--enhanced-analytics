@@ -2081,3 +2081,182 @@ $$;
 alter table public.open_intelligence add column if not exists active_dispute_count int not null default 0;
 
 create index if not exists oi_active_dispute_idx on public.open_intelligence(active_dispute_count) where active_dispute_count > 0;
+
+-- ── 5B-CORRECTION: OI self-update RLS policy ─────────────────────────────────
+-- Owners may update their own Open Intelligence entries (content, tags, confidence,
+-- exchange_share_enabled). Server-authoritative fields (quality_score, influence_score,
+-- content_hash, duplicate_flag, validation_status, staleness_score) are overwritten
+-- by the worker after any edit — client-submitted values for those columns are ignored.
+drop policy if exists "oi_self_update" on public.open_intelligence;
+create policy "oi_self_update" on public.open_intelligence
+  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ── 5B-CORRECTION: Server-side quality scoring on insert ─────────────────────
+-- SECURITY DEFINER trigger that overwrites client-supplied quality_score,
+-- influence_score, content_hash, and duplicate_flag with server-authoritative
+-- values. The client may NOT set these trusted fields.
+create or replace function public.evaluate_oi_quality_trigger()
+returns trigger as $$
+declare
+  v_text text;
+  v_char_count int;
+  v_score int := 0;
+  v_proper_nouns int;
+  v_numbers int;
+  v_sentence_count int;
+  v_avg_sentence_len numeric;
+  v_tag_count int;
+  v_confidence_boost numeric;
+  v_support_count int;
+  v_lower_text text;
+  v_support_keywords text[] := array['because','according to','source','evidence','observed','measured','reported','data','study','analysis'];
+  v_negation_count int;
+  v_word_freq jsonb;
+  v_repeated_words int;
+  v_meaningful_words int;
+  v_entry_type_bonus int;
+  v_influence int;
+  v_new_hash text;
+  v_dup_entry_id uuid;
+begin
+  v_text := trim(coalesce(new.content, ''));
+  if v_text = '' then
+    new.quality_score := 0;
+    new.influence_score := 0;
+    new.content_hash := null;
+    new.duplicate_flag := false;
+    return new;
+  end if;
+
+  v_char_count := length(replace(replace(replace(replace(v_text, ' ', ''), chr(9), ''), chr(10), ''), chr(13), ''));
+
+  -- 1. Detail
+  if v_char_count >= 200 then v_score := v_score + 20;
+  elseif v_char_count >= 100 then v_score := v_score + 15;
+  elseif v_char_count >= 50 then v_score := v_score + 10;
+  elseif v_char_count >= 20 then v_score := v_score + 5;
+  end if;
+
+  -- 2. Clarity
+  v_sentence_count := array_length(string_to_array(v_text, '.'), 1) - 1;
+  if v_sentence_count > 0 then
+    v_avg_sentence_len := length(v_text) / v_sentence_count;
+    if v_avg_sentence_len > 0 and v_avg_sentence_len < 200 then v_score := v_score + 10;
+    else v_score := v_score + 5; end if;
+  end if;
+
+  -- 3. Specificity
+  v_proper_nouns := array_length(regexp_matches(v_text, '\b[A-Z][a-z]{2,}\b', 'g'), 1);
+  v_numbers := array_length(regexp_matches(v_text, '\b\d+', 'g'), 1);
+  v_score := v_score + least(15, coalesce(v_proper_nouns, 0) * 3 + coalesce(v_numbers, 0) * 2);
+
+  -- 4. Category/tag alignment
+  v_tag_count := coalesce(array_length(coalesce(new.selected_subtags, '{}'::jsonb), 1), 0)
+    + coalesce(array_length(coalesce(new.custom_tags, '{}'::jsonb), 1), 0)
+    + case when new.selected_category is not null then 1 else 0 end;
+  v_score := v_score + least(10, v_tag_count * 3);
+
+  -- 5. Entry-type depth bonus
+  v_entry_type_bonus := case new.entry_type
+    when 'quick_observation' then 0
+    when 'basic_deep_entry' then 4
+    when 'advanced_deep_entry' then 8
+    else 0 end;
+  v_score := v_score + v_entry_type_bonus;
+
+  -- 6. Confidence boost
+  v_confidence_boost := case new.confidence_level
+    when 'verified_observation' then 5
+    when 'strong_confidence' then 4
+    when 'moderate_confidence' then 3
+    when 'weak_suspicion' then 1
+    else 2 end;
+  v_score := v_score + v_confidence_boost;
+
+  -- 7. Supporting context
+  v_lower_text := lower(v_text);
+  select count(*) into v_support_count
+  from unnest(v_support_keywords) as kw
+  where v_lower_text like '%' || kw || '%';
+  v_score := v_score + least(10, v_support_count * 3);
+
+  -- 8. Internal consistency (simplified)
+  v_negation_count := coalesce(array_length(regexp_matches(v_text, '\bnot\b|\bnever\b|\bcannot\b', 'gi'), 1), 0);
+  if v_negation_count <= 2 then v_score := v_score + 5; end if;
+
+  -- 9. Non-duplicative (keyword stuffing check — simplified)
+  v_meaningful_words := array_length(
+    array_remove(
+      array(SELECT word FROM unnest(string_to_array(lower(v_text), ' ')) AS word WHERE char_length(word) > 2),
+      NULL
+    ), 1);
+  if coalesce(v_meaningful_words, 0) < 5 then v_score := v_score - 15; end if;
+
+  -- Clamp
+  v_score := greatest(0, least(100, v_score));
+  new.quality_score := v_score;
+
+  -- Influence baseline
+  v_influence := round(
+    v_score * 0.7 *
+    case new.confidence_level
+      when 'verified_observation' then 1.15
+      when 'strong_confidence' then 1.0
+      when 'moderate_confidence' then 0.85
+      else 0.65 end *
+    case new.entry_type
+      when 'quick_observation' then 0.8
+      when 'basic_deep_entry' then 1.0
+      when 'advanced_deep_entry' then 1.15
+      else 1.0 end
+    + v_score * 0.3
+  );
+  new.influence_score := greatest(0, least(100, v_influence));
+
+  -- Content hash
+  v_new_hash := 'ch_' || substring(md5(lower(regexp_replace(v_text, '[^a-zA-Z0-9]', '', 'g'))) from 1 for 16);
+  new.content_hash := v_new_hash;
+
+  -- Duplicate detection (same user, other entries)
+  select id into v_dup_entry_id
+  from public.open_intelligence
+  where user_id = new.user_id
+    and id != new.id
+    and content_hash = v_new_hash
+  limit 1;
+  new.duplicate_flag := v_dup_entry_id is not null;
+
+  -- Ensure version_number starts at 1 on insert
+  if TG_OP = 'INSERT' and new.version_number is null then
+    new.version_number := 1;
+  end if;
+
+  return new;
+end;
+$$ language plpgsql security definer set search_path = '';
+
+drop trigger if exists oi_quality_on_insert on public.open_intelligence;
+create trigger oi_quality_on_insert
+  before insert on public.open_intelligence
+  for each row execute function public.evaluate_oi_quality_trigger();
+
+drop trigger if exists oi_quality_on_update on public.open_intelligence;
+create trigger oi_quality_on_update
+  before update on public.open_intelligence
+  for each row execute function public.evaluate_oi_quality_trigger();
+
+-- Comment: The trigger overwrites client-supplied quality_score, influence_score,
+-- content_hash, and duplicate_flag on every INSERT and UPDATE. Client values for
+-- these fields are ignored. validation_status is NOT overwritten by this trigger
+-- (it is managed by the worker via disputes/feedback/moderation flows).
+
+-- ── 5B-CORRECTION: Legacy status migration (idempotent) ─────────────────────
+-- Map remaining legacy 'validated' and 'flagged' values to new statuses.
+do $$
+begin
+  update public.open_intelligence set validation_status = 'community_supported'
+    where validation_status = 'validated';
+  update public.open_intelligence set validation_status = 'disputed'
+    where validation_status = 'flagged';
+exception when others then null;
+end $$;

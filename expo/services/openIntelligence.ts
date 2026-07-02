@@ -179,7 +179,7 @@ export interface QualityScoreResult {
  *   - confidence level multiplier
  *   - tag selection signal
  */
-export function computeQualityScore(input: ScoringInput, domainId?: string): QualityScoreResult {
+export function computeQualityPreview(input: ScoringInput, domainId?: string): QualityScoreResult {
   const text = input.content.trim();
   const charCount = text.replace(/\s/g, "").length;
   const limit = ENTRY_TYPE_LIMITS[input.entryType];

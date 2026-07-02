@@ -43,6 +43,7 @@
  * Phase 4B — Harden and Verify Exchange Intelligence (deployed).
  * Phase 5A — Intelligence Usage Auditing and Source Provenance (deployed).
  * Phase 5B — Human Intelligence Quality, Validation, and Reputation (deployed).
+ * Phase 5B Security — Locked down feedback, disputes, reputation, versions, rate-limits to server-only.
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
@@ -152,27 +153,25 @@ type OpenIntelligenceRow = {
   updated_at: string;
 };
 
-/** Validation statuses used in Phase 5B — includes disputed (reduced weight at ranking). */
+/** Validation statuses used in Phase 5B — includes disputed (reduced weight at ranking).
+ *  Legacy "validated" is accepted temporarily for unmigrated rows. */
 const VALID_USEABLE_STATUSES = [
   "pending_review",
   "community_supported",
   "externally_supported",
   "disputed",
+  "validated", // legacy compatibility for unmigrated rows
 ] as const;
 
 /** Validation statuses that must be excluded from analyst context. */
 const EXCLUDED_STATUSES = ["rejected", "withdrawn"] as const;
 
-/** Contributor reputation row from intelligence_contributor_reputation. */
+/** Contributor reputation row — only overall_score is needed for ranking.
+ *  Full internal fields are accessed via service_role only. */
 type ContributorReputation = {
   user_id: string;
   overall_score: number;
-  quality_component: number;
-  usefulness_component: number;
-  validation_component: number;
-  reliability_component: number;
-  dispute_penalty: number;
-  total_entries: number;
+  calculated_at?: string;
 };
 
 type EagohRow = {
@@ -666,7 +665,8 @@ type ReputationMap = Map<string, ContributorReputation | null>;
 
 /**
  * Batch-fetch contributor reputations for a set of user IDs.
- * Uses the anon-key client (reputation has public read RLS).
+ * Uses the safe public view public_contributor_reputation which exposes only
+ * user_id, overall_score, and calculated_at — no internal penalty or component data.
  */
 async function fetchReputationsForUsers(
   supabase: SupabaseClient,
@@ -677,8 +677,8 @@ async function fetchReputationsForUsers(
 
   const unique = [...new Set(userIds)];
   const { data, error } = await supabase
-    .from("intelligence_contributor_reputation")
-    .select("*")
+    .from("public_contributor_reputation")
+    .select("user_id, overall_score, calculated_at")
     .in("user_id", unique);
 
   if (error || !data) {
@@ -2290,10 +2290,10 @@ async function handleSubmitFeedback(request: Request, env: Env): Promise<Respons
     return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
   }
 
-  // 1. Fetch the entry to verify it exists and get owner
+  // 1. Fetch the entry to verify it exists and get owner + status + sharing flags
   const { data: entry, error: entryErr } = await serviceClient
     .from("open_intelligence")
-    .select("id, user_id, validation_status")
+    .select("id, user_id, validation_status, eagoh_id, exchange_share_enabled")
     .eq("id", payload.entryId)
     .maybeSingle();
 
@@ -2301,11 +2301,19 @@ async function handleSubmitFeedback(request: Request, env: Env): Promise<Respons
     return jsonResponse({ ok: false, error: "Entry not found." }, 404);
   }
 
-  const entryRow = entry as { id: string; user_id: string; validation_status: string };
+  const entryRow = entry as {
+    id: string; user_id: string; validation_status: string;
+    eagoh_id: string; exchange_share_enabled: boolean;
+  };
 
   // 2. Prevent self-feedback
   if (entryRow.user_id === userId) {
     return jsonResponse({ ok: false, error: "Cannot provide feedback on your own entry." }, 403);
+  }
+
+  // 2b. Block feedback on rejected or withdrawn entries
+  if (EXCLUDED_STATUSES.includes(entryRow.validation_status as (typeof EXCLUDED_STATUSES)[number])) {
+    return jsonResponse({ ok: false, error: "Feedback is not available for rejected or withdrawn entries." }, 403);
   }
 
   // 3. Verify feedback eligibility — user must have legitimate access
@@ -2314,6 +2322,8 @@ async function handleSubmitFeedback(request: Request, env: Env): Promise<Respons
     userId,
     entryRow.user_id,
     payload.entryId,
+    entryRow.eagoh_id,
+    entryRow.exchange_share_enabled,
     payload.accessSource,
     payload.factionId,
     payload.exchangePurchaseId,
@@ -2382,26 +2392,33 @@ async function handleSubmitFeedback(request: Request, env: Env): Promise<Respons
 
 /**
  * Verify that the reviewer had legitimate access to the intelligence entry.
- * Access is granted through: faction membership, active exchange sync, or moderation.
+ * Access is granted through: active faction membership with explicit sharing,
+ * or an active Exchange synchronization purchase for the vendor's specific EAGOH.
+ *
+ * SECURITY: Does not trust client-supplied factionId or exchangePurchaseId
+ * without full server-side verification of membership, purchase status,
+ * vendor/EAGOH consistency, and entry sharing flags.
  */
 async function verifyFeedbackEligibility(
   serviceClient: SupabaseClient,
   reviewerUserId: string,
   entryOwnerId: string,
   entryId: string,
+  entryEagohId: string,
+  entryExchangeShareEnabled: boolean,
   accessSource: string,
   factionId?: string,
   exchangePurchaseId?: string,
 ): Promise<boolean> {
   if (accessSource === "personal") {
-    // Personal entries — only the owner should be able to self-review, but we blocked that above
-    // This access source is for moderation or special cases
+    // Personal entries — only the owner could self-review, but we blocked that above
     return false;
   }
 
   if (accessSource === "faction") {
     if (!factionId) return false;
-    // Check: reviewer is an active member of the faction AND entry is shared with that faction
+
+    // 1. Verify reviewer is an active member of the faction
     const { data: membership } = await serviceClient
       .from("faction_members")
       .select("status")
@@ -2409,34 +2426,90 @@ async function verifyFeedbackEligibility(
       .eq("user_id", reviewerUserId)
       .maybeSingle();
 
-    if (!membership || (membership as { status: string }).status !== "active") return false;
+    if (!membership) return false;
+    const memberStatus = (membership as { status: string }).status;
+    // Accept active members and grace-period members
+    if (memberStatus !== "active" && memberStatus !== "grace_period") return false;
 
+    // 2. Verify the entry is explicitly shared with that faction
     const { data: shared } = await serviceClient
       .from("faction_shared_intelligence")
-      .select("id")
+      .select("id, contributor_user_id")
       .eq("faction_id", factionId)
       .eq("oi_entry_id", entryId)
       .maybeSingle();
 
-    return !!shared;
+    if (!shared) return false;
+
+    // 3. Verify the shared record's contributor matches the entry owner (defense in depth)
+    const sharedRow = shared as { id: string; contributor_user_id: string };
+    if (sharedRow.contributor_user_id !== entryOwnerId) return false;
+
+    return true;
   }
 
   if (accessSource === "exchange") {
-    // Check: reviewer has an active sync purchase for the vendor's EAGOH
-    const serverNow = new Date().toISOString();
+    // Must supply a specific purchase ID — do not accept any active purchase
+    if (!exchangePurchaseId) return false;
+
+    // Entry must have Exchange sharing enabled
+    if (!entryExchangeShareEnabled) return false;
+
+    // 1. Fetch the specific purchase and verify it belongs to the reviewer
     const { data: purchase } = await serviceClient
       .from("marketplace_sync_purchases")
-      .select("id, active, expires_at")
-      .eq("buyer_id", reviewerUserId)
-      .eq("active", true)
-      .gt("expires_at", serverNow)
+      .select("id, buyer_id, vendor_id, eagoh_id, active, starts_at, expires_at")
+      .eq("id", exchangePurchaseId)
       .maybeSingle();
 
-    return !!purchase;
+    if (!purchase) return false;
+
+    const purchaseRow = purchase as {
+      id: string; buyer_id: string; vendor_id: string; eagoh_id: string;
+      active: boolean; starts_at: string; expires_at: string;
+    };
+
+    // 2. Purchase buyer must equal the authenticated reviewer
+    if (purchaseRow.buyer_id !== reviewerUserId) return false;
+
+    // 3. Purchase must be active
+    if (!purchaseRow.active) return false;
+
+    // 4. Purchase must have started and not expired (server time)
+    const serverNow = new Date();
+    const startsAt = new Date(purchaseRow.starts_at);
+    const expiresAt = new Date(purchaseRow.expires_at);
+    if (serverNow < startsAt || serverNow >= expiresAt) return false;
+
+    // 5. Purchase vendor EAGOH must equal the entry's EAGOH
+    if (purchaseRow.eagoh_id !== entryEagohId) return false;
+
+    // 6. Entry owner must equal the verified vendor
+    if (purchaseRow.vendor_id !== entryOwnerId) return false;
+
+    // 7. Verify the listing still references the same vendor and EAGOH
+    const { data: listing } = await serviceClient
+      .from("marketplace_listings")
+      .select("vendor_id, eagoh_id, is_active, is_deleted")
+      .eq("vendor_id", purchaseRow.vendor_id)
+      .eq("eagoh_id", purchaseRow.eagoh_id)
+      .maybeSingle();
+
+    if (listing) {
+      const listingRow = listing as {
+        vendor_id: string; eagoh_id: string;
+        is_active: boolean; is_deleted: boolean;
+      };
+      if (!listingRow.is_active || listingRow.is_deleted) return false;
+      if (listingRow.vendor_id !== purchaseRow.vendor_id) return false;
+      if (listingRow.eagoh_id !== purchaseRow.eagoh_id) return false;
+    }
+
+    return true;
   }
 
   if (accessSource === "moderation") {
-    // Moderation access — would need admin check; for now, deny from client
+    // Moderation access — would need admin check; deny from client requests
     return false;
   }
 
@@ -2586,10 +2659,10 @@ async function handleSubmitDispute(request: Request, env: Env): Promise<Response
     return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
   }
 
-  // Fetch entry
+  // Fetch entry with status and sharing flags for eligibility verification
   const { data: entry, error: entryErr } = await serviceClient
     .from("open_intelligence")
-    .select("id, user_id")
+    .select("id, user_id, validation_status, eagoh_id, exchange_share_enabled")
     .eq("id", payload.entryId)
     .maybeSingle();
 
@@ -2597,17 +2670,26 @@ async function handleSubmitDispute(request: Request, env: Env): Promise<Response
     return jsonResponse({ ok: false, error: "Entry not found." }, 404);
   }
 
-  const entryRow = entry as { id: string; user_id: string };
+  const entryRow = entry as {
+    id: string; user_id: string; validation_status: string;
+    eagoh_id: string; exchange_share_enabled: boolean;
+  };
 
   // Prevent self-dispute
   if (entryRow.user_id === userId) {
     return jsonResponse({ ok: false, error: "Cannot dispute your own entry." }, 403);
   }
 
-  // Verify access eligibility (same as feedback)
+  // Block disputes on rejected or withdrawn entries
+  if (EXCLUDED_STATUSES.includes(entryRow.validation_status as (typeof EXCLUDED_STATUSES)[number])) {
+    return jsonResponse({ ok: false, error: "Disputes are not available for rejected or withdrawn entries." }, 403);
+  }
+
+  // Verify access eligibility — require explicit access source from client
   const accessSource = payload.factionId ? "faction" : payload.exchangePurchaseId ? "exchange" : "faction";
   const canAccess = await verifyFeedbackEligibility(
     serviceClient, userId, entryRow.user_id, payload.entryId,
+    entryRow.eagoh_id, entryRow.exchange_share_enabled,
     accessSource, payload.factionId, payload.exchangePurchaseId,
   );
   if (!canAccess) {
@@ -2690,10 +2772,53 @@ async function handleGetReputation(request: Request, env: Env): Promise<Response
   const url = new URL(request.url);
   const targetUserId = url.searchParams.get("userId") ?? userId;
 
-  // Reputation is publicly readable (public_select RLS policy)
+  // If requesting own reputation, use service_role to return full details.
+  // If requesting another user's reputation, return only safe public fields
+  // via the public_contributor_reputation view (overall_score only).
+  const isSelf = targetUserId === userId;
+
+  if (isSelf) {
+    const serviceClient = getServiceRoleClient(env);
+    if (serviceClient) {
+      const { data: selfData, error: selfErr } = await serviceClient
+        .from("intelligence_contributor_reputation")
+        .select("*")
+        .eq("user_id", targetUserId)
+        .maybeSingle();
+
+      if (selfErr) {
+        return jsonResponse({ ok: false, error: "Failed to fetch reputation." }, 500);
+      }
+
+      if (!selfData) {
+        return jsonResponse({
+          ok: true,
+          reputation: {
+            user_id: targetUserId,
+            overall_score: 50,
+            quality_component: 50,
+            usefulness_component: 50,
+            validation_component: 50,
+            reliability_component: 50,
+            dispute_penalty: 0,
+            total_entries: 0,
+            entries_used: 0,
+            supported_entries: 0,
+            disputed_entries: 0,
+            rejected_entries: 0,
+            withdrawn_entries: 0,
+          },
+        });
+      }
+
+      return jsonResponse({ ok: true, reputation: selfData });
+    }
+  }
+
+  // Other users: return only safe public fields via the view
   const { data, error } = await supabase
-    .from("intelligence_contributor_reputation")
-    .select("*")
+    .from("public_contributor_reputation")
+    .select("user_id, overall_score, calculated_at")
     .eq("user_id", targetUserId)
     .maybeSingle();
 
@@ -2708,17 +2833,7 @@ async function handleGetReputation(request: Request, env: Env): Promise<Response
       reputation: {
         user_id: targetUserId,
         overall_score: 50,
-        quality_component: 50,
-        usefulness_component: 50,
-        validation_component: 50,
-        reliability_component: 50,
-        dispute_penalty: 0,
-        total_entries: 0,
-        entries_used: 0,
-        supported_entries: 0,
-        disputed_entries: 0,
-        rejected_entries: 0,
-        withdrawn_entries: 0,
+        calculated_at: null,
       },
     });
   }

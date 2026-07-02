@@ -32,7 +32,7 @@ import {
   getAllTagsForDomain,
   searchTagsForDomain,
   lookupTagLabelForDomain,
-  computeQualityScore,
+  computeQualityPreview,
   influenceLabel,
   getRecentTags,
   listEntriesForEagoh,
@@ -558,7 +558,7 @@ const ScorePreview = memo(function ScorePreview({
 }): JSX.Element {
   const score = useMemo(() => {
     if (!content.trim()) return null;
-    return computeQualityScore({ content, entryType, confidenceLevel, tag }, domainId);
+    return computeQualityPreview({ content, entryType, confidenceLevel, tag }, domainId);
   }, [content, entryType, confidenceLevel, tag, domainId]);
 
   if (!score) {

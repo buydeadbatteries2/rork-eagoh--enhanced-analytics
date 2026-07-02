@@ -98,7 +98,7 @@ import {
   ENTRY_TYPE_LIMITS,
   getTagsForDomain,
   getAllTagsForDomain,
-  computeQualityScore,
+  computeQualityPreview,
   influenceLabel,
   listEntriesForEagoh,
   submitEntry,
@@ -1256,7 +1256,7 @@ function OpenIntelSession({
 
   const score = useMemo(() => {
     if (!content.trim()) return null;
-    return computeQualityScore({ content: content.trim(), entryType, confidenceLevel, tag: selectedTag });
+    return computeQualityPreview({ content: content.trim(), entryType, confidenceLevel, tag: selectedTag });
   }, [content, entryType, confidenceLevel, selectedTag]);
 
   const infLabel = score ? influenceLabel(score.influenceScore) : "";

@@ -1609,17 +1609,15 @@ drop policy if exists "oif_self_select" on public.open_intelligence_feedback;
 drop policy if exists "oif_self_insert" on public.open_intelligence_feedback;
 drop policy if exists "oif_self_update" on public.open_intelligence_feedback;
 
--- Reviewers can see their own feedback
+-- Reviewers can see their own feedback (read-only)
 create policy "oif_self_select" on public.open_intelligence_feedback
   for select using (auth.uid() = reviewer_user_id);
 
--- Users can submit feedback (eligibility verified server-side in worker)
-create policy "oif_self_insert" on public.open_intelligence_feedback
-  for insert with check (auth.uid() = reviewer_user_id);
-
--- Users can update their own feedback
-create policy "oif_self_update" on public.open_intelligence_feedback
-  for update using (auth.uid() = reviewer_user_id);
+-- NO client INSERT or UPDATE — all trusted feedback writes go through
+-- the secure analyst worker (handleSubmitFeedback) which validates
+-- faction/exchange eligibility, self-feedback prevention, rate limits,
+-- anomaly detection, and entry status restrictions server-side.
+-- Only service_role can insert/update feedback rows.
 
 -- ── 5B-4: OPEN INTELLIGENCE DISPUTES ─────────────────────────────────────
 create table if not exists public.open_intelligence_disputes (
@@ -1657,11 +1655,15 @@ drop policy if exists "oid_self_select" on public.open_intelligence_disputes;
 drop policy if exists "oid_self_insert" on public.open_intelligence_disputes;
 drop policy if exists "oid_self_insert_v2" on public.open_intelligence_disputes;
 
+-- Users can read their own dispute records (read-only)
 create policy "oid_self_select" on public.open_intelligence_disputes
   for select using (auth.uid() = disputing_user_id);
 
-create policy "oid_self_insert_v2" on public.open_intelligence_disputes
-  for insert with check (auth.uid() = disputing_user_id);
+-- NO client INSERT — all dispute creation goes through the secure worker
+-- (handleSubmitDispute) which verifies authenticated user, non-owner,
+-- legitimate access, valid reason/explanation, duplicate prevention,
+-- and rate limits. Only service_role can insert dispute rows.
+-- Normal users may not update moderation status or resolution fields.
 
 -- ── 5B-5: INTELLIGENCE CONTRIBUTOR REPUTATION ────────────────────────────
 create table if not exists public.intelligence_contributor_reputation (
@@ -1691,15 +1693,29 @@ alter table public.intelligence_contributor_reputation enable row level security
 drop policy if exists "icr_self_select" on public.intelligence_contributor_reputation;
 drop policy if exists "icr_public_select" on public.intelligence_contributor_reputation;
 
--- Users can see their own reputation
+-- Users can see their own complete reputation details
 create policy "icr_self_select" on public.intelligence_contributor_reputation
   for select using (auth.uid() = user_id);
 
--- Anyone can see the overall_score publicly (for marketplace display)
-create policy "icr_public_select" on public.intelligence_contributor_reputation
-  for select using (true);
+-- NO unrestricted public SELECT — the full reputation row contains
+-- dispute_penalty, rejected_entries, withdrawn_entries, negative_feedback,
+-- and internal reliability components that must NOT be public.
+-- Public access is through the safe view public_contributor_reputation
+-- which exposes only user_id, overall_score, and calculated_at.
+-- No client insert/update — only service_role can write.
 
--- No client insert/update — only service_role can write
+-- ── 5B-5b: SAFE PUBLIC REPUTATION VIEW ───────────────────────────────────
+-- Exposes only safe aggregate fields for marketplace display.
+-- Does NOT expose dispute_penalty, rejected_entries, withdrawn_entries,
+-- negative_feedback, or internal reliability components.
+create or replace view public.public_contributor_reputation as
+  select
+    user_id,
+    overall_score,
+    calculated_at
+  from public.intelligence_contributor_reputation;
+
+grant select on public.public_contributor_reputation to anon, authenticated;
 
 -- ── 5B-6: OPEN INTELLIGENCE VERSIONS (edit history) ──────────────────────
 create table if not exists public.open_intelligence_versions (
@@ -1724,7 +1740,7 @@ alter table public.open_intelligence_versions enable row level security;
 drop policy if exists "oiv_owner_select" on public.open_intelligence_versions;
 drop policy if exists "oiv_owner_insert" on public.open_intelligence_versions;
 
--- Owner can see their own entry version history
+-- Owner can see their own entry version history (read-only)
 create policy "oiv_owner_select" on public.open_intelligence_versions
   for select using (
     exists (
@@ -1733,14 +1749,9 @@ create policy "oiv_owner_select" on public.open_intelligence_versions
     )
   );
 
--- Owner can insert version records when editing
-create policy "oiv_owner_insert" on public.open_intelligence_versions
-  for insert with check (
-    exists (
-      select 1 from public.open_intelligence oi
-      where oi.id = entry_id and oi.user_id = auth.uid()
-    )
-  );
+-- NO client INSERT — version snapshots are created by the secure worker
+-- (handleUpdateOpenIntelligence) before editing the entry. This prevents
+-- clients from inserting fake version history. Only service_role can insert.
 
 -- ── 5B-7: FEEDBACK RATE LIMITING (anti-gaming) ───────────────────────────
 -- Track feedback submissions per user to detect bursts and rings
@@ -1762,14 +1773,10 @@ drop policy if exists "frl_self_select" on public.feedback_rate_limits;
 drop policy if exists "frl_self_insert" on public.feedback_rate_limits;
 drop policy if exists "frl_self_update" on public.feedback_rate_limits;
 
-create policy "frl_self_select" on public.feedback_rate_limits
-  for select using (auth.uid() = user_id);
-
-create policy "frl_self_insert" on public.feedback_rate_limits
-  for insert with check (auth.uid() = user_id);
-
-create policy "frl_self_update" on public.feedback_rate_limits
-  for update using (auth.uid() = user_id);
+-- NO client access — rate-limit counters are managed exclusively by the
+-- secure worker (checkAndUpdateRateLimits). Users cannot reset or
+-- manipulate feedback_count, dispute_count, anomaly_flag, or last_feedback_at.
+-- Only service_role can read and write this table.
 
 -- ── 5B-8: VENDOR QUALITY METRICS RPC ─────────────────────────────────────
 -- Safe aggregate quality metrics for a vendor's Exchange-listed entries.

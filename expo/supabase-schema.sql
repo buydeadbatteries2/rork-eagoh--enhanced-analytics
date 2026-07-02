@@ -338,6 +338,26 @@ create policy "oi_self_select" on public.open_intelligence
 create policy "oi_self_insert" on public.open_intelligence
   for insert with check (auth.uid() = user_id);
 
+-- ═══════════════════════════════════════════════════════════════════════
+-- FACTION INTELLIGENCE: Allow authenticated faction members to read
+-- Open Intelligence entries that have been explicitly shared with their
+-- active Faction. This is read-only — write access remains owner-only.
+-- The fsi_select_faction_members policy on faction_shared_intelligence
+-- already gates which shared-intel rows a user can see (active members
+-- in the same faction). This policy extends that to the OI table so the
+-- Cloudflare Worker can resolve the shared entry content server-side.
+-- ═══════════════════════════════════════════════════════════════════════
+create policy "oi_faction_shared_select" on public.open_intelligence
+  for select using (
+    exists (
+      select 1 from public.faction_shared_intelligence fsi
+      join public.faction_members fm on fm.faction_id = fsi.faction_id
+      where fsi.oi_entry_id = open_intelligence.id
+        and fm.user_id = auth.uid()
+        and fm.status in ('active', 'grace_period')
+    )
+  );
+
 -- Backfill: add columns if table already exists in production
 select 1 from pg_catalog.pg_tables where schemaname = 'public' and tablename = 'open_intelligence';
 

@@ -51,6 +51,8 @@ export type ConversationMessage = {
 export type PersonalGrounding = {
   personalOpenIntelligenceUsed: boolean;
   personalOpenIntelligenceCount: number;
+  factionIntelligenceUsed: boolean;
+  factionIntelligenceCount: number;
   externalSearchUsed: boolean;
   sourceCount: number;
 };
@@ -482,6 +484,8 @@ async function callAnalyst(
     grounding: data.grounding ?? {
       personalOpenIntelligenceUsed: false,
       personalOpenIntelligenceCount: 0,
+      factionIntelligenceUsed: false,
+      factionIntelligenceCount: 0,
       externalSearchUsed: false,
       sourceCount: 0,
     },

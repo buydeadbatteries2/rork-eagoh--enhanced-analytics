@@ -921,6 +921,32 @@ function AnalystChatThread({
                     </View>
                   ) : null}
                 </View>
+                {/* Faction Intelligence */}
+                {msg.grounding.factionIntelligenceCount != null && msg.grounding.factionIntelligenceCount !== undefined ? (
+                  <>
+                    <View style={[styles.groundingRow, { marginTop: 8 }]}>
+                      <Shield color={msg.grounding.factionIntelligenceUsed ? palette.cyan : palette.muted} size={11} />
+                      <Text style={[styles.groundingTitle, { color: msg.grounding.factionIntelligenceUsed ? palette.cyan : palette.muted }]}>
+                        Faction Intelligence
+                      </Text>
+                    </View>
+                    <View style={styles.groundingItems}>
+                      {msg.grounding.factionIntelligenceUsed ? (
+                        <View style={styles.groundingItem}>
+                          <Check color={palette.success} size={10} />
+                          <Text style={styles.groundingItemText}>
+                            {msg.grounding.factionIntelligenceCount} entr{msg.grounding.factionIntelligenceCount === 1 ? 'y' : 'ies'} used
+                          </Text>
+                        </View>
+                      ) : msg.grounding.factionIntelligenceCount === 0 ? (
+                        <View style={styles.groundingItem}>
+                          <Search color={palette.muted} size={10} />
+                          <Text style={styles.groundingItemText}>No relevant faction entries</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  </>
+                ) : null}
                 {/* External Research */}
                 <View style={[styles.groundingRow, { marginTop: 8 }]}>
                   <Globe color={msg.grounding.externalSearchUsed ? palette.success : palette.muted} size={11} />

@@ -20,6 +20,14 @@
  *   4. Includes research summary in the final prompt
  *   5. Labels sources clearly and handles OI/external conflicts
  *
+ * Phase 3A — Faction Intelligence (deployed):
+ *   1. Checks subscription tier (free users skip faction retrieval)
+ *   2. Retrieves active faction memberships for the authenticated user
+ *   3. Loads explicitly shared OI entries from faction_shared_intelligence
+ *   4. Verifies ownership, resolves entries, excludes the user's own
+ *   5. Ranks and formats faction entries separately from personal OI
+ *   6. Labels faction intelligence clearly in the final prompt
+ *
  * Search model: gpt-4o (supports web_search tool natively)
  * Final answer: gpt-4o-mini via Chat Completions API
  *
@@ -75,6 +83,8 @@ type ExternalResearchResult = {
 type PersonalGrounding = {
   personalOpenIntelligenceUsed: boolean;
   personalOpenIntelligenceCount: number;
+  factionIntelligenceUsed: boolean;
+  factionIntelligenceCount: number;
   externalSearchUsed: boolean;
   sourceCount: number;
 };
@@ -120,6 +130,27 @@ type EagohRow = {
   user_id: string;
   name: string;
   domain?: string | null;
+};
+
+type FactionMemberRow = {
+  id: string;
+  faction_id: string;
+  user_id: string;
+  role: string;
+  status: string;
+};
+
+type FactionSharedIntelRow = {
+  id: string;
+  faction_id: string;
+  user_id: string;
+  oi_entry_id: string;
+  shared_at: string;
+};
+
+type FactionRow = {
+  id: string;
+  name: string;
 };
 
 // ── CORS ─────────────────────────────────────────────────────────────────────
@@ -172,6 +203,149 @@ async function verifyEagohOwnership(
     return null;
   }
   return data as EagohRow;
+}
+
+// ── Subscription Check ───────────────────────────────────────────────────────
+
+/**
+ * Check whether the authenticated user has a paid subscription.
+ * Queries profiles.subscription_tier — free users skip faction intelligence.
+ */
+async function isPaidUser(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("subscription_tier")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (error || !data) {
+    console.warn("[analyst] subscription check failed", error?.message);
+    return false;
+  }
+
+  const tier = (data as { subscription_tier: string }).subscription_tier;
+  return tier && tier !== "free";
+}
+
+// ── Faction Membership Retrieval ─────────────────────────────────────────────
+
+/**
+ * Get eligible faction memberships for the authenticated user.
+ * Only active (or grace-period) memberships are returned.
+ * Free users are filtered out by `isPaidUser` before calling this.
+ */
+async function getEligibleFactionMemberships(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<{ factionId: string; factionName: string }[]> {
+  const { data, error } = await supabase
+    .from("faction_members")
+    .select("faction_id, status")
+    .eq("user_id", userId)
+    .in("status", ["active", "grace_period"]);
+
+  if (error || !data || data.length === 0) {
+    if (error) console.warn("[analyst] faction membership query failed", error.message);
+    return [];
+  }
+
+  const factionIds = [...new Set((data as Array<{ faction_id: string }>).map((r) => r.faction_id))];
+  if (factionIds.length === 0) return [];
+
+  // Resolve faction names
+  const { data: factions } = await supabase
+    .from("factions")
+    .select("id, name")
+    .in("id", factionIds);
+
+  const nameMap = new Map<string, string>();
+  for (const f of (factions ?? []) as FactionRow[]) {
+    nameMap.set(f.id, f.name);
+  }
+
+  return factionIds.map((id) => ({
+    factionId: id,
+    factionName: nameMap.get(id) ?? "Unknown Faction",
+  }));
+}
+
+// ── Faction Open Intelligence Retrieval ──────────────────────────────────────
+
+/**
+ * Retrieve Open Intelligence entries explicitly shared with the user's factions.
+ *
+ * Flow:
+ *   1. Get eligible faction memberships
+ *   2. Load faction_shared_intelligence for those factions
+ *   3. Resolve referenced OI entries (exclude the user's own — those are personal)
+ *   4. Rank and return the most relevant entries
+ */
+async function retrieveFactionOpenIntelligence(
+  supabase: SupabaseClient,
+  userId: string,
+  query: string,
+  sessionType: SessionType,
+): Promise<OpenIntelligenceRow[]> {
+  const memberships = await getEligibleFactionMemberships(supabase, userId);
+  if (memberships.length === 0) return [];
+
+  const factionIds = memberships.map((m) => m.factionId);
+
+  // Load shared intelligence records for these factions
+  const { data: sharedRows, error: sharedErr } = await supabase
+    .from("faction_shared_intelligence")
+    .select("oi_entry_id, user_id, faction_id")
+    .in("faction_id", factionIds)
+    .order("shared_at", { ascending: false })
+    .limit(100);
+
+  if (sharedErr || !sharedRows || sharedRows.length === 0) {
+    if (sharedErr) console.warn("[analyst] faction shared intel query failed", sharedErr.message);
+    return [];
+  }
+
+  // Exclude the requesting user's own entries (already in personal OI)
+  const foreignRows = (sharedRows as Array<{ oi_entry_id: string; user_id: string }>)
+    .filter((r) => r.user_id !== userId);
+
+  if (foreignRows.length === 0) return [];
+
+  const entryIds = [...new Set(foreignRows.map((r) => r.oi_entry_id))];
+
+  // Fetch the actual OI entries
+  const { data: entries, error: entriesErr } = await supabase
+    .from("open_intelligence")
+    .select("*")
+    .in("id", entryIds)
+    .in("validation_status", ["pending_review", "validated"]);
+
+  if (entriesErr || !entries || entries.length === 0) {
+    if (entriesErr) console.warn("[analyst] faction OI entry fetch failed", entriesErr.message);
+    return [];
+  }
+
+  const rawEntries = entries as OpenIntelligenceRow[];
+
+  // Rank and limit
+  const limit = sessionFactionOILimit(sessionType);
+  const ranked = rankEntries(rawEntries, query, Math.min(limit, rawEntries.length));
+
+  return ranked;
+}
+
+// ── Session Faction Entry Limits ─────────────────────────────────────────────
+
+function sessionFactionOILimit(sessionType: SessionType): number {
+  switch (sessionType) {
+    case "quick-check": return 2;
+    case "quick-analytics": return 4;
+    case "standard": return 7;
+    case "oracle": return 12;
+    case "premium-event": return 8;
+  }
 }
 
 // ── Open Intelligence Retrieval ──────────────────────────────────────────────
@@ -357,6 +531,53 @@ Content: ${content}`;
 
   const text = `PERSONAL OPEN INTELLIGENCE — USER PROVIDED (${entries.length} entries)
 Personal Open Intelligence is private, user-provided knowledge. Treat it as potentially valuable real-world experience, but not automatically verified fact. Consider relevance, confidence, validation status, quality, and recency.
+
+${blocks.join("\n\n")}`;
+
+  return { text, count: entries.length };
+}
+
+// ── Faction OI Formatting ────────────────────────────────────────────────────
+
+/**
+ * Format faction-shared Open Intelligence entries into a clearly labeled
+ * context block, separate from Personal Open Intelligence.
+ */
+function formatFactionOIContext(
+  entries: OpenIntelligenceRow[],
+  tokenBudget: number,
+): { text: string; count: number } {
+  if (entries.length === 0) return { text: "", count: 0 };
+
+  const blocks = entries.map((entry, i) => {
+    const confidenceLabel = entry.confidence_level.replace(/_/g, " ");
+    const quality = entry.quality_score;
+    const date = new Date(entry.created_at).toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+
+    const maxContentChars = Math.max(80, Math.floor(tokenBudget / entries.length / 4) * 4);
+    const content = entry.content.length > maxContentChars
+      ? entry.content.slice(0, maxContentChars) + "..."
+      : entry.content;
+
+    const tagLine = [entry.selected_category, ...(entry.selected_subtags ?? []), ...(entry.custom_tags ?? [])]
+      .filter(Boolean)
+      .join(", ") || entry.tag;
+
+    return `[Faction Entry ${i + 1}]
+Category: ${entry.selected_category ?? "General"}
+Tags: ${tagLine}
+Confidence: ${confidenceLabel}
+Quality: ${quality}/100
+Created: ${date}
+Content: ${content}`;
+  });
+
+  const text = `FACTION INTELLIGENCE — SHARED HUMAN KNOWLEDGE (${entries.length} entries)
+Faction Intelligence contains human-provided knowledge deliberately shared with authorized Faction members. Treat it as valuable experience, but not automatically verified fact. Compare it with Personal Open Intelligence and Current External Research.
 
 ${blocks.join("\n\n")}`;
 
@@ -766,6 +987,7 @@ function buildSystemPrompt(params: {
   kind: string;
   eagohMeta?: { name: string; domain: string } | null;
   hasOI: boolean;
+  hasFactionOI: boolean;
   hasExternalResearch: boolean;
 }): string {
   const sections: string[] = [];
@@ -809,25 +1031,37 @@ function buildSystemPrompt(params: {
     );
   }
 
-  // 4. Source handling instructions
-  if (params.hasOI && params.hasExternalResearch) {
-    sections.push(
-      "SOURCE HANDLING (Dual Sources):",
-      "- Personal Open Intelligence is private user-provided knowledge — potentially valuable but not automatically verified.",
-      "- Current External Research comes from web sources — it may also contain errors or conflicting reports.",
-      "- When the two conflict: 'Your Personal Intelligence suggests X, while current external research indicates Y.'",
+  // 4. Source handling instructions — covers all combinations of OI, Faction, and External
+  const sourceCount = [params.hasOI, params.hasFactionOI, params.hasExternalResearch].filter(Boolean).length;
+
+  if (sourceCount >= 2) {
+    // Multi-source: provide comprehensive conflict-resolution instructions
+    const lines: string[] = ["SOURCE HANDLING (Multiple Intelligence Sources):"];
+    if (params.hasOI) lines.push("- Personal Open Intelligence is private user-provided knowledge — potentially valuable but not automatically verified.");
+    if (params.hasFactionOI) lines.push("- Faction Intelligence is human-provided knowledge shared by authorized faction members — valuable experience but not automatically verified.");
+    if (params.hasExternalResearch) lines.push("- Current External Research comes from web sources — it may also contain errors or conflicting reports.");
+    lines.push(
+      "- When sources conflict, identify the conflict explicitly rather than silently choosing one.",
+      "- Use phrasing like: 'Your Personal Intelligence suggests X, Faction Intelligence indicates Y, and current external research reports Z.'",
       "- Explain which information is newer, which is better supported, and whether the discrepancy could be context-dependent.",
-      "- Never silently discard the user's observations. Preserve them as a perspective.",
-      "- Never automatically treat external research as correct either — weigh recency, source quality, and agreement.",
+      "- Never silently discard the user's observations. Preserve each perspective.",
+      "- Compare recency, source quality, confidence, validation, and agreement across all sources.",
     );
-  } else if (params.hasOI) {
+    sections.push(lines.join("\n"));
+  } else if (params.hasOI && !params.hasFactionOI && !params.hasExternalResearch) {
     sections.push(
       "SOURCE HANDLING:",
       "- Personal Open Intelligence is provided below. Treat it as private user knowledge — potentially valuable but not automatically verified.",
       "- Conflicting signals between your trained knowledge and the user's Personal Open Intelligence should be surfaced explicitly: 'Your Personal Intelligence suggests X, while general knowledge indicates Y.'",
       "- Never silently discard the user's observations. Preserve them as a perspective.",
     );
-  } else if (params.hasExternalResearch) {
+  } else if (params.hasFactionOI && !params.hasOI && !params.hasExternalResearch) {
+    sections.push(
+      "SOURCE HANDLING:",
+      "- Faction Intelligence is provided below. Treat it as shared human knowledge — potentially valuable but not automatically verified.",
+      "- Compare against your trained knowledge. When conflicts exist, surface them explicitly.",
+    );
+  } else if (params.hasExternalResearch && !params.hasOI && !params.hasFactionOI) {
     sections.push(
       "SOURCE HANDLING:",
       "- Current external web research is provided below. Ground your analysis in these real sources.",
@@ -837,7 +1071,7 @@ function buildSystemPrompt(params: {
   } else {
     sections.push(
       "SOURCE HANDLING:",
-      "- No personal intelligence or current research was found for this query. Base your response on trained knowledge and conversation context.",
+      "- No personal intelligence, faction intelligence, or current research was found for this query. Base your response on trained knowledge and conversation context.",
       "- Do not claim or imply that external research or personal intelligence was used.",
     );
   }
@@ -858,6 +1092,7 @@ function buildMessages(params: {
   systemPrompt: string;
   oiContext: string;
   externalResearchContext: string;
+  factionOIContext?: string;
   conversationContext: ConversationMessage[];
   prompt: string;
 }): Array<{ role: "system" | "user" | "assistant"; content: string }> {
@@ -865,6 +1100,10 @@ function buildMessages(params: {
 
   if (params.oiContext) {
     systemParts.push(params.oiContext);
+  }
+
+  if (params.factionOIContext) {
+    systemParts.push(params.factionOIContext);
   }
 
   if (params.externalResearchContext) {
@@ -1008,6 +1247,31 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
     console.log("[analyst] virtual Quick Check — skipping personal OI retrieval");
   }
 
+  // ── Faction Intelligence retrieval ──────────────────────────────────────
+  let factionOIContext = "";
+  let factionOICount = 0;
+
+  // Only retrieve faction intelligence for paid users with an active faction
+  const isPaid = await isPaidUser(supabase, userId);
+  if (isPaid) {
+    const factionEntries = await retrieveFactionOpenIntelligence(supabase, userId, prompt, sessionType);
+    if (factionEntries.length > 0) {
+      const factionTokenBudget = sessionOITokenBudget(sessionType);
+      const factionFormatted = formatFactionOIContext(factionEntries, factionTokenBudget);
+      factionOIContext = factionFormatted.text;
+      factionOICount = factionFormatted.count;
+
+      console.log("[analyst] Faction OI retrieval", {
+        factionCount: factionOICount,
+        sessionType,
+      });
+    } else {
+      console.log("[analyst] Faction OI retrieval: no relevant shared entries found");
+    }
+  } else {
+    console.log("[analyst] Faction OI retrieval skipped — free user");
+  }
+
   // ── External web search ──────────────────────────────────────────────────
   let externalResearchResult: ExternalResearchResult = {
     used: false,
@@ -1042,6 +1306,7 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
     kind,
     eagohMeta,
     hasOI: oiCount > 0,
+    hasFactionOI: factionOICount > 0,
     hasExternalResearch: externalResearchResult.used,
   });
 
@@ -1049,6 +1314,7 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
     systemPrompt,
     oiContext,
     externalResearchContext,
+    factionOIContext,
     conversationContext: payload.conversationContext ?? [],
     prompt: safePrompt,
   });
@@ -1123,6 +1389,8 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
       const grounding: PersonalGrounding = {
         personalOpenIntelligenceUsed: oiCount > 0,
         personalOpenIntelligenceCount: oiCount,
+        factionIntelligenceUsed: factionOICount > 0,
+        factionIntelligenceCount: factionOICount,
         externalSearchUsed: externalResearchResult.used,
         sourceCount: externalResearchResult.sources.length,
       };
@@ -1131,6 +1399,8 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
         replyLen: reply.length,
         personalOIUsed: grounding.personalOpenIntelligenceUsed,
         personalOICount: grounding.personalOpenIntelligenceCount,
+        factionOIUsed: grounding.factionIntelligenceUsed,
+        factionOICount: grounding.factionIntelligenceCount,
         externalSearchUsed: grounding.externalSearchUsed,
         sourceCount: grounding.sourceCount,
         hasEagoh: !!payload.eagohId,

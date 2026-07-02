@@ -53,8 +53,14 @@ export type PersonalGrounding = {
   personalOpenIntelligenceCount: number;
   factionIntelligenceUsed: boolean;
   factionIntelligenceCount: number;
+  exchangeIntelligenceUsed: boolean;
+  exchangeIntelligenceCount: number;
   externalSearchUsed: boolean;
   sourceCount: number;
+  exchangeAccess?: {
+    activeSyncCount: number;
+    vendorEagohCount: number;
+  };
 };
 
 export type AnalystSource = {
@@ -486,6 +492,8 @@ async function callAnalyst(
       personalOpenIntelligenceCount: 0,
       factionIntelligenceUsed: false,
       factionIntelligenceCount: 0,
+      exchangeIntelligenceUsed: false,
+      exchangeIntelligenceCount: 0,
       externalSearchUsed: false,
       sourceCount: 0,
     },

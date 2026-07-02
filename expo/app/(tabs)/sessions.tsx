@@ -947,6 +947,42 @@ function AnalystChatThread({
                     </View>
                   </>
                 ) : null}
+                {/* Exchange Intelligence */}
+                {msg.grounding.exchangeIntelligenceCount != null && msg.grounding.exchangeIntelligenceCount !== undefined ? (
+                  <>
+                    <View style={[styles.groundingRow, { marginTop: 8 }]}>
+                      <TrendingUp color={msg.grounding.exchangeIntelligenceUsed ? palette.success : palette.muted} size={11} />
+                      <Text style={[styles.groundingTitle, { color: msg.grounding.exchangeIntelligenceUsed ? palette.success : palette.muted }]}>
+                        Exchange Intelligence
+                      </Text>
+                    </View>
+                    <View style={styles.groundingItems}>
+                      {msg.grounding.exchangeIntelligenceUsed ? (
+                        <>
+                          <View style={styles.groundingItem}>
+                            <Check color={palette.success} size={10} />
+                            <Text style={styles.groundingItemText}>
+                              {msg.grounding.exchangeIntelligenceCount} entr{msg.grounding.exchangeIntelligenceCount === 1 ? 'y' : 'ies'} used
+                            </Text>
+                          </View>
+                          {msg.grounding.exchangeAccess ? (
+                            <View style={styles.groundingItem}>
+                              <Globe color={palette.muted} size={10} />
+                              <Text style={styles.groundingItemText}>
+                                Licensed through active synchronization
+                              </Text>
+                            </View>
+                          ) : null}
+                        </>
+                      ) : msg.grounding.exchangeIntelligenceCount === 0 ? (
+                        <View style={styles.groundingItem}>
+                          <Search color={palette.muted} size={10} />
+                          <Text style={styles.groundingItemText}>No relevant exchange entries</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  </>
+                ) : null}
                 {/* External Research */}
                 <View style={[styles.groundingRow, { marginTop: 8 }]}>
                   <Globe color={msg.grounding.externalSearchUsed ? palette.success : palette.muted} size={11} />

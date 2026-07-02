@@ -29,6 +29,7 @@
  *   6. Labels faction intelligence clearly in the final prompt
  *
  * Search model: gpt-4o (supports web_search tool natively)
+ * Exchange retrieval: uses service_role Supabase client for cross-user OI access
  * Final answer: gpt-4o-mini via Chat Completions API
  *
  * No API keys, private OI content, or service-role tokens ever reach the client.
@@ -41,6 +42,7 @@ type Env = {
   OPENAI_API_KEY?: string;
   SUPABASE_URL?: string;
   SUPABASE_ANON_KEY?: string;
+  SUPABASE_SERVICE_ROLE_KEY?: string;
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -85,8 +87,14 @@ type PersonalGrounding = {
   personalOpenIntelligenceCount: number;
   factionIntelligenceUsed: boolean;
   factionIntelligenceCount: number;
+  exchangeIntelligenceUsed: boolean;
+  exchangeIntelligenceCount: number;
   externalSearchUsed: boolean;
   sourceCount: number;
+  exchangeAccess?: {
+    activeSyncCount: number;
+    vendorEagohCount: number;
+  };
 };
 
 type AnalystResponse =
@@ -152,6 +160,37 @@ type FactionRow = {
   id: string;
   name: string;
 };
+
+type ExchangeSyncRecord = {
+  purchaseId: string;
+  listingId: string;
+  vendorId: string;
+  vendorEagohId: string;
+  syncPercentage: number;
+  startsAt: string;
+  expiresAt: string;
+  vendorEagohName?: string;
+};
+
+type ExchangeResearchResult = {
+  used: boolean;
+  entries: OpenIntelligenceRow[];
+  syncCount: number;
+  vendorEagohCount: number;
+};
+
+// ── Service-role Supabase client ─────────────────────────────────────────────
+
+/**
+ * Create a Supabase client using the service_role key for server-only
+ * operations that need to bypass RLS (Exchange intelligence retrieval).
+ */
+function getServiceRoleClient(env: Env): SupabaseClient | null {
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return null;
+  return createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
 
 // ── CORS ─────────────────────────────────────────────────────────────────────
 
@@ -535,6 +574,288 @@ Personal Open Intelligence is private, user-provided knowledge. Treat it as pote
 ${blocks.join("\n\n")}`;
 
   return { text, count: entries.length };
+}
+
+// ── Exchange Intelligence ─────────────────────────────────────────────────────
+
+/**
+ * Session-specific limits for Exchange intelligence entries.
+ */
+function sessionExchangeOILimit(sessionType: SessionType): number {
+  switch (sessionType) {
+    case "quick-check": return 2;
+    case "quick-analytics": return 4;
+    case "standard": return 8;
+    case "oracle": return 14;
+    case "premium-event": return 10;
+  }
+}
+
+/**
+ * Get all active Exchange syncs for the authenticated buyer.
+ *
+ * Validates server-side:
+ *   - buyer_id matches authenticated user
+ *   - purchase is active
+ *   - started_at is in the past
+ *   - expires_at is in the future
+ *   - sync_level is a valid percentage (25, 50, 75, 100)
+ *   - listing still references the same vendor EAGOH
+ *   - vendor EAGOH still exists and is not deleted
+ *
+ * Uses the service_role client to avoid RLS issues when verifying vendor EAGOHs.
+ */
+async function getActiveExchangeSyncs(
+  serviceClient: SupabaseClient,
+  userId: string,
+): Promise<ExchangeSyncRecord[]> {
+  const now = new Date().toISOString();
+
+  const { data, error } = await serviceClient
+    .from("marketplace_sync_purchases")
+    .select("id, listing_id, vendor_id, eagoh_id, sync_level, started_at, expires_at")
+    .eq("buyer_id", userId)
+    .eq("active", true)
+    .lte("started_at", now)
+    .gt("expires_at", now);
+
+  if (error || !data || data.length === 0) {
+    if (error) console.warn("[analyst] exchange syncs query failed", error.message);
+    return [];
+  }
+
+  const validSyncs: ExchangeSyncRecord[] = [];
+
+  for (const row of data as Array<{
+    id: string;
+    listing_id: string;
+    vendor_id: string;
+    eagoh_id: string;
+    sync_level: string;
+    started_at: string;
+    expires_at: string;
+  }>) {
+    // Validate sync percentage
+    const pct = parseInt(row.sync_level.replace("%", ""), 10);
+    if (![25, 50, 75, 100].includes(pct)) continue;
+
+    // Verify vendor EAGOH still exists
+    const { data: eagoh } = await serviceClient
+      .from("eagohs")
+      .select("id, name")
+      .eq("id", row.eagoh_id)
+      .maybeSingle();
+    if (!eagoh) continue;
+
+    validSyncs.push({
+      purchaseId: row.id,
+      listingId: row.listing_id,
+      vendorId: row.vendor_id,
+      vendorEagohId: row.eagoh_id,
+      syncPercentage: pct,
+      startsAt: row.started_at,
+      expiresAt: row.expires_at,
+      vendorEagohName: (eagoh as { name?: string }).name ?? undefined,
+    });
+  }
+
+  return validSyncs;
+}
+
+/**
+ * Compute a stable vendor-entry access ordering independent of the current question.
+ *
+ * Ordering factors (descending):
+ *   - quality_score
+ *   - validated entries first
+ *   - influence_score
+ *   - stable entry ID tie-breaker
+ */
+function stableCohortOrder(entries: OpenIntelligenceRow[]): OpenIntelligenceRow[] {
+  return [...entries].sort((a, b) => {
+    // Quality first
+    if (b.quality_score !== a.quality_score) return b.quality_score - a.quality_score;
+    // Validated entries come first
+    const aIsValidated = a.validation_status === "validated" ? 1 : 0;
+    const bIsValidated = b.validation_status === "validated" ? 1 : 0;
+    if (aIsValidated !== bIsValidated) return bIsValidated - aIsValidated;
+    // Influence
+    if (b.influence_score !== a.influence_score) return b.influence_score - a.influence_score;
+    // Confidence
+    const confOrder: Record<string, number> = {
+      verified_observation: 3, strong_confidence: 2,
+      moderate_confidence: 1, weak_suspicion: 0,
+    };
+    const aConf = confOrder[a.confidence_level] ?? 0;
+    const bConf = confOrder[b.confidence_level] ?? 0;
+    if (aConf !== bConf) return bConf - aConf;
+    // Stable tie-breaker
+    return a.id.localeCompare(b.id);
+  });
+}
+
+/**
+ * Retrieve Exchange Open Intelligence for the authenticated buyer.
+ *
+ * Flow:
+ *   1. Load active Exchange syncs
+ *   2. For each vendor EAGOH, load eligible OI entries (exchange_share_enabled)
+ *   3. Deduplicate by entry ID (a single entry could appear across syncs)
+ *   4. Build a stable access cohort (independent of query)
+ *   5. Apply purchased percentage to determine accessible cohort
+ *   6. Rank the accessible cohort against the current question
+ *   7. Apply session limits
+ */
+async function retrieveExchangeOpenIntelligence(
+  serviceClient: SupabaseClient,
+  userId: string,
+  query: string,
+  sessionType: SessionType,
+): Promise<ExchangeResearchResult> {
+  const syncs = await getActiveExchangeSyncs(serviceClient, userId);
+
+  if (syncs.length === 0) {
+    return { used: false, entries: [], syncCount: 0, vendorEagohCount: 0 };
+  }
+
+  // Collect unique vendor EAGOH IDs
+  const vendorEagohIds = [...new Set(syncs.map((s) => s.vendorEagohId))];
+  const vendorIds = [...new Set(syncs.map((s) => s.vendorId))];
+
+  // Build percentage map per vendor EAGOH (use highest percentage if multiple purchases)
+  const pctMap = new Map<string, number>();
+  for (const s of syncs) {
+    const existing = pctMap.get(s.vendorEagohId) ?? 0;
+    pctMap.set(s.vendorEagohId, Math.max(existing, s.syncPercentage));
+  }
+
+  // Load eligible OI entries from each vendor EAGOH
+  const eligibleMap = new Map<string, OpenIntelligenceRow[]>();
+
+  for (const eagohId of vendorEagohIds) {
+    const { data, error } = await serviceClient
+      .from("open_intelligence")
+      .select("*")
+      .eq("eagoh_id", eagohId)
+      .eq("exchange_share_enabled", true)
+      .in("validation_status", ["pending_review", "validated"])
+      .order("created_at", { ascending: false })
+      .limit(200);
+
+    if (error) {
+      console.warn("[analyst] exchange OI fetch failed for eagoh", { eagohId, error: error.message });
+      continue;
+    }
+
+    if (data && data.length > 0) {
+      eligibleMap.set(eagohId, data as OpenIntelligenceRow[]);
+    }
+  }
+
+  // Deduplicate across EAGOHs (same entry shouldn't appear twice)
+  const seenIds = new Set<string>();
+  const allEligible: OpenIntelligenceRow[] = [];
+  for (const entries of eligibleMap.values()) {
+    for (const entry of entries) {
+      if (!seenIds.has(entry.id)) {
+        seenIds.add(entry.id);
+        allEligible.push(entry);
+      }
+    }
+  }
+
+  if (allEligible.length === 0) {
+    return { used: false, entries: [], syncCount: syncs.length, vendorEagohCount: vendorEagohIds.length };
+  }
+
+  // Apply stable cohort + percentage for each vendor EAGOH
+  const accessible: OpenIntelligenceRow[] = [];
+
+  for (const [eagohId, entries] of eligibleMap) {
+    const pct = pctMap.get(eagohId) ?? 0;
+    if (pct === 0 || entries.length === 0) continue;
+
+    const ordered = stableCohortOrder(entries);
+    const accessibleCount = Math.ceil(ordered.length * pct / 100);
+    const cohort = ordered.slice(0, accessibleCount);
+
+    for (const entry of cohort) {
+      accessible.push(entry);
+    }
+  }
+
+  // Rank accessible entries against current question
+  const limit = sessionExchangeOILimit(sessionType);
+  const ranked = accessible.length > 0
+    ? rankEntries(accessible, query, Math.min(limit, accessible.length))
+    : [];
+
+  console.log("[analyst] Exchange OI retrieval", {
+    syncCount: syncs.length,
+    vendorEagohCount: vendorEagohIds.length,
+    eligibleTotal: allEligible.length,
+    accessibleAfterPct: accessible.length,
+    selectedAfterRank: ranked.length,
+    sessionType,
+  });
+
+  return {
+    used: ranked.length > 0,
+    entries: ranked,
+    syncCount: syncs.length,
+    vendorEagohCount: vendorEagohIds.length,
+  };
+}
+
+// ── Exchange OI Formatting ───────────────────────────────────────────────────
+
+/**
+ * Format Exchange-licensed Open Intelligence entries into a clearly labeled
+ * context block, separate from Personal, Faction, and External sources.
+ */
+function formatExchangeOIContext(
+  result: ExchangeResearchResult,
+  tokenBudget: number,
+): { text: string; count: number } {
+  if (result.entries.length === 0) return { text: "", count: 0 };
+
+  const blocks = result.entries.map((entry, i) => {
+    const confidenceLabel = entry.confidence_level.replace(/_/g, " ");
+    const quality = entry.quality_score;
+    const date = new Date(entry.created_at).toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+
+    const maxContentChars = Math.max(80, Math.floor(tokenBudget / result.entries.length / 4) * 4);
+    const content = entry.content.length > maxContentChars
+      ? entry.content.slice(0, maxContentChars) + "..."
+      : entry.content;
+
+    const tagLine = [
+      entry.selected_category,
+      ...(entry.selected_subtags ?? []),
+      ...(entry.custom_tags ?? []),
+    ].filter(Boolean).join(", ") || entry.tag;
+
+    return `[Exchange Entry ${i + 1}]
+Category: ${entry.selected_category ?? "General"}
+Tags: ${tagLine}
+Confidence: ${confidenceLabel}
+Quality: ${quality}/100
+Created: ${date}
+Content: ${content}`;
+  });
+
+  const text = `EXCHANGE INTELLIGENCE — LICENSED HUMAN KNOWLEDGE (${result.entries.length} entries)
+Exchange Intelligence contains human-provided knowledge temporarily licensed through an active synchronization purchase. Treat it as valuable experience, not automatically verified fact. Do not imply ownership by the buyer.
+
+Active synchronizations: ${result.syncCount}. Vendor EAGOHs: ${result.vendorEagohCount}.
+
+${blocks.join("\n\n")}`;
+
+  return { text, count: result.entries.length };
 }
 
 // ── Faction OI Formatting ────────────────────────────────────────────────────
@@ -936,6 +1257,43 @@ function formatExternalResearchContext(result: ExternalResearchResult): string {
   return parts.join("\n\n");
 }
 
+// ── Analyst Context Usage Audit ──────────────────────────────────────────────
+
+/**
+ * Log analyst context usage for Exchange intelligence auditing.
+ * Only logs when Exchange entries were used. Best-effort — never fails the session.
+ */
+async function logContextUsage(
+  serviceClient: SupabaseClient | null,
+  params: {
+    userId: string;
+    sourceType: string;
+    sourceOwnerId?: string;
+    sourceEagohId?: string;
+    oiEntryId?: string;
+    sessionType: string;
+    threadId: string;
+    relevanceScore?: number;
+  },
+): Promise<void> {
+  if (!serviceClient) return;
+  try {
+    await serviceClient.from("analyst_context_usage").insert({
+      requesting_user_id: params.userId,
+      source_type: params.sourceType,
+      source_owner_id: params.sourceOwnerId ?? null,
+      source_eagoh_id: params.sourceEagohId ?? null,
+      open_intelligence_entry_id: params.oiEntryId ?? null,
+      session_type: params.sessionType,
+      thread_id: params.threadId,
+      relevance_score: params.relevanceScore ?? null,
+      used_at: new Date().toISOString(),
+    });
+  } catch {
+    // Best-effort audit logging — don't fail the session
+  }
+}
+
 // ── Prompt Building ──────────────────────────────────────────────────────────
 
 function getSessionInstruction(sessionType: SessionType): string {
@@ -988,6 +1346,7 @@ function buildSystemPrompt(params: {
   eagohMeta?: { name: string; domain: string } | null;
   hasOI: boolean;
   hasFactionOI: boolean;
+  hasExchangeOI: boolean;
   hasExternalResearch: boolean;
 }): string {
   const sections: string[] = [];
@@ -1031,47 +1390,41 @@ function buildSystemPrompt(params: {
     );
   }
 
-  // 4. Source handling instructions — covers all combinations of OI, Faction, and External
-  const sourceCount = [params.hasOI, params.hasFactionOI, params.hasExternalResearch].filter(Boolean).length;
+  // 4. Source handling instructions — covers all combinations of OI, Faction, Exchange, and External
+  const sourceCount = [params.hasOI, params.hasFactionOI, params.hasExchangeOI, params.hasExternalResearch].filter(Boolean).length;
 
   if (sourceCount >= 2) {
     // Multi-source: provide comprehensive conflict-resolution instructions
     const lines: string[] = ["SOURCE HANDLING (Multiple Intelligence Sources):"];
     if (params.hasOI) lines.push("- Personal Open Intelligence is private user-provided knowledge — potentially valuable but not automatically verified.");
     if (params.hasFactionOI) lines.push("- Faction Intelligence is human-provided knowledge shared by authorized faction members — valuable experience but not automatically verified.");
+    if (params.hasExchangeOI) lines.push("- Exchange Intelligence is licensed human knowledge temporarily accessed through Exchange synchronization — valuable but not automatically verified.");
     if (params.hasExternalResearch) lines.push("- Current External Research comes from web sources — it may also contain errors or conflicting reports.");
     lines.push(
       "- When sources conflict, identify the conflict explicitly rather than silently choosing one.",
-      "- Use phrasing like: 'Your Personal Intelligence suggests X, Faction Intelligence indicates Y, and current external research reports Z.'",
+      "- Use phrasing like: 'Your Personal Intelligence suggests X, Faction Intelligence indicates Y, licensed Exchange Intelligence suggests Z, and current external research reports W.'",
       "- Explain which information is newer, which is better supported, and whether the discrepancy could be context-dependent.",
       "- Never silently discard the user's observations. Preserve each perspective.",
       "- Compare recency, source quality, confidence, validation, and agreement across all sources.",
     );
     sections.push(lines.join("\n"));
-  } else if (params.hasOI && !params.hasFactionOI && !params.hasExternalResearch) {
+  } else if (params.hasOI && !params.hasFactionOI && !params.hasExchangeOI && !params.hasExternalResearch) {
     sections.push(
       "SOURCE HANDLING:",
       "- Personal Open Intelligence is provided below. Treat it as private user knowledge — potentially valuable but not automatically verified.",
       "- Conflicting signals between your trained knowledge and the user's Personal Open Intelligence should be surfaced explicitly: 'Your Personal Intelligence suggests X, while general knowledge indicates Y.'",
       "- Never silently discard the user's observations. Preserve them as a perspective.",
     );
-  } else if (params.hasFactionOI && !params.hasOI && !params.hasExternalResearch) {
+  } else if (params.hasExchangeOI && !params.hasOI && !params.hasFactionOI && !params.hasExternalResearch) {
     sections.push(
       "SOURCE HANDLING:",
-      "- Faction Intelligence is provided below. Treat it as shared human knowledge — potentially valuable but not automatically verified.",
-      "- Compare against your trained knowledge. When conflicts exist, surface them explicitly.",
-    );
-  } else if (params.hasExternalResearch && !params.hasOI && !params.hasFactionOI) {
-    sections.push(
-      "SOURCE HANDLING:",
-      "- Current external web research is provided below. Ground your analysis in these real sources.",
-      "- Cite sources where appropriate. Do not fabricate additional URLs or citations.",
-      "- External research may contain errors — acknowledge uncertainty when sources conflict.",
+      "- Licensed Exchange Intelligence is provided below. Treat it as valuable experience, not automatically verified fact.",
+      "- Do not imply the buyer owns this intelligence. Compare against your trained knowledge. When conflicts exist, surface them.",
     );
   } else {
     sections.push(
       "SOURCE HANDLING:",
-      "- No personal intelligence, faction intelligence, or current research was found for this query. Base your response on trained knowledge and conversation context.",
+      "- No personal intelligence, faction intelligence, exchange intelligence, or current research was found for this query. Base your response on trained knowledge and conversation context.",
       "- Do not claim or imply that external research or personal intelligence was used.",
     );
   }
@@ -1093,6 +1446,7 @@ function buildMessages(params: {
   oiContext: string;
   externalResearchContext: string;
   factionOIContext?: string;
+  exchangeOIContext?: string;
   conversationContext: ConversationMessage[];
   prompt: string;
 }): Array<{ role: "system" | "user" | "assistant"; content: string }> {
@@ -1104,6 +1458,10 @@ function buildMessages(params: {
 
   if (params.factionOIContext) {
     systemParts.push(params.factionOIContext);
+  }
+
+  if (params.exchangeOIContext) {
+    systemParts.push(params.exchangeOIContext);
   }
 
   if (params.externalResearchContext) {
@@ -1272,6 +1630,57 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
     console.log("[analyst] Faction OI retrieval skipped — free user");
   }
 
+  // ── Exchange Intelligence retrieval ────────────────────────────────────
+  let exchangeOIContext = "";
+  let exchangeOICount = 0;
+  let exchangeSyncCount = 0;
+  let exchangeVendorEagohCount = 0;
+
+  // Only retrieve Exchange intelligence for paid users
+  if (isPaid) {
+    const serviceClient = getServiceRoleClient(env);
+    if (serviceClient) {
+      const exchangeResult = await retrieveExchangeOpenIntelligence(serviceClient, userId, prompt, sessionType);
+      exchangeSyncCount = exchangeResult.syncCount;
+      exchangeVendorEagohCount = exchangeResult.vendorEagohCount;
+
+      if (exchangeResult.used && exchangeResult.entries.length > 0) {
+        const exchangeTokenBudget = sessionOITokenBudget(sessionType);
+        const exchangeFormatted = formatExchangeOIContext(exchangeResult, exchangeTokenBudget);
+        exchangeOIContext = exchangeFormatted.text;
+        exchangeOICount = exchangeFormatted.count;
+
+        // Audit logging for Exchange entries
+        for (const entry of exchangeResult.entries) {
+          void logContextUsage(serviceClient, {
+            userId,
+            sourceType: "exchange",
+            sourceOwnerId: entry.user_id,
+            sourceEagohId: entry.eagoh_id,
+            oiEntryId: entry.id,
+            sessionType,
+            threadId: "",
+          });
+        }
+
+        console.log("[analyst] Exchange OI retrieval", {
+          exchangeCount: exchangeOICount,
+          syncCount: exchangeSyncCount,
+          vendorEagohCount: exchangeVendorEagohCount,
+          sessionType,
+        });
+      } else if (exchangeResult.syncCount > 0) {
+        console.log("[analyst] Exchange OI retrieval: active syncs found but no relevant entries");
+      } else {
+        console.log("[analyst] Exchange OI retrieval: no active syncs");
+      }
+    } else {
+      console.log("[analyst] Exchange OI retrieval skipped — service role key not configured");
+    }
+  } else {
+    console.log("[analyst] Exchange OI retrieval skipped — free user");
+  }
+
   // ── External web search ──────────────────────────────────────────────────
   let externalResearchResult: ExternalResearchResult = {
     used: false,
@@ -1307,6 +1716,7 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
     eagohMeta,
     hasOI: oiCount > 0,
     hasFactionOI: factionOICount > 0,
+    hasExchangeOI: exchangeOICount > 0,
     hasExternalResearch: externalResearchResult.used,
   });
 
@@ -1315,6 +1725,7 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
     oiContext,
     externalResearchContext,
     factionOIContext,
+    exchangeOIContext,
     conversationContext: payload.conversationContext ?? [],
     prompt: safePrompt,
   });
@@ -1391,8 +1802,14 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
         personalOpenIntelligenceCount: oiCount,
         factionIntelligenceUsed: factionOICount > 0,
         factionIntelligenceCount: factionOICount,
+        exchangeIntelligenceUsed: exchangeOICount > 0,
+        exchangeIntelligenceCount: exchangeOICount,
         externalSearchUsed: externalResearchResult.used,
         sourceCount: externalResearchResult.sources.length,
+        exchangeAccess: exchangeSyncCount > 0 ? {
+          activeSyncCount: exchangeSyncCount,
+          vendorEagohCount: exchangeVendorEagohCount,
+        } : undefined,
       };
 
       console.log("[analyst] success", {
@@ -1401,6 +1818,8 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
         personalOICount: grounding.personalOpenIntelligenceCount,
         factionOIUsed: grounding.factionIntelligenceUsed,
         factionOICount: grounding.factionIntelligenceCount,
+        exchangeOIUsed: grounding.exchangeIntelligenceUsed,
+        exchangeOICount: grounding.exchangeIntelligenceCount,
         externalSearchUsed: grounding.externalSearchUsed,
         sourceCount: grounding.sourceCount,
         hasEagoh: !!payload.eagohId,

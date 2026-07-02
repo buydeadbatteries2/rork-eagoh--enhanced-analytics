@@ -534,6 +534,9 @@ alter table public.faction_shared_intelligence enable row level security;
 drop policy if exists "fsi_select_all" on public.faction_shared_intelligence;
 drop policy if exists "fsi_self_insert" on public.faction_shared_intelligence;
 drop policy if exists "fsi_commander_delete" on public.faction_shared_intelligence;
+drop policy if exists "fsi_select_faction_members" on public.faction_shared_intelligence;
+drop policy if exists "fsi_self_insert" on public.faction_shared_intelligence;
+drop policy if exists "fsi_commander_delete" on public.faction_shared_intelligence;
 
 create policy "fsi_select_faction_members" on public.faction_shared_intelligence
   for select using (

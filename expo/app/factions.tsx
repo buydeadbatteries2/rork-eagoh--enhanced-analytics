@@ -41,6 +41,17 @@ import { getBulkReputations, rankColor as repRankColor, RANK_TIERS, type RankTie
 import type { ReputationRow } from "@/services/reputation";
 import { supabase } from "@/lib/supabase";
 import TeamSelector from "@/app/_components/TeamSelector";
+import {
+  IntelligenceEntryCard,
+  FeedbackModal,
+  DisputeModal,
+  type FeedbackAccessInfo,
+} from "@/app/_components/IntelligenceTrust";
+import {
+  fetchBulkPublicReputations,
+  type OpenIntelligenceRow,
+  type PublicReputation,
+} from "@/services/openIntelligence";
 import { LinearGradient } from "expo-linear-gradient";
 import { useHaptics } from "@/hooks/useHaptics";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -382,6 +393,7 @@ function FactionDetail({
   const { profile } = useProfile();
   const edge = useEdge();
   const queryClient = useQueryClient();
+  const h = useHaptics();
   const userId = user?.id;
 
   const members = full?.members ?? [];
@@ -406,6 +418,75 @@ function FactionDetail({
   const [promoteRole, setPromoteRole] = useState<FactionRole>("strategist");
   const [memberRepMap, setMemberRepMap] = useState<Map<string, ReputationRow>>(new Map());
   const [userToEagohMap, setUserToEagohMap] = useState<Map<string, string>>(new Map());
+
+  // ── Phase 6A: Shared intelligence trust UI state ───────────────────
+  const [sharedOIEntries, setSharedOIEntries] = useState<OpenIntelligenceRow[]>([]);
+  const [contributorRepMap, setContributorRepMap] = useState<Map<string, PublicReputation>>(new Map());
+  const [feedbackModalEntryId, setFeedbackModalEntryId] = useState<string | null>(null);
+  const [disputeModalEntryId, setDisputeModalEntryId] = useState<string | null>(null);
+
+  // Phase 6A: Fetch shared OI entries and contributor reputations when sharedEntries are available
+  useEffect(() => {
+    if (!full?.sharedEntries || full.sharedEntries.length === 0) {
+      setSharedOIEntries([]);
+      return;
+    }
+    const entryIds = full.sharedEntries.map((s) => s.oi_entry_id);
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("open_intelligence")
+          .select("*")
+          .in("id", entryIds)
+          .order("created_at", { ascending: false })
+          .limit(30);
+        if (cancelled) return;
+        if (error) {
+          console.warn("[factions] shared OI fetch failed", error.message);
+          return;
+        }
+        const entries = (data ?? []) as OpenIntelligenceRow[];
+        setSharedOIEntries(entries);
+        // Fetch public reputations for contributors
+        const contributorIds = [...new Set(entries.map((e) => e.user_id))];
+        if (contributorIds.length > 0) {
+          fetchBulkPublicReputations(contributorIds)
+            .then(setContributorRepMap)
+            .catch(() => undefined);
+        }
+      } catch {
+        // best-effort — ignore fetch errors
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [full?.sharedEntries]);
+
+  // Phase 6A: Build access info for feedback/dispute
+  const myMemberStatus = myMember?.status ?? null;
+  const hasFactionAccess = myMemberStatus === "active" || myMemberStatus === "grace_period";
+  const buildFeedbackAccess = useCallback(
+    (entry: OpenIntelligenceRow): FeedbackAccessInfo => ({
+      accessSource: "faction",
+      factionId: faction.id,
+      isOwnEntry: entry.user_id === userId,
+    }),
+    [faction.id, userId],
+  );
+
+  const handleRateEntry = useCallback((entryId: string): void => {
+    h.light();
+    setFeedbackModalEntryId(entryId);
+  }, [h]);
+
+  const handleDisputeEntry = useCallback((entryId: string): void => {
+    h.light();
+    setDisputeModalEntryId(entryId);
+  }, [h]);
+
+  const handleFeedbackSubmitted = useCallback((): void => {
+    queryClient.invalidateQueries({ queryKey: ["faction", faction.id] });
+  }, [queryClient, faction.id]);
 
   // Load reputations for member EAGOHs
   useEffect(() => {
@@ -767,6 +848,53 @@ function FactionDetail({
           </View>
         </View>
       )}
+
+      {/* ── Phase 6A: Shared Intelligence with Trust Indicators ──────── */}
+      {sharedOIEntries.length > 0 && (
+        <View style={styles.sharedIntelSection}>
+          <SectionHeader eyebrow="SHARED INTELLIGENCE" title="Faction Knowledge Pool" />
+          {sharedOIEntries.map((entry) => (
+            <IntelligenceEntryCard
+              key={entry.id}
+              entry={entry}
+              contributorReputation={contributorRepMap.get(entry.user_id)}
+              access={buildFeedbackAccess(entry)}
+              onRate={handleRateEntry}
+              onDispute={handleDisputeEntry}
+            />
+          ))}
+        </View>
+      )}
+
+      {/* ── Phase 6A: Feedback & Dispute Modals ──────────────────────── */}
+      <FeedbackModal
+        visible={feedbackModalEntryId !== null}
+        entryId={feedbackModalEntryId}
+        access={
+          feedbackModalEntryId
+            ? buildFeedbackAccess(
+                sharedOIEntries.find((e) => e.id === feedbackModalEntryId) ??
+                { user_id: "", id: "" } as OpenIntelligenceRow,
+              )
+            : null
+        }
+        onClose={() => setFeedbackModalEntryId(null)}
+        onSubmitted={handleFeedbackSubmitted}
+      />
+      <DisputeModal
+        visible={disputeModalEntryId !== null}
+        entryId={disputeModalEntryId}
+        access={
+          disputeModalEntryId
+            ? buildFeedbackAccess(
+                sharedOIEntries.find((e) => e.id === disputeModalEntryId) ??
+                { user_id: "", id: "" } as OpenIntelligenceRow,
+              )
+            : null
+        }
+        onClose={() => setDisputeModalEntryId(null)}
+        onSubmitted={handleFeedbackSubmitted}
+      />
     </View>
   );
 }
@@ -1675,6 +1803,7 @@ const styles = StyleSheet.create({
   factionAvgRepLabel: { color: palette.muted, fontSize: 12, fontWeight: "800" as const, flex: 1 },
   factionAvgRepValue: { color: palette.gold, fontSize: 16, fontWeight: "900" as const },
   topContribSection: { marginTop: 8 },
+  sharedIntelSection: { marginTop: 8, gap: 8 },
   contributorRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 10, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 5, backgroundColor: "rgba(16,27,42,0.54)", borderWidth: 1, borderColor: palette.line, marginTop: 6 },
   contributorRank: { color: palette.muted, fontSize: 13, fontWeight: "900" as const, minWidth: 24 },
   contributorName: { color: palette.text, fontSize: 13, fontWeight: "800" as const },

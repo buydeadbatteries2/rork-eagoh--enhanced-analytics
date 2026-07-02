@@ -486,5 +486,285 @@ export async function toggleExchangeShare(
   return updateEntry({ entryId, exchangeShareEnabled: enabled });
 }
 
+// ── Phase 6A: Trust UI Service Functions ────────────────────────────────
+
+/** Validation status display labels for trust indicators. */
+export const VALIDATION_STATUS_LABELS: Record<string, string> = {
+  pending_review: "Pending Review",
+  validated: "Community Supported",
+  community_supported: "Community Supported",
+  externally_supported: "Externally Supported",
+  disputed: "Disputed",
+  rejected: "Rejected",
+  withdrawn: "Withdrawn",
+  flagged: "Disputed",
+};
+
+/** Validation status colors for trust indicators. */
+export function validationStatusColor(status: string): string {
+  switch (status) {
+    case "externally_supported":
+      return "#00FFB2";
+    case "community_supported":
+    case "validated":
+      return "#6CE6FF";
+    case "pending_review":
+      return "#8DA2B5";
+    case "disputed":
+    case "flagged":
+      return "#FFB547";
+    case "rejected":
+    case "withdrawn":
+      return "#FF4D6D";
+    default:
+      return "#8DA2B5";
+  }
+}
+
+/** Trust label from reputation overall_score (0-100). */
+export function trustLabel(score: number): string {
+  if (score >= 80) return "Highly Trusted";
+  if (score >= 60) return "Trusted";
+  if (score >= 40) return "Neutral";
+  return "Developing";
+}
+
+/** Trust label color from reputation overall_score. */
+export function trustLabelColor(score: number): string {
+  if (score >= 80) return "#00FFB2";
+  if (score >= 60) return "#6CE6FF";
+  if (score >= 40) return "#FFB547";
+  return "#8DA2B5";
+}
+
+/** Feedback type display labels. */
+export const FEEDBACK_TYPE_LABELS: Record<string, string> = {
+  helpful: "Helpful",
+  accurate_to_my_experience: "Accurate to My Experience",
+  needs_context: "Needs Context",
+  outdated: "Outdated",
+  incorrect: "Incorrect",
+  misleading: "Misleading",
+  abusive: "Abusive",
+};
+
+/** All feedback types in display order. */
+export const FEEDBACK_TYPES_LIST: string[] = [
+  "helpful",
+  "accurate_to_my_experience",
+  "needs_context",
+  "outdated",
+  "incorrect",
+  "misleading",
+  "abusive",
+];
+
+/** Dispute reason category display labels. */
+export const DISPUTE_REASON_LABELS: Record<string, string> = {
+  incorrect: "Incorrect",
+  misleading: "Misleading",
+  outdated: "Outdated",
+  needs_context: "Needs Context",
+  fabricated: "Fabricated",
+  abusive: "Abusive",
+  prohibited: "Prohibited",
+  other: "Other",
+};
+
+/** All dispute reason categories in display order. */
+export const DISPUTE_REASONS_LIST: string[] = [
+  "incorrect",
+  "misleading",
+  "outdated",
+  "needs_context",
+  "fabricated",
+  "abusive",
+  "prohibited",
+  "other",
+];
+
+// ── Worker call helpers ─────────────────────────────────────────────────
+
+const FUNCTIONS_BASE_URL = process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL;
+
+async function getWorkerAuth(): Promise<string | null> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  return sessionData?.session?.access_token ?? null;
+}
+
+/** Public contributor reputation (safe fields only). */
+export type PublicReputation = {
+  user_id: string;
+  overall_score: number;
+  calculated_at: string | null;
+};
+
+/** Fetch a user's public contributor reputation via the worker. */
+export async function fetchPublicReputation(targetUserId: string): Promise<PublicReputation | null> {
+  if (!FUNCTIONS_BASE_URL) return null;
+  const token = await getWorkerAuth();
+  if (!token) return null;
+  try {
+    const res = await fetch(
+      `${FUNCTIONS_BASE_URL}/reputation?userId=${encodeURIComponent(targetUserId)}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const data = (await res.json()) as { ok: boolean; reputation?: PublicReputation };
+    return data.ok ? data.reputation ?? null : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Batch fetch public reputations for multiple users. */
+export async function fetchBulkPublicReputations(
+  userIds: string[],
+): Promise<Map<string, PublicReputation>> {
+  const result = new Map<string, PublicReputation>();
+  if (!userIds.length) return result;
+  await Promise.all(
+    userIds.map(async (uid) => {
+      const rep = await fetchPublicReputation(uid);
+      if (rep) result.set(uid, rep);
+    }),
+  );
+  return result;
+}
+
+/** Vendor quality metrics from the safe RPC. */
+export type VendorQualityMetrics = {
+  avg_entry_quality: number;
+  supported_entry_rate: number;
+  dispute_rate: number;
+  rejected_rate: number;
+  recent_usefulness: number;
+  eligible_exchange_entries: number;
+  total_entries: number;
+};
+
+/** Fetch vendor quality metrics via the safe RPC. */
+export async function fetchVendorQualityMetrics(
+  vendorId: string,
+): Promise<VendorQualityMetrics | null> {
+  const { data, error } = await supabase
+    .rpc("get_vendor_quality_metrics", { p_vendor_id: vendorId });
+  if (error) {
+    console.warn("[trust] vendor quality metrics failed", error.message);
+    return null;
+  }
+  const row = (data as VendorQualityMetrics[])?.[0];
+  return row ?? null;
+}
+
+/** Faction quality metrics from the safe RPC. */
+export type FactionQualityMetrics = {
+  total_shared_entries: number;
+  avg_quality: number;
+  supported_rate: number;
+  disputed_rate: number;
+  active_contributors: number;
+  entries_used_in_responses: number;
+};
+
+/** Fetch faction quality metrics via the safe RPC. */
+export async function fetchFactionQualityMetrics(
+  factionId: string,
+): Promise<FactionQualityMetrics | null> {
+  const { data, error } = await supabase
+    .rpc("get_faction_quality_metrics", { p_faction_id: factionId });
+  if (error) {
+    console.warn("[trust] faction quality metrics failed", error.message);
+    return null;
+  }
+  const row = (data as FactionQualityMetrics[])?.[0];
+  return row ?? null;
+}
+
+// ── Feedback & Dispute submission (secure worker only) ──────────────────
+
+export type FeedbackResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+/** Submit feedback through the secure worker. Never writes directly to Supabase. */
+export async function submitFeedback(params: {
+  entryId: string;
+  feedbackType: string;
+  optionalReason?: string;
+  accessSource: "faction" | "exchange";
+  factionId?: string;
+  exchangePurchaseId?: string;
+}): Promise<FeedbackResult> {
+  if (!FUNCTIONS_BASE_URL) {
+    return { ok: false, error: "Backend not configured." };
+  }
+  const token = await getWorkerAuth();
+  if (!token) {
+    return { ok: false, error: "Not authenticated." };
+  }
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE_URL}/feedback/submit`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        entryId: params.entryId,
+        feedbackType: params.feedbackType,
+        optionalReason: params.optionalReason ?? undefined,
+        accessSource: params.accessSource,
+        factionId: params.factionId ?? undefined,
+        exchangePurchaseId: params.exchangePurchaseId ?? undefined,
+      }),
+    });
+    const data = (await res.json()) as { ok: boolean; error?: string };
+    return data.ok ? { ok: true } : { ok: false, error: data.error ?? "Failed." };
+  } catch {
+    return { ok: false, error: "Network error. Try again." };
+  }
+}
+
+/** Submit a dispute through the secure worker. Never writes directly to Supabase. */
+export async function submitDispute(params: {
+  entryId: string;
+  reasonCategory: string;
+  explanation: string;
+  supportingUrl?: string;
+  accessSource: "faction" | "exchange";
+  factionId?: string;
+  exchangePurchaseId?: string;
+}): Promise<FeedbackResult> {
+  if (!FUNCTIONS_BASE_URL) {
+    return { ok: false, error: "Backend not configured." };
+  }
+  const token = await getWorkerAuth();
+  if (!token) {
+    return { ok: false, error: "Not authenticated." };
+  }
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE_URL}/dispute/submit`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        entryId: params.entryId,
+        reasonCategory: params.reasonCategory,
+        explanation: params.explanation,
+        supportingUrl: params.supportingUrl ?? undefined,
+        accessSource: params.accessSource,
+        factionId: params.factionId ?? undefined,
+        exchangePurchaseId: params.exchangePurchaseId ?? undefined,
+      }),
+    });
+    const data = (await res.json()) as { ok: boolean; error?: string };
+    return data.ok ? { ok: true } : { ok: false, error: data.error ?? "Failed." };
+  } catch {
+    return { ok: false, error: "Network error. Try again." };
+  }
+}
+
 /** Re-export helpers */
 export { influenceLabel };

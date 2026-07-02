@@ -37,6 +37,8 @@ import {
   getRecentTags,
   listEntriesForEagoh,
   submitEntry,
+  VALIDATION_STATUS_LABELS,
+  validationStatusColor,
   type ConfidenceLevel,
   type EntryType,
   type OpenIntelligenceRow,
@@ -628,6 +630,11 @@ const LearningEntry = memo(function LearningEntry({
     : entry.entry_type === "basic_deep_entry" ? "Basic"
     : "Advanced";
 
+  // Phase 6A: Use proper validation status labels
+  const statusKey = entry.validation_status ?? "pending_review";
+  const statusLabel = VALIDATION_STATUS_LABELS[statusKey] ?? "Pending Review";
+  const statusColor = validationStatusColor(statusKey);
+
   return (
     <View style={styles.learningCard}>
       <View style={styles.learningTop}>
@@ -665,7 +672,7 @@ const LearningEntry = memo(function LearningEntry({
         <View style={styles.learningScoreDivider} />
         <View style={styles.learningScoreItem}>
           <Text style={styles.learningScoreLabel}>Status</Text>
-          <Text style={[styles.learningScoreVal, { color: palette.muted }]}>Pending</Text>
+          <Text style={[styles.learningScoreVal, { color: statusColor }]}>{statusLabel}</Text>
         </View>
       </View>
     </View>

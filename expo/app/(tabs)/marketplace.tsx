@@ -29,6 +29,7 @@ import {
   Star,
   Tag,
   UserCheck,
+  AlertTriangle,
   Megaphone,
   TrendingUp,
   X,
@@ -93,6 +94,14 @@ import {
 import { getBulkReputations, rankColor as repRankColor, RANK_TIERS, type RankTier } from "@/services/reputation";
 import type { ReputationRow } from "@/services/reputation";
 import { getLeaderboard } from "@/services/leaderboards";
+import {
+  fetchVendorQualityMetrics,
+  fetchBulkPublicReputations,
+  trustLabel,
+  trustLabelColor,
+  type VendorQualityMetrics,
+  type PublicReputation,
+} from "@/services/openIntelligence";
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -309,12 +318,16 @@ const ListingCard = memo(function ListingCard({
   onPurchase,
   reputation,
   onViewVendorProfile,
+  vendorMetrics,
+  vendorRep,
 }: {
   item: EnrichedListing;
   isPaid: boolean;
   onPurchase: (listing: EnrichedListing) => void;
   reputation: ReputationRow | undefined;
   onViewVendorProfile: (vendorId: string) => void;
+  vendorMetrics?: VendorQualityMetrics | null;
+  vendorRep?: PublicReputation | null;
 }): JSX.Element {
   const eagoh = item.eagoh;
   const domain = eagoh?.domain ?? eagoh?.sport ?? "Unknown";
@@ -326,6 +339,14 @@ const ListingCard = memo(function ListingCard({
   const repScore = reputation?.reputation_score ?? 0;
   const rkColor = rankColor(eagohRank);
   const imageUrl = resolveMarketplaceEagohImage(eagoh);
+
+  // Phase 6A: Trust indicators
+  const vendorTrustScore = vendorRep?.overall_score ?? 50;
+  const vendorTrustLabel = trustLabel(vendorTrustScore);
+  const vendorTrustColor = trustLabelColor(vendorTrustScore);
+  const avgQuality = vendorMetrics?.avg_entry_quality ?? item.avg_quality_score ?? 0;
+  const supportedCount = vendorMetrics?.eligible_exchange_entries ?? 0;
+  const disputeRate = vendorMetrics?.dispute_rate ?? 0;
 
   // Dev diagnostics — logs image resolution data for marketplace troubleshooting
   if (__DEV__ && imageUrl === null && eagoh != null) {
@@ -429,12 +450,32 @@ const ListingCard = memo(function ListingCard({
           </View>
           <View style={styles.metricRow}>
             <Sparkles color={palette.cyan} size={11} />
-            <Text style={styles.metric}>Quality: {item.avg_quality_score}</Text>
+            <Text style={styles.metric}>Quality: {Math.round(avgQuality)}</Text>
           </View>
           <View style={styles.metricRow}>
             <Coins color={palette.gold} size={11} />
             <Text style={styles.metric}>Earned: {item.edge_earned_this_month} EC/mo</Text>
           </View>
+        </View>
+
+        {/* Phase 6A: Trust indicators */}
+        <View style={styles.trustRow}>
+          <View style={[styles.trustPill, { borderColor: `${vendorTrustColor}33`, backgroundColor: `${vendorTrustColor}0A` }]}>
+            <Star color={vendorTrustColor} size={9} />
+            <Text style={[styles.trustPillText, { color: vendorTrustColor }]}>{vendorTrustLabel}</Text>
+          </View>
+          {supportedCount > 0 ? (
+            <View style={[styles.trustPill, { borderColor: `${palette.cyan}22`, backgroundColor: `${palette.cyan}08` }]}>
+              <Sparkles color={palette.cyan} size={9} />
+              <Text style={[styles.trustPillText, { color: palette.cyan }]}>{supportedCount} shared</Text>
+            </View>
+          ) : null}
+          {disputeRate > 0.1 ? (
+            <View style={[styles.trustPill, { borderColor: `${palette.ember}22`, backgroundColor: `${palette.ember}08` }]}>
+              <AlertTriangle color={palette.ember} size={9} />
+              <Text style={[styles.trustPillText, { color: palette.ember }]}>{Math.round(disputeRate * 100)}% disputed</Text>
+            </View>
+          ) : null}
         </View>
 
         {/* Spacer pushes vendor/price/button to bottom */}
@@ -1644,6 +1685,8 @@ export default function MarketplaceScreen(): JSX.Element {
   const [rankingsData, setRankingsData] = useState<Array<{ rank: number; eagoh_id: string; eagoh_name: string; reputation_score: number; rank_tier: RankTier; marketplace_trust: number; sync_success: number; marketplace_sales: number; owner_username: string }>>([]);
   const [rankingsLoading, setRankingsLoading] = useState(false);
   const [repMap, setRepMap] = useState<Map<string, ReputationRow>>(new Map());
+  const [vendorMetricsMap, setVendorMetricsMap] = useState<Map<string, VendorQualityMetrics>>(new Map());
+  const [vendorRepMap, setVendorRepMap] = useState<Map<string, PublicReputation>>(new Map());
 
   const [purchaseModal, setPurchaseModal] = useState<EnrichedListing | null>(null);
   const [purchasing, setPurchasing] = useState(false);
@@ -1678,6 +1721,20 @@ export default function MarketplaceScreen(): JSX.Element {
       const allEagohIds = [...new Set(l.map((li) => li.eagoh_id))];
       if (allEagohIds.length > 0) {
         getBulkReputations(allEagohIds).then(setRepMap).catch(() => undefined);
+      }
+      // Phase 6A: Load vendor quality metrics + public reputations for trust indicators
+      const allVendorIds = [...new Set(l.map((li) => li.vendor_id))];
+      if (allVendorIds.length > 0) {
+        fetchBulkPublicReputations(allVendorIds).then(setVendorRepMap).catch(() => undefined);
+        Promise.all(allVendorIds.map((vid) => fetchVendorQualityMetrics(vid).then((m) => [vid, m] as const)))
+          .then((results) => {
+            const map = new Map<string, VendorQualityMetrics>();
+            for (const [vid, m] of results) {
+              if (m) map.set(vid, m);
+            }
+            setVendorMetricsMap(map);
+          })
+          .catch(() => undefined);
       }
     } catch (err) {
       console.warn("[marketplace] load error", err);
@@ -1861,6 +1918,8 @@ export default function MarketplaceScreen(): JSX.Element {
                     onPurchase={(l) => setPurchaseModal(l)}
                     reputation={repMap.get(item.eagoh_id)}
                     onViewVendorProfile={(vendorId) => setPublicProfileVendorId(vendorId)}
+                    vendorMetrics={vendorMetricsMap.get(item.vendor_id)}
+                    vendorRep={vendorRepMap.get(item.vendor_id)}
                   />
                 ))}
               </ScrollView>
@@ -2334,6 +2393,10 @@ const styles = StyleSheet.create({
   metricGrid: { gap: 1, marginTop: 4 },
   metricRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   metric: { color: palette.text, fontSize: 10, fontWeight: "800" },
+  // Phase 6A: Trust indicators
+  trustRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 5, flexWrap: "wrap" as const },
+  trustPill: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4, borderWidth: 1 },
+  trustPillText: { fontSize: 9, fontWeight: "800" as const, letterSpacing: 0.3 },
   vendorStrip: {
     flexDirection: "row",
     alignItems: "center",

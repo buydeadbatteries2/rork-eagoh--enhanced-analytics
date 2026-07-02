@@ -20,13 +20,20 @@
  *   4. Includes research summary in the final prompt
  *   5. Labels sources clearly and handles OI/external conflicts
  *
- * Phase 3A — Faction Intelligence (deployed):
+ * Phase 3A — Faction Intelligence (deployed)
  *   1. Checks subscription tier (free users skip faction retrieval)
  *   2. Retrieves active faction memberships for the authenticated user
  *   3. Loads explicitly shared OI entries from faction_shared_intelligence
  *   4. Verifies ownership, resolves entries, excludes the user's own
  *   5. Ranks and formats faction entries separately from personal OI
  *   6. Labels faction intelligence clearly in the final prompt
+ *
+ * Phase 4A — Exchange Sync Intelligence (deployed):
+ *   1. Retrieves active Exchange sync purchases for the authenticated user
+ *   2. Resolves vendor EAGOHs and loads exchange_share_enabled OI entries
+ *   3. Builds a stable access cohort and applies sync percentage
+ *   4. Ranks the accessible cohort and applies session entry limits
+ *   5. Formats and labels Exchange Intelligence separately
  *
  * Search model: gpt-4o (supports web_search tool natively)
  * Exchange retrieval: uses service_role Supabase client for cross-user OI access
@@ -36,7 +43,7 @@
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-// ── Environment ──────────────────────────────────────────────────────────────
+// ── Environment ───────────────────────────────────────────────────────────────
 
 type Env = {
   OPENAI_API_KEY?: string;

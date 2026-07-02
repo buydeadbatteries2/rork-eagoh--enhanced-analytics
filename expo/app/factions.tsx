@@ -439,6 +439,13 @@ function FactionDetail({
           .from("open_intelligence")
           .select("*")
           .in("id", entryIds)
+          .in("validation_status", [
+            "pending_review",
+            "validated",
+            "community_supported",
+            "externally_supported",
+            "disputed",
+          ])
           .order("created_at", { ascending: false })
           .limit(30);
         if (cancelled) return;

@@ -13,13 +13,12 @@ export type ConfidenceLevel = "weak_suspicion" | "moderate_confidence" | "strong
 
 export type ValidationStatus =
   | "pending_review"
-  | "validated" // legacy — migrated to community_supported server-side
+  | "validated" // legacy — kept for backward compatibility
   | "community_supported"
   | "externally_supported"
   | "disputed"
   | "rejected"
-  | "withdrawn"
-  | "flagged"; // legacy — migrated to disputed server-side
+  | "withdrawn";
 
 export type InfluenceScore = "low" | "medium" | "high";
 
@@ -497,7 +496,6 @@ export const VALIDATION_STATUS_LABELS: Record<string, string> = {
   disputed: "Disputed",
   rejected: "Rejected",
   withdrawn: "Withdrawn",
-  flagged: "Disputed",
 };
 
 /** Validation status colors for trust indicators. */
@@ -511,7 +509,6 @@ export function validationStatusColor(status: string): string {
     case "pending_review":
       return "#8DA2B5";
     case "disputed":
-    case "flagged":
       return "#FFB547";
     case "rejected":
     case "withdrawn":

@@ -11,6 +11,7 @@ import {
   BadgeCheck,
   BookOpen,
   Clock,
+  ChevronDown,
   Coins,
   Crown,
   Dna,
@@ -93,6 +94,7 @@ import {
 } from "@/services/eagohCredentials";
 import { getBulkReputations, rankColor as repRankColor, RANK_TIERS, type RankTier } from "@/services/reputation";
 import type { ReputationRow } from "@/services/reputation";
+import { supabase } from "@/lib/supabase";
 import { getLeaderboard } from "@/services/leaderboards";
 import {
   fetchVendorQualityMetrics,
@@ -101,7 +103,14 @@ import {
   trustLabelColor,
   type VendorQualityMetrics,
   type PublicReputation,
+  type OpenIntelligenceRow,
 } from "@/services/openIntelligence";
+import {
+  IntelligenceEntryCard,
+  FeedbackModal,
+  DisputeModal,
+  type FeedbackAccessInfo,
+} from "@/app/_components/IntelligenceTrust";
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -1407,32 +1416,188 @@ const DomainCarouselSection = memo(function DomainCarouselSection({
   );
 });
 
-const ActiveSyncCard = memo(function ActiveSyncCard({ item }: { item: EnrichedPurchase }): JSX.Element {
+const ActiveSyncCard = memo(function ActiveSyncCard({
+  item,
+  userId,
+}: {
+  item: EnrichedPurchase;
+  userId?: string | null;
+}): JSX.Element {
+  const h = useHaptics();
+  const [expanded, setExpanded] = useState(false);
+  const [vendorEntries, setVendorEntries] = useState<OpenIntelligenceRow[]>([]);
+  const [contributorRepMap, setContributorRepMap] = useState<Map<string, PublicReputation>>(new Map());
+  const [loadingEntries, setLoadingEntries] = useState(false);
+  const [feedbackModalEntryId, setFeedbackModalEntryId] = useState<string | null>(null);
+  const [disputeModalEntryId, setDisputeModalEntryId] = useState<string | null>(null);
+
   const remaining = timeLeft(item.expires_at);
   const isExpiring = remaining.includes("h") && parseInt(remaining) < 4;
+  const hasStarted = new Date(item.started_at).getTime() <= Date.now();
+  const hasExpired = new Date(item.expires_at).getTime() <= Date.now();
+  const isOwner = userId === item.buyer_id;
+  const canAccessExchange = isOwner && item.active && hasStarted && !hasExpired;
+
+  // Fetch vendor's exchange-shareable OI entries when expanded
+  useEffect(() => {
+    if (!expanded || !canAccessExchange) return;
+    setLoadingEntries(true);
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("open_intelligence")
+          .select("*")
+          .eq("user_id", item.vendor_id)
+          .eq("eagoh_id", item.eagoh_id)
+          .eq("exchange_share_enabled", true)
+          .in("validation_status", [
+            "pending_review",
+            "validated",
+            "community_supported",
+            "externally_supported",
+            "disputed",
+          ])
+          .order("created_at", { ascending: false })
+          .limit(20);
+        if (cancelled) return;
+        if (error) {
+          console.warn("[exchange] vendor OI fetch failed", error.message);
+          setVendorEntries([]);
+        } else {
+          const entries = (data ?? []) as OpenIntelligenceRow[];
+          setVendorEntries(entries);
+          const contributorIds = [...new Set(entries.map((e) => e.user_id))];
+          if (contributorIds.length > 0) {
+            fetchBulkPublicReputations(contributorIds)
+              .then(setContributorRepMap)
+              .catch(() => undefined);
+          }
+        }
+      } catch {
+        if (!cancelled) setVendorEntries([]);
+      } finally {
+        if (!cancelled) setLoadingEntries(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [expanded, canAccessExchange, item.vendor_id, item.eagoh_id]);
+
+  const buildExchangeAccess = useCallback(
+    (entry: OpenIntelligenceRow): FeedbackAccessInfo => ({
+      accessSource: "exchange",
+      exchangePurchaseId: item.id,
+      isOwnEntry: entry.user_id === userId,
+    }),
+    [item.id, userId],
+  );
+
+  const handleRateEntry = useCallback((entryId: string): void => {
+    h.light();
+    setFeedbackModalEntryId(entryId);
+  }, [h]);
+
+  const handleDisputeEntry = useCallback((entryId: string): void => {
+    h.light();
+    setDisputeModalEntryId(entryId);
+  }, [h]);
 
   return (
-    <View style={styles.activeSyncCard}>
-      <View style={styles.activeSyncLeft}>
-        <View style={styles.activeSyncImage}>
-          <OptimizedEagohImage tone="cyan" label={item.eagoh_name} size="banner" imageUrl={item.eagoh_image_url} />
+    <View>
+      <Pressable
+        onPress={() => {
+          if (canAccessExchange) {
+            h.light();
+            setExpanded((prev) => !prev);
+          }
+        }}
+        disabled={!canAccessExchange}
+        style={({ pressed }) => [pressed && styles.pressed]}
+      >
+        <View style={styles.activeSyncCard}>
+          <View style={styles.activeSyncLeft}>
+            <View style={styles.activeSyncImage}>
+              <OptimizedEagohImage tone="cyan" label={item.eagoh_name} size="banner" imageUrl={item.eagoh_image_url} />
+            </View>
+            <View style={styles.activeSyncInfo}>
+              <Text style={styles.activeSyncName} numberOfLines={1}>{item.eagoh_name}</Text>
+              <Text style={styles.activeSyncVendor}>by {item.vendor_username ?? "Anonymous"}</Text>
+              <Text style={styles.activeSyncLevel}>{item.sync_level} Sync · {item.days} day(s)</Text>
+            </View>
+          </View>
+          <View style={styles.activeSyncRight}>
+            <View style={[styles.activeSyncStatus, isExpiring && styles.activeSyncStatusWarn]}>
+              <Power color={isExpiring ? palette.ember : palette.success} size={12} />
+              <Text style={[styles.activeSyncStatusText, isExpiring && styles.activeSyncStatusTextWarn]}>
+                {isExpiring ? "Expiring" : "Active"}
+              </Text>
+            </View>
+            <Text style={[styles.activeSyncTime, isExpiring && styles.activeSyncTimeWarn]}>{remaining}</Text>
+            <Text style={styles.activeSyncCost}>{item.edge_cost} EC</Text>
+            {canAccessExchange && (
+              <View style={styles.exchangeExpandHint}>
+                <ChevronDown
+                  color={palette.cyan}
+                  size={14}
+                  style={{ transform: [{ rotate: expanded ? "180deg" : "0deg" }] }}
+                />
+                <Text style={styles.exchangeExpandText}>{expanded ? "Hide" : "Rate"}</Text>
+              </View>
+            )}
+          </View>
         </View>
-        <View style={styles.activeSyncInfo}>
-          <Text style={styles.activeSyncName} numberOfLines={1}>{item.eagoh_name}</Text>
-          <Text style={styles.activeSyncVendor}>by {item.vendor_username ?? "Anonymous"}</Text>
-          <Text style={styles.activeSyncLevel}>{item.sync_level} Sync · {item.days} day(s)</Text>
+      </Pressable>
+
+      {expanded && canAccessExchange && (
+        <View style={styles.exchangeOISection}>
+          <Text style={styles.exchangeOIHeader}>LICENSED INTELLIGENCE</Text>
+          {loadingEntries ? (
+            <View style={styles.exchangeLoadingWrap}>
+              <ActivityIndicator color={palette.cyan} size="small" />
+            </View>
+          ) : vendorEntries.length === 0 ? (
+            <Text style={styles.exchangeEmptyText}>No shared intelligence available for this sync.</Text>
+          ) : (
+            vendorEntries.map((entry) => (
+              <IntelligenceEntryCard
+                key={entry.id}
+                entry={entry}
+                contributorReputation={contributorRepMap.get(entry.user_id)}
+                access={buildExchangeAccess(entry)}
+                onRate={handleRateEntry}
+                onDispute={handleDisputeEntry}
+              />
+            ))
+          )}
         </View>
-      </View>
-      <View style={styles.activeSyncRight}>
-        <View style={[styles.activeSyncStatus, isExpiring && styles.activeSyncStatusWarn]}>
-          <Power color={isExpiring ? palette.ember : palette.success} size={12} />
-          <Text style={[styles.activeSyncStatusText, isExpiring && styles.activeSyncStatusTextWarn]}>
-            {isExpiring ? "Expiring" : "Active"}
-          </Text>
-        </View>
-        <Text style={[styles.activeSyncTime, isExpiring && styles.activeSyncTimeWarn]}>{remaining}</Text>
-        <Text style={styles.activeSyncCost}>{item.edge_cost} EC</Text>
-      </View>
+      )}
+
+      <FeedbackModal
+        visible={feedbackModalEntryId !== null}
+        entryId={feedbackModalEntryId}
+        access={
+          feedbackModalEntryId
+            ? buildExchangeAccess(
+                vendorEntries.find((e) => e.id === feedbackModalEntryId) ??
+                  ({ user_id: "", id: "" } as OpenIntelligenceRow),
+              )
+            : null
+        }
+        onClose={() => setFeedbackModalEntryId(null)}
+      />
+      <DisputeModal
+        visible={disputeModalEntryId !== null}
+        entryId={disputeModalEntryId}
+        access={
+          disputeModalEntryId
+            ? buildExchangeAccess(
+                vendorEntries.find((e) => e.id === disputeModalEntryId) ??
+                  ({ user_id: "", id: "" } as OpenIntelligenceRow),
+              )
+            : null
+        }
+        onClose={() => setDisputeModalEntryId(null)}
+      />
     </View>
   );
 });
@@ -1792,7 +1957,7 @@ export default function MarketplaceScreen(): JSX.Element {
               <Text style={styles.sectionCount}>{activeSyncs.length}</Text>
             </View>
             {activeSyncs.map((s) => (
-              <ActiveSyncCard key={s.id} item={s} />
+              <ActiveSyncCard key={s.id} item={s} userId={user?.id} />
             ))}
           </View>
         )}
@@ -1859,7 +2024,7 @@ export default function MarketplaceScreen(): JSX.Element {
         )}
       </View>
     ),
-    [filters, setFilters, filterMeta, tab, activeSyncs, isPaid],
+    [filters, setFilters, filterMeta, tab, activeSyncs, isPaid, user?.id],
   );
 
   // Group listings by domain, sorted by most listings first
@@ -1973,7 +2138,7 @@ export default function MarketplaceScreen(): JSX.Element {
       return (
         <View style={styles.listingsWrap}>
           {allActive.map((s) => (
-            <ActiveSyncCard key={s.id} item={s} />
+            <ActiveSyncCard key={s.id} item={s} userId={user?.id} />
           ))}
         </View>
       );
@@ -1992,7 +2157,7 @@ export default function MarketplaceScreen(): JSX.Element {
       return (
         <View style={styles.listingsWrap}>
           {purchases.map((s) => (
-            <ActiveSyncCard key={s.id} item={s} />
+            <ActiveSyncCard key={s.id} item={s} userId={user?.id} />
           ))}
         </View>
       );
@@ -2561,6 +2726,22 @@ const styles = StyleSheet.create({
   activeSyncTime: { color: palette.text, fontSize: 12, fontWeight: "900" },
   activeSyncTimeWarn: { color: palette.ember },
   activeSyncCost: { color: palette.gold, fontSize: 11, fontWeight: "900" },
+
+  // Exchange buyer feedback expand section
+  exchangeExpandHint: { flexDirection: "row", alignItems: "center", gap: 3, marginTop: 4 },
+  exchangeExpandText: { color: palette.cyan, fontSize: 9, fontWeight: "900" as const, letterSpacing: 0.5 },
+  exchangeOISection: {
+    marginTop: 8,
+    padding: 12,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(10,20,38,0.50)",
+    gap: 10,
+  },
+  exchangeOIHeader: { color: palette.cyan, fontSize: 9, fontWeight: "900" as const, letterSpacing: 1.5, textTransform: "uppercase" as const },
+  exchangeLoadingWrap: { alignItems: "center", paddingVertical: 20 },
+  exchangeEmptyText: { color: palette.muted, fontSize: 12, fontWeight: "700" as const, textAlign: "center" as const, paddingVertical: 16 },
 
   // Empty
   emptyWrap: { alignItems: "center", paddingVertical: 40, gap: 10 },

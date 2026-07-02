@@ -40,6 +40,7 @@
  * Final answer: gpt-4o-mini via Chat Completions API
  *
  * No API keys, private OI content, or service-role tokens ever reach the client.
+ * Phase 4B — Harden and Verify Exchange Intelligence (deployed).
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
@@ -626,7 +627,7 @@ ${blocks.join("\n\n")}`;
   return { text, count: entries.length };
 }
 
-// ── Exchange Intelligence ─────────────────────────────────────────────────────
+// ── Exchange Intelligence (Phase 4B hardened) ────────────────────────────────
 
 /**
  * Session-specific limits for Exchange intelligence entries.
@@ -642,60 +643,220 @@ function sessionExchangeOILimit(sessionType: SessionType): number {
 }
 
 /**
- * Get all active Exchange syncs for the authenticated buyer.
+ * Centralized active-sync validation.
  *
- * Validates server-side:
- *   - buyer_id matches authenticated user
- *   - purchase is active
- *   - started_at is in the past
- *   - expires_at is in the future
+ * A sync purchase is active ONLY when ALL of the following are true:
+ *   - active = true (single source of truth — all invalid states set this to false)
+ *   - buyer_id matches the authenticated user
+ *   - started_at is at or before server time
+ *   - expires_at is strictly after server time
  *   - sync_level is a valid percentage (25, 50, 75, 100)
- *   - listing still references the same vendor EAGOH
- *   - vendor EAGOH still exists and is not deleted
+ *   - listing exists and is active
+ *   - listing.vendor_id matches purchase.vendor_id (defense in depth)
+ *   - listing.eagoh_id matches purchase.eagoh_id (defense in depth)
+ *   - vendor EAGOH exists, is not deleted/suspended
+ *   - EAGOH owner equals verified vendor ID (defense in depth)
  *
- * Uses the service_role client to avoid RLS issues when verifying vendor EAGOHs.
+ * The marketplace_sync_purchases table uses `active` as the single invalidation
+ * flag. Refunds, cancellations, revocations, and disputes must all set
+ * `active = false` on the purchase row. No separate refunded/revoked/cancelled
+ * columns exist — access is denied when active = false for any reason.
+ *
+ * Uses the worker's server clock. Prefer DB time (SELECT now()) when the
+ * worker can reach Supabase without excessive latency, but worker time is
+ * sufficient for short-lived syncs (1–5 days).
  */
-async function getActiveExchangeSyncs(
-  serviceClient: SupabaseClient,
-  userId: string,
-): Promise<ExchangeSyncRecord[]> {
-  const now = new Date().toISOString();
-
-  const { data, error } = await serviceClient
-    .from("marketplace_sync_purchases")
-    .select("id, listing_id, vendor_id, eagoh_id, sync_level, started_at, expires_at")
-    .eq("buyer_id", userId)
-    .eq("active", true)
-    .lte("started_at", now)
-    .gt("expires_at", now);
-
-  if (error || !data || data.length === 0) {
-    if (error) console.warn("[analyst] exchange syncs query failed", error.message);
-    return [];
-  }
-
-  const validSyncs: ExchangeSyncRecord[] = [];
-
-  for (const row of data as Array<{
+function isExchangeSyncActive(
+  purchase: {
     id: string;
     listing_id: string;
+    buyer_id: string;
     vendor_id: string;
     eagoh_id: string;
     sync_level: string;
     started_at: string;
     expires_at: string;
-  }>) {
-    // Validate sync percentage
-    const pct = parseInt(row.sync_level.replace("%", ""), 10);
-    if (![25, 50, 75, 100].includes(pct)) continue;
+    active: boolean;
+  },
+  userId: string,
+  serverNow: string,
+): { valid: false; reason: string } | { valid: true } {
+  // 1. Buyer must be the authenticated user
+  if (purchase.buyer_id !== userId) {
+    return { valid: false, reason: "buyer_mismatch" };
+  }
 
-    // Verify vendor EAGOH still exists
-    const { data: eagoh } = await serviceClient
+  // 2. Active flag (single source of truth for all invalid states)
+  if (!purchase.active) {
+    return { valid: false, reason: "inactive" };
+  }
+
+  // 3. Start time must have been reached
+  if (purchase.started_at > serverNow) {
+    return { valid: false, reason: "not_started" };
+  }
+
+  // 4. Expiration must be in the future (strict — at or past = expired)
+  if (purchase.expires_at <= serverNow) {
+    return { valid: false, reason: "expired" };
+  }
+
+  // 5. Valid sync percentage
+  const pct = parseInt(purchase.sync_level.replace("%", ""), 10);
+  if (![25, 50, 75, 100].includes(pct)) {
+    return { valid: false, reason: "invalid_percentage" };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Get all active Exchange syncs for the authenticated buyer.
+ *
+ * Flow:
+ *   1. Query purchases where buyer_id matches and active = true
+ *   2. Run isExchangeSyncActive for each candidate
+ *   3. For valid syncs, verify the listing consistency (vendor_id, eagoh_id match)
+ *   4. Verify the EAGOH still exists, is active, and owner matches vendor
+ *   5. Return only fully verified sync records
+ *
+ * Inconsistent listing data, missing EAGOHs, or ownership mismatches result in
+ * the sync being silently excluded (logged as a warning) — the analyst session
+ * continues without Exchange intelligence.
+ */
+async function getActiveExchangeSyncs(
+  serviceClient: SupabaseClient,
+  userId: string,
+): Promise<ExchangeSyncRecord[]> {
+  // Use worker server time for initial query filtering. The centralized
+  // isExchangeSyncActive function applies final server-time checks.
+  const serverNow = new Date().toISOString();
+
+  const { data, error } = await serviceClient
+    .from("marketplace_sync_purchases")
+    .select("id, listing_id, buyer_id, vendor_id, eagoh_id, sync_level, started_at, expires_at, active")
+    .eq("buyer_id", userId)
+    .eq("active", true)
+    .lte("started_at", serverNow)
+    .gt("expires_at", serverNow);
+
+  if (error || !data || data.length === 0) {
+    if (error) console.warn("[analyst] exchange syncs query failed", error.message);
+    console.log("[analyst:diag] active sync candidates found: 0");
+    return [];
+  }
+
+  const candidates = data as Array<{
+    id: string;
+    listing_id: string;
+    buyer_id: string;
+    vendor_id: string;
+    eagoh_id: string;
+    sync_level: string;
+    started_at: string;
+    expires_at: string;
+    active: boolean;
+  }>;
+
+  console.log("[analyst:diag] active sync candidates found:", candidates.length);
+
+  const validSyncs: ExchangeSyncRecord[] = [];
+
+  for (const row of candidates) {
+    // ── 1. Centralized status check ──
+    const statusCheck = isExchangeSyncActive(row, userId, serverNow);
+    if (!statusCheck.valid) {
+      console.warn("[analyst:diag] sync excluded —", statusCheck.reason, {
+        purchaseId: row.id.slice(0, 8),
+        buyerId: row.buyer_id.slice(0, 8),
+      });
+      continue;
+    }
+
+    const pct = parseInt(row.sync_level.replace("%", ""), 10);
+
+    // ── 2. Listing consistency check ──
+    const { data: listing, error: listingErr } = await serviceClient
+      .from("marketplace_listings")
+      .select("id, vendor_id, eagoh_id, active")
+      .eq("id", row.listing_id)
+      .maybeSingle();
+
+    if (listingErr || !listing) {
+      console.warn("[analyst:diag] sync excluded — listing not found", {
+        purchaseId: row.id.slice(0, 8),
+        listingId: row.listing_id.slice(0, 8),
+      });
+      continue;
+    }
+
+    const listingRow = listing as { id: string; vendor_id: string; eagoh_id: string; active: boolean };
+
+    if (!listingRow.active) {
+      console.warn("[analyst:diag] sync excluded — listing inactive", {
+        listingId: row.listing_id.slice(0, 8),
+      });
+      continue;
+    }
+
+    // ── 3. Defense in depth: verify listing references match purchase ──
+    if (listingRow.vendor_id !== row.vendor_id) {
+      console.warn("[analyst:diag] sync excluded — listing vendor mismatch", {
+        purchaseId: row.id.slice(0, 8),
+        purchaseVendor: row.vendor_id.slice(0, 8),
+        listingVendor: listingRow.vendor_id.slice(0, 8),
+      });
+      continue;
+    }
+
+    if (listingRow.eagoh_id !== row.eagoh_id) {
+      console.warn("[analyst:diag] sync excluded — listing eagoh mismatch", {
+        purchaseId: row.id.slice(0, 8),
+        purchaseEagoh: row.eagoh_id.slice(0, 8),
+        listingEagoh: listingRow.eagoh_id.slice(0, 8),
+      });
+      continue;
+    }
+
+    // ── 4. Vendor EAGOH existence and ownership check ──
+    const { data: eagoh, error: eagohErr } = await serviceClient
       .from("eagohs")
-      .select("id, name")
+      .select("id, user_id, name, status")
       .eq("id", row.eagoh_id)
       .maybeSingle();
-    if (!eagoh) continue;
+
+    if (eagohErr || !eagoh) {
+      console.warn("[analyst:diag] sync excluded — vendor EAGOH not found", {
+        eagohId: row.eagoh_id.slice(0, 8),
+      });
+      continue;
+    }
+
+    const eagohRow = eagoh as { id: string; user_id: string; name?: string; status?: string };
+
+    // Verify EAGOH is active (not deleted or suspended)
+    if (eagohRow.status && eagohRow.status !== "active") {
+      console.warn("[analyst:diag] sync excluded — vendor EAGOH status:", eagohRow.status, {
+        eagohId: row.eagoh_id.slice(0, 8),
+      });
+      continue;
+    }
+
+    // Verify owner matches verified vendor (defense in depth)
+    if (eagohRow.user_id !== row.vendor_id) {
+      console.warn("[analyst:diag] sync excluded — EAGOH owner mismatch", {
+        eagohId: row.eagoh_id.slice(0, 8),
+        eagohOwner: eagohRow.user_id.slice(0, 8),
+        vendorId: row.vendor_id.slice(0, 8),
+      });
+      continue;
+    }
+
+    console.log("[analyst:diag] listing consistency passed", {
+      purchaseId: row.id.slice(0, 8),
+      listingId: row.listing_id.slice(0, 8),
+      vendorEagohId: row.eagoh_id.slice(0, 8),
+    });
 
     validSyncs.push({
       purchaseId: row.id,
@@ -705,10 +866,11 @@ async function getActiveExchangeSyncs(
       syncPercentage: pct,
       startsAt: row.started_at,
       expiresAt: row.expires_at,
-      vendorEagohName: (eagoh as { name?: string }).name ?? undefined,
+      vendorEagohName: eagohRow.name ?? undefined,
     });
   }
 
+  console.log("[analyst:diag] valid syncs after all checks:", validSyncs.length);
   return validSyncs;
 }
 
@@ -719,7 +881,9 @@ async function getActiveExchangeSyncs(
  *   - quality_score
  *   - validated entries first
  *   - influence_score
- *   - stable entry ID tie-breaker
+ *   - confidence level (verified_observation > strong > moderate > weak)
+ *   - recency (newer first)
+ *   - entry ID as deterministic tie-breaker (ensures stable ordering)
  */
 function stableCohortOrder(entries: OpenIntelligenceRow[]): OpenIntelligenceRow[] {
   return [...entries].sort((a, b) => {
@@ -739,7 +903,11 @@ function stableCohortOrder(entries: OpenIntelligenceRow[]): OpenIntelligenceRow[
     const aConf = confOrder[a.confidence_level] ?? 0;
     const bConf = confOrder[b.confidence_level] ?? 0;
     if (aConf !== bConf) return bConf - aConf;
-    // Stable tie-breaker
+    // Recency — newer entries first
+    const aTime = new Date(a.created_at).getTime();
+    const bTime = new Date(b.created_at).getTime();
+    if (aTime !== bTime) return bTime - aTime;
+    // Stable tie-breaker: entry ID (deterministic, never changes)
     return a.id.localeCompare(b.id);
   });
 }
@@ -747,14 +915,18 @@ function stableCohortOrder(entries: OpenIntelligenceRow[]): OpenIntelligenceRow[
 /**
  * Retrieve Exchange Open Intelligence for the authenticated buyer.
  *
- * Flow:
- *   1. Load active Exchange syncs
- *   2. For each vendor EAGOH, load eligible OI entries (exchange_share_enabled)
- *   3. Deduplicate by entry ID (a single entry could appear across syncs)
- *   4. Build a stable access cohort (independent of query)
- *   5. Apply purchased percentage to determine accessible cohort
+ * Correct pipeline order:
+ *   1. Load active Exchange syncs (with listing + EAGOH consistency checks)
+ *   2. For each verified vendor EAGOH, load eligible OI entries
+ *      - entry.user_id MUST equal verified vendor ID (defense in depth)
+ *      - entry.eagoh_id MUST equal verified vendor EAGOH ID
+ *      - exchange_share_enabled MUST be true
+ *      - validation_status must be pending_review or validated
+ *   3. Deduplicate by entry ID
+ *   4. Build stable ordering (independent of query)
+ *   5. Apply purchased percentage to create accessible cohort
  *   6. Rank the accessible cohort against the current question
- *   7. Apply session limits
+ *   7. Apply session entry limits
  */
 async function retrieveExchangeOpenIntelligence(
   serviceClient: SupabaseClient,
@@ -762,30 +934,39 @@ async function retrieveExchangeOpenIntelligence(
   query: string,
   sessionType: SessionType,
 ): Promise<ExchangeResearchResult> {
+  const emptyResult = { used: false as const, entries: [] as OpenIntelligenceRow[], syncCount: 0, vendorEagohCount: 0, entryPurchaseMap: new Map<string, { purchaseId: string; syncPercentage: number }>() };
+
   const syncs = await getActiveExchangeSyncs(serviceClient, userId);
 
   if (syncs.length === 0) {
-    return { used: false, entries: [], syncCount: 0, vendorEagohCount: 0, entryPurchaseMap: new Map() };
+    console.log("[analyst:diag] no valid syncs after status checks");
+    return emptyResult;
   }
 
-  // Collect unique vendor EAGOH IDs
-  const vendorEagohIds = [...new Set(syncs.map((s) => s.vendorEagohId))];
-  const vendorIds = [...new Set(syncs.map((s) => s.vendorId))];
-
-  // Build percentage map per vendor EAGOH (use highest percentage if multiple purchases)
+  // Build maps: vendor EAGOH ID → sync percentage, vendor ID set
   const pctMap = new Map<string, number>();
+  const vendorIdByEagohId = new Map<string, string>();
+
   for (const s of syncs) {
     const existing = pctMap.get(s.vendorEagohId) ?? 0;
     pctMap.set(s.vendorEagohId, Math.max(existing, s.syncPercentage));
+    vendorIdByEagohId.set(s.vendorEagohId, s.vendorId);
   }
 
-  // Load eligible OI entries from each vendor EAGOH
+  const vendorEagohIds = [...new Set(syncs.map((s) => s.vendorEagohId))];
+
+  // Load eligible OI entries per vendor EAGOH with explicit vendor ownership filter
   const eligibleMap = new Map<string, OpenIntelligenceRow[]>();
 
   for (const eagohId of vendorEagohIds) {
+    const vendorId = vendorIdByEagohId.get(eagohId);
+    if (!vendorId) continue;
+
+    // Defense in depth: explicitly filter by vendor user_id AND eagoh_id
     const { data, error } = await serviceClient
       .from("open_intelligence")
       .select("*")
+      .eq("user_id", vendorId)
       .eq("eagoh_id", eagohId)
       .eq("exchange_share_enabled", true)
       .in("validation_status", ["pending_review", "validated"])
@@ -793,16 +974,19 @@ async function retrieveExchangeOpenIntelligence(
       .limit(200);
 
     if (error) {
-      console.warn("[analyst] exchange OI fetch failed for eagoh", { eagohId, error: error.message });
+      console.warn("[analyst:diag] exchange OI fetch failed", { eagohId: eagohId.slice(0, 8), error: error.message });
       continue;
     }
 
     if (data && data.length > 0) {
       eligibleMap.set(eagohId, data as OpenIntelligenceRow[]);
+      console.log("[analyst:diag] vendor ownership passed — eligible entries:", data.length, { eagohId: eagohId.slice(0, 8) });
+    } else {
+      console.log("[analyst:diag] no eligible entries for vendor EAGOH", { eagohId: eagohId.slice(0, 8) });
     }
   }
 
-  // Deduplicate across EAGOHs (same entry shouldn't appear twice)
+  // Deduplicate across EAGOHs
   const seenIds = new Set<string>();
   const allEligible: OpenIntelligenceRow[] = [];
   for (const entries of eligibleMap.values()) {
@@ -815,10 +999,13 @@ async function retrieveExchangeOpenIntelligence(
   }
 
   if (allEligible.length === 0) {
-    return { used: false, entries: [], syncCount: syncs.length, vendorEagohCount: vendorEagohIds.length, entryPurchaseMap: new Map() };
+    console.log("[analyst:diag] eligible vendor entries: 0");
+    return { ...emptyResult, syncCount: syncs.length, vendorEagohCount: vendorEagohIds.length };
   }
 
-  // Apply stable cohort + percentage for each vendor EAGOH
+  console.log("[analyst:diag] eligible vendor entries:", allEligible.length);
+
+  // ── Stable cohort + percentage enforcement ──
   const accessible: OpenIntelligenceRow[] = [];
 
   for (const [eagohId, entries] of eligibleMap) {
@@ -832,22 +1019,24 @@ async function retrieveExchangeOpenIntelligence(
     for (const entry of cohort) {
       accessible.push(entry);
     }
+
+    console.log("[analyst:diag] stable cohort applied", {
+      eagohId: eagohId.slice(0, 8),
+      eligibleTotal: entries.length,
+      syncPercentage: pct,
+      accessibleCohortSize: accessibleCount,
+    });
   }
 
-  // Rank accessible entries against current question
+  console.log("[analyst:diag] total accessible cohort size:", accessible.length);
+
+  // ── Rank accessible cohort against current question ──
   const limit = sessionExchangeOILimit(sessionType);
   const ranked = accessible.length > 0
     ? rankEntries(accessible, query, Math.min(limit, accessible.length))
     : [];
 
-  console.log("[analyst] Exchange OI retrieval", {
-    syncCount: syncs.length,
-    vendorEagohCount: vendorEagohIds.length,
-    eligibleTotal: allEligible.length,
-    accessibleAfterPct: accessible.length,
-    selectedAfterRank: ranked.length,
-    sessionType,
-  });
+  console.log("[analyst:diag] final exchange entries selected:", ranked.length);
 
   // Build purchase tracking map for audit
   const entryPurchaseMap = new Map<string, { purchaseId: string; syncPercentage: number }>();
@@ -1794,7 +1983,8 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
     console.log("[analyst] Faction OI retrieval skipped — free user");
   }
 
-  // ── Exchange Intelligence retrieval ────────────────────────────────────
+  // ── Exchange Intelligence retrieval (Phase 4B hardened) ──────────────
+  // Safe-failure: any Exchange error continues the session with other sources.
   let exchangeOIContext = "";
   let exchangeOICount = 0;
   let exchangeSyncCount = 0;
@@ -1802,34 +1992,43 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
   let rankedExchangeEntries: OpenIntelligenceRow[] = [];
   let exchangePurchaseMap: Map<string, { purchaseId: string; syncPercentage: number }> = new Map();
 
-  // Only retrieve Exchange intelligence for paid users
+  // Only retrieve Exchange intelligence for paid users with service-role access
   if (isPaid) {
     const serviceClient = getServiceRoleClient(env);
     if (serviceClient) {
-      const exchangeResult = await retrieveExchangeOpenIntelligence(serviceClient, userId, prompt, sessionType);
-      exchangeSyncCount = exchangeResult.syncCount;
-      exchangeVendorEagohCount = exchangeResult.vendorEagohCount;
+      console.log("[analyst:diag] service-role key present: true");
 
-      if (exchangeResult.used && exchangeResult.entries.length > 0) {
-        const exchangeTokenBudget = sessionOITokenBudget(sessionType);
-        const exchangeFormatted = formatExchangeOIContext(exchangeResult, exchangeTokenBudget);
-        exchangeOIContext = exchangeFormatted.text;
-        exchangeOICount = exchangeFormatted.count;
-        rankedExchangeEntries = exchangeResult.entries;
-        exchangePurchaseMap = exchangeResult.entryPurchaseMap;
+      try {
+        const exchangeResult = await retrieveExchangeOpenIntelligence(serviceClient, userId, prompt, sessionType);
+        exchangeSyncCount = exchangeResult.syncCount;
+        exchangeVendorEagohCount = exchangeResult.vendorEagohCount;
 
-        console.log("[analyst] Exchange OI retrieval", {
-          exchangeCount: exchangeOICount,
-          syncCount: exchangeSyncCount,
-          vendorEagohCount: exchangeVendorEagohCount,
-          sessionType,
+        if (exchangeResult.used && exchangeResult.entries.length > 0) {
+          const exchangeTokenBudget = sessionOITokenBudget(sessionType);
+          const exchangeFormatted = formatExchangeOIContext(exchangeResult, exchangeTokenBudget);
+          exchangeOIContext = exchangeFormatted.text;
+          exchangeOICount = exchangeFormatted.count;
+          rankedExchangeEntries = exchangeResult.entries;
+          exchangePurchaseMap = exchangeResult.entryPurchaseMap;
+
+          console.log("[analyst:diag] final exchange count:", exchangeOICount);
+        } else if (exchangeResult.syncCount > 0) {
+          console.log("[analyst] Exchange OI retrieval: active syncs found but no relevant entries");
+        } else {
+          console.log("[analyst] Exchange OI retrieval: no active syncs");
+        }
+      } catch (exchangeErr) {
+        // Safe failure: exchange retrieval error must NOT fail the entire analyst session.
+        // Continue with Personal, Faction, and External sources only.
+        const msg = exchangeErr instanceof Error ? exchangeErr.message : "unknown";
+        console.warn("[analyst] Exchange OI retrieval failed safely — continuing without Exchange intelligence", {
+          errorCode: "exchange_retrieval_error",
+          error: msg.slice(0, 200),
         });
-      } else if (exchangeResult.syncCount > 0) {
-        console.log("[analyst] Exchange OI retrieval: active syncs found but no relevant entries");
-      } else {
-        console.log("[analyst] Exchange OI retrieval: no active syncs");
+        // All Exchange variables remain at their zero defaults — no Exchange intelligence used
       }
     } else {
+      console.log("[analyst:diag] service-role key present: false");
       console.log("[analyst] Exchange OI retrieval skipped — service role key not configured");
     }
   } else {

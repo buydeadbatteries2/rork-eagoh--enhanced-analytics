@@ -1583,15 +1583,15 @@ create table if not exists public.open_intelligence_feedback (
   reviewer_user_id uuid not null references auth.users(id) on delete cascade,
   feedback_type text not null check (feedback_type in (
     'helpful',
-    'accurate_to_experience',
+    'accurate_to_my_experience',
     'needs_context',
     'outdated',
     'incorrect',
     'misleading',
-    'abusive_or_prohibited'
+    'abusive'
   )),
   optional_reason text,
-  access_source text not null check (access_source in ('faction', 'exchange', 'personal', 'moderation')),
+  access_source text not null check (access_source in ('faction', 'exchange', 'approved_collaboration')),
   faction_id uuid references public.factions(id) on delete set null,
   exchange_purchase_id uuid references public.marketplace_sync_purchases(id) on delete set null,
   created_at timestamptz default now(),
@@ -1623,30 +1623,34 @@ create policy "oif_self_select" on public.open_intelligence_feedback
 create table if not exists public.open_intelligence_disputes (
   id uuid primary key default gen_random_uuid(),
   entry_id uuid not null references public.open_intelligence(id) on delete cascade,
-  disputing_user_id uuid not null references auth.users(id) on delete cascade,
+  reporter_user_id uuid not null references auth.users(id) on delete cascade,
   reason_category text not null check (reason_category in (
-    'factually_incorrect',
+    'incorrect',
     'misleading',
-    'outdated_information',
-    'spam_or_low_effort',
-    'inappropriate_content',
-    'copyright_violation',
+    'outdated',
+    'needs_context',
+    'fabricated',
+    'abusive',
+    'prohibited',
     'other'
   )),
   explanation text not null,
-  supporting_source_ref text,
+  supporting_url text,
+  access_source text not null check (access_source in ('faction', 'exchange', 'approved_collaboration')),
+  faction_id uuid references public.factions(id) on delete set null,
+  exchange_purchase_id uuid references public.marketplace_sync_purchases(id) on delete set null,
   status text not null default 'pending' check (status in (
     'pending', 'reviewing', 'upheld', 'dismissed', 'resolved'
   )),
-  moderation_note text,
-  moderated_by uuid references auth.users(id) on delete set null,
-  moderated_at timestamptz,
+  resolution text,
+  reviewed_by uuid references auth.users(id) on delete set null,
+  reviewed_at timestamptz,
   created_at timestamptz default now(),
-  unique(entry_id, disputing_user_id)
+  unique(entry_id, reporter_user_id)
 );
 
 create index if not exists oid_entry_idx on public.open_intelligence_disputes(entry_id);
-create index if not exists oid_disputing_user_idx on public.open_intelligence_disputes(disputing_user_id, created_at desc);
+create index if not exists oid_reporter_user_idx on public.open_intelligence_disputes(reporter_user_id, created_at desc);
 create index if not exists oid_status_idx on public.open_intelligence_disputes(status) where status in ('pending', 'reviewing');
 
 alter table public.open_intelligence_disputes enable row level security;
@@ -1657,7 +1661,7 @@ drop policy if exists "oid_self_insert_v2" on public.open_intelligence_disputes;
 
 -- Users can read their own dispute records (read-only)
 create policy "oid_self_select" on public.open_intelligence_disputes
-  for select using (auth.uid() = disputing_user_id);
+  for select using (auth.uid() = reporter_user_id);
 
 -- NO client INSERT — all dispute creation goes through the secure worker
 -- (handleSubmitDispute) which verifies authenticated user, non-owner,
@@ -1680,10 +1684,11 @@ create table if not exists public.intelligence_contributor_reputation (
   disputed_entries int not null default 0,
   rejected_entries int not null default 0,
   withdrawn_entries int not null default 0,
-  total_feedback_received int not null default 0,
   positive_feedback int not null default 0,
   negative_feedback int not null default 0,
-  calculated_at timestamptz default now()
+  calculated_at timestamptz default now(),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
 );
 
 create index if not exists icr_overall_score_idx on public.intelligence_contributor_reputation(overall_score desc);
@@ -1723,11 +1728,14 @@ create table if not exists public.open_intelligence_versions (
   entry_id uuid not null references public.open_intelligence(id) on delete cascade,
   version_number int not null,
   previous_content text,
-  previous_tags jsonb default '[]'::jsonb,
   previous_category text,
-  previous_confidence text,
+  previous_subtags jsonb default '[]'::jsonb,
+  previous_custom_tags jsonb default '[]'::jsonb,
+  previous_confidence_level text,
   previous_validation_status text,
-  change_type text not null check (change_type in ('minor_edit', 'major_edit', 'status_change', 'withdrawal')),
+  previous_quality_score int,
+  previous_influence_score int,
+  change_type text not null check (change_type in ('create', 'edit', 'moderation', 'withdrawal', 'restoration', 'status_change')),
   changed_by uuid not null references auth.users(id) on delete cascade,
   changed_at timestamptz default now(),
   unique(entry_id, version_number)
@@ -1756,13 +1764,18 @@ create policy "oiv_owner_select" on public.open_intelligence_versions
 -- ── 5B-7: FEEDBACK RATE LIMITING (anti-gaming) ───────────────────────────
 -- Track feedback submissions per user to detect bursts and rings
 create table if not exists public.feedback_rate_limits (
-  user_id uuid not null references auth.users(id) on delete cascade,
-  date date not null default current_date,
+  user_id uuid primary key references auth.users(id) on delete cascade,
   feedback_count int not null default 0,
   dispute_count int not null default 0,
+  daily_feedback_count int not null default 0,
+  daily_dispute_count int not null default 0,
+  window_started_at timestamptz default now(),
+  last_feedback_at timestamptz,
+  last_dispute_at timestamptz,
   anomaly_flag boolean not null default false,
-  updated_at timestamptz default now(),
-  primary key (user_id, date)
+  anomaly_reason text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
 );
 
 create index if not exists frl_anomaly_idx on public.feedback_rate_limits(anomaly_flag) where anomaly_flag = true;
@@ -1895,6 +1908,7 @@ declare
   v_negative_feedback int;
   v_avg_quality numeric;
   v_prior numeric := 50.0;  -- neutral starting point
+  v_entries_used_count int;
   v_prior_weight int := 5;  -- minimum samples before reputation deviates significantly
   v_quality_component numeric;
   v_usefulness_component numeric;
@@ -1924,8 +1938,8 @@ begin
   -- Gather feedback stats
   select
     count(*),
-    count(*) filter (where feedback_type in ('helpful', 'accurate_to_experience')),
-    count(*) filter (where feedback_type in ('incorrect', 'misleading', 'abusive_or_prohibited', 'outdated'))
+    count(*) filter (where feedback_type in ('helpful', 'accurate_to_my_experience')),
+    count(*) filter (where feedback_type in ('incorrect', 'misleading', 'abusive', 'outdated'))
   into v_total_feedback, v_positive_feedback, v_negative_feedback
   from public.open_intelligence_feedback
   where entry_id in (select id from public.open_intelligence where user_id = p_user_id);
@@ -1990,13 +2004,13 @@ begin
     user_id, overall_score, quality_component, usefulness_component,
     validation_component, reliability_component, dispute_penalty,
     total_entries, entries_used, supported_entries, disputed_entries,
-    rejected_entries, withdrawn_entries, total_feedback_received,
+    rejected_entries, withdrawn_entries,
     positive_feedback, negative_feedback, calculated_at
   ) values (
     p_user_id, v_overall, v_quality_component, v_usefulness_component,
     v_validation_component, v_reliability_component, v_dispute_penalty,
     v_total_entries, v_entries_used, v_supported, v_disputed,
-    v_rejected, v_withdrawn, v_total_feedback,
+    v_rejected, v_withdrawn,
     v_positive_feedback, v_negative_feedback, now()
   )
   on conflict (user_id) do update set
@@ -2012,10 +2026,10 @@ begin
     disputed_entries = excluded.disputed_entries,
     rejected_entries = excluded.rejected_entries,
     withdrawn_entries = excluded.withdrawn_entries,
-    total_feedback_received = excluded.total_feedback_received,
     positive_feedback = excluded.positive_feedback,
     negative_feedback = excluded.negative_feedback,
-    calculated_at = excluded.calculated_at;
+    calculated_at = excluded.calculated_at,
+    updated_at = now();
 
   return v_overall;
 end;

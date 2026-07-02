@@ -1,5 +1,5 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker (Phase 5B sync)
+ * EAGOH Analyst Chat — Cloudflare Worker (Phase 5B schema sync)
  *
  * Secure server-side intelligence grounding system.
  * Column names synchronized with live Supabase schema.
@@ -2234,13 +2234,16 @@ function findDuplicate(
 /** Feedback type values allowed by the schema. */
 const FEEDBACK_TYPES = [
   "helpful",
-  "accurate_to_experience",
+  "accurate_to_my_experience",
   "needs_context",
   "outdated",
   "incorrect",
   "misleading",
-  "abusive_or_prohibited",
+  "abusive",
 ] as const;
+
+/** Access source values allowed by the live schema. */
+const ACCESS_SOURCES = ["faction", "exchange", "approved_collaboration"] as const;
 
 /** Daily feedback limit to prevent gaming. */
 const MAX_DAILY_FEEDBACK = 20;
@@ -2271,7 +2274,7 @@ async function handleSubmitFeedback(request: Request, env: Env): Promise<Respons
   }
 
   // Validate access source
-  if (!["faction", "exchange", "personal", "moderation"].includes(payload.accessSource)) {
+  if (!ACCESS_SOURCES.includes(payload.accessSource as (typeof ACCESS_SOURCES)[number])) {
     return jsonResponse({ ok: false, error: "Invalid access source." }, 400);
   }
 
@@ -2365,9 +2368,8 @@ async function handleSubmitFeedback(request: Request, env: Env): Promise<Respons
   if (anomalyFlag) {
     await serviceClient
       .from("feedback_rate_limits")
-      .update({ anomaly_flag: true })
-      .eq("user_id", userId)
-      .eq("date", new Date().toISOString().slice(0, 10));
+      .update({ anomaly_flag: true, anomaly_reason: "burst_or_targeting_pattern" })
+      .eq("user_id", userId);
     console.warn("[feedback] anomaly flag set for user", { userId: userId.slice(0, 8) });
   }
 
@@ -2411,8 +2413,9 @@ async function verifyFeedbackEligibility(
   factionId?: string,
   exchangePurchaseId?: string,
 ): Promise<boolean> {
-  if (accessSource === "personal") {
-    // Personal entries — only the owner could self-review, but we blocked that above
+  if (accessSource === "approved_collaboration") {
+    // Approved collaboration routes would require additional admin verification
+    // For now, deny from client requests unless future admin logic is added
     return false;
   }
 
@@ -2508,11 +2511,6 @@ async function verifyFeedbackEligibility(
     return true;
   }
 
-  if (accessSource === "moderation") {
-    // Moderation access — would need admin check; deny from client requests
-    return false;
-  }
-
   return false;
 }
 
@@ -2524,38 +2522,73 @@ async function checkAndUpdateRateLimits(
   userId: string,
   type: "feedback" | "dispute",
 ): Promise<boolean> {
-  const today = new Date().toISOString().slice(0, 10);
   const maxDaily = type === "feedback" ? MAX_DAILY_FEEDBACK : MAX_DAILY_DISPUTES;
+  const now = new Date().toISOString();
 
+  // The live table uses one row per user (user_id as primary key)
+  // with daily_feedback_count / daily_dispute_count for per-day limits
+  // and feedback_count / dispute_count for total counts.
   const { data: existing } = await serviceClient
     .from("feedback_rate_limits")
-    .select("feedback_count, dispute_count")
+    .select("feedback_count, dispute_count, daily_feedback_count, daily_dispute_count, window_started_at, last_feedback_at, last_dispute_at")
     .eq("user_id", userId)
-    .eq("date", today)
     .maybeSingle();
 
+  // Determine if the daily window should reset (compare window_started_at to today)
+  const todayStart = new Date().toISOString().slice(0, 10) + "T00:00:00Z";
+
   if (existing) {
-    const row = existing as { feedback_count: number; dispute_count: number };
-    const currentCount = type === "feedback" ? row.feedback_count : row.dispute_count;
-    if (currentCount >= maxDaily) return false;
+    const row = existing as {
+      feedback_count: number; dispute_count: number;
+      daily_feedback_count: number; daily_dispute_count: number;
+      window_started_at: string | null; last_feedback_at: string | null; last_dispute_at: string | null;
+    };
+
+    // Reset daily counters if the window started on a previous day
+    const windowDate = row.window_started_at ? new Date(row.window_started_at).toISOString().slice(0, 10) : null;
+    const isNewDay = windowDate !== todayStart.slice(0, 10);
+
+    const dailyCount = type === "feedback"
+      ? (isNewDay ? 0 : row.daily_feedback_count)
+      : (isNewDay ? 0 : row.daily_dispute_count);
+
+    if (dailyCount >= maxDaily) return false;
+
+    const updateFields: Record<string, unknown> = {
+      updated_at: now,
+      window_started_at: isNewDay ? todayStart : row.window_started_at,
+    };
+
+    if (isNewDay) {
+      updateFields.daily_feedback_count = type === "feedback" ? 1 : 0;
+      updateFields.daily_dispute_count = type === "dispute" ? 1 : 0;
+    } else {
+      updateFields.daily_feedback_count = type === "feedback" ? row.daily_feedback_count + 1 : row.daily_feedback_count;
+      updateFields.daily_dispute_count = type === "dispute" ? row.daily_dispute_count + 1 : row.daily_dispute_count;
+    }
+
+    updateFields.feedback_count = type === "feedback" ? row.feedback_count + 1 : row.feedback_count;
+    updateFields.dispute_count = type === "dispute" ? row.dispute_count + 1 : row.dispute_count;
+
+    if (type === "feedback") updateFields.last_feedback_at = now;
+    else updateFields.last_dispute_at = now;
 
     await serviceClient
       .from("feedback_rate_limits")
-      .update({
-        feedback_count: type === "feedback" ? row.feedback_count + 1 : row.feedback_count,
-        dispute_count: type === "dispute" ? row.dispute_count + 1 : row.dispute_count,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("user_id", userId)
-      .eq("date", today);
+      .update(updateFields)
+      .eq("user_id", userId);
   } else {
     await serviceClient
       .from("feedback_rate_limits")
       .insert({
         user_id: userId,
-        date: today,
         feedback_count: type === "feedback" ? 1 : 0,
         dispute_count: type === "dispute" ? 1 : 0,
+        daily_feedback_count: type === "feedback" ? 1 : 0,
+        daily_dispute_count: type === "dispute" ? 1 : 0,
+        window_started_at: todayStart,
+        last_feedback_at: type === "feedback" ? now : null,
+        last_dispute_at: type === "dispute" ? now : null,
       });
   }
 
@@ -2621,7 +2654,8 @@ async function handleSubmitDispute(request: Request, env: Env): Promise<Response
     entryId: string;
     reasonCategory: string;
     explanation: string;
-    supportingSourceRef?: string;
+    supportingUrl?: string;
+    accessSource: string;
     factionId?: string;
     exchangePurchaseId?: string;
   };
@@ -2632,11 +2666,15 @@ async function handleSubmitDispute(request: Request, env: Env): Promise<Response
   }
 
   const validCategories = [
-    "factually_incorrect", "misleading", "outdated_information",
-    "spam_or_low_effort", "inappropriate_content", "copyright_violation", "other",
+    "incorrect", "misleading", "outdated", "needs_context",
+    "fabricated", "abusive", "prohibited", "other",
   ];
   if (!validCategories.includes(payload.reasonCategory)) {
     return jsonResponse({ ok: false, error: "Invalid reason category." }, 400);
+  }
+
+  if (!ACCESS_SOURCES.includes(payload.accessSource as (typeof ACCESS_SOURCES)[number])) {
+    return jsonResponse({ ok: false, error: "Invalid access source." }, 400);
   }
 
   if (!payload.explanation?.trim() || payload.explanation.trim().length < 10) {
@@ -2686,11 +2724,10 @@ async function handleSubmitDispute(request: Request, env: Env): Promise<Response
   }
 
   // Verify access eligibility — require explicit access source from client
-  const accessSource = payload.factionId ? "faction" : payload.exchangePurchaseId ? "exchange" : "faction";
   const canAccess = await verifyFeedbackEligibility(
     serviceClient, userId, entryRow.user_id, payload.entryId,
     entryRow.eagoh_id, entryRow.exchange_share_enabled,
-    accessSource, payload.factionId, payload.exchangePurchaseId,
+    payload.accessSource, payload.factionId, payload.exchangePurchaseId,
   );
   if (!canAccess) {
     return jsonResponse({ ok: false, error: "You do not have authorized access to this intelligence." }, 403);
@@ -2707,10 +2744,13 @@ async function handleSubmitDispute(request: Request, env: Env): Promise<Response
     .from("open_intelligence_disputes")
     .insert({
       entry_id: payload.entryId,
-      disputing_user_id: userId,
+      reporter_user_id: userId,
       reason_category: payload.reasonCategory,
       explanation: payload.explanation.trim(),
-      supporting_source_ref: payload.supportingSourceRef ?? null,
+      supporting_url: payload.supportingUrl ?? null,
+      access_source: payload.accessSource,
+      faction_id: payload.factionId ?? null,
+      exchange_purchase_id: payload.exchangePurchaseId ?? null,
       status: "pending",
     });
 
@@ -2723,15 +2763,15 @@ async function handleSubmitDispute(request: Request, env: Env): Promise<Response
   }
 
   // Update entry's active dispute count and set validation_status to 'disputed' if pending
+  const disputeCountResult = await serviceClient
+    .from("open_intelligence_disputes")
+    .select("id", { count: "exact", head: true })
+    .eq("entry_id", payload.entryId)
+    .in("status", ["pending", "reviewing", "upheld"]);
   await serviceClient
     .from("open_intelligence")
     .update({
-      active_dispute_count: (await serviceClient
-        .from("open_intelligence_disputes")
-        .select("id", { count: "exact", head: true })
-        .eq("entry_id", payload.entryId)
-        .in("status", ["pending", "reviewing", "upheld"])
-      ).count ?? 1,
+      active_dispute_count: disputeCountResult.count ?? 1,
     })
     .eq("id", payload.entryId);
 
@@ -2981,7 +3021,7 @@ async function handleUpdateOIEntry(request: Request, env: Env): Promise<Response
   // 1. Fetch the entry — verify ownership
   const { data: entry, error: entryErr } = await serviceClient
     .from("open_intelligence")
-    .select("id, user_id, content, confidence_level, selected_category, selected_subtags, custom_tags, exchange_share_enabled, validation_status, version_number, active_dispute_count")
+    .select("id, user_id, content, confidence_level, selected_category, selected_subtags, custom_tags, exchange_share_enabled, validation_status, version_number, active_dispute_count, quality_score, influence_score")
     .eq("id", payload.entryId)
     .maybeSingle();
 
@@ -2994,6 +3034,7 @@ async function handleUpdateOIEntry(request: Request, env: Env): Promise<Response
     selected_category: string | null; selected_subtags: string[] | null;
     custom_tags: string[] | null; exchange_share_enabled: boolean;
     validation_status: string; version_number: number; active_dispute_count: number;
+    quality_score: number; influence_score: number;
   };
 
   if (entryRow.user_id !== userId) {
@@ -3006,7 +3047,7 @@ async function handleUpdateOIEntry(request: Request, env: Env): Promise<Response
 
   // 3. Save version history BEFORE updating the active entry
   const currentVersion = entryRow.version_number ?? 1;
-  const changeType = isMajorEdit ? "major_edit" : "minor_edit";
+  const changeType = isMajorEdit ? "edit" : "edit";
 
   const { error: versionErr } = await serviceClient
     .from("open_intelligence_versions")
@@ -3014,10 +3055,13 @@ async function handleUpdateOIEntry(request: Request, env: Env): Promise<Response
       entry_id: payload.entryId,
       version_number: currentVersion,
       previous_content: entryRow.content,
-      previous_tags: entryRow.selected_subtags ?? [],
       previous_category: entryRow.selected_category,
-      previous_confidence: entryRow.confidence_level,
+      previous_subtags: entryRow.selected_subtags ?? [],
+      previous_custom_tags: entryRow.custom_tags ?? [],
+      previous_confidence_level: entryRow.confidence_level,
       previous_validation_status: entryRow.validation_status,
+      previous_quality_score: entryRow.quality_score,
+      previous_influence_score: entryRow.influence_score,
       change_type: changeType,
       changed_by: userId,
     });
@@ -3059,7 +3103,6 @@ async function handleUpdateOIEntry(request: Request, env: Env): Promise<Response
   // Do NOT reset dispute history — disputes survive edits.
   if (isMajorEdit) {
     updateFields.version_number = currentVersion + 1;
-    updateFields.last_major_edit_at = new Date().toISOString();
     // If entry was pending_review, keep it pending (needs reevaluation).
     // If it was community_supported or externally_supported, keep the status
     // but mark for reevaluation. Disputed entries stay disputed.

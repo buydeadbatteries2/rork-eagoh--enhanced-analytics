@@ -319,6 +319,7 @@ create table if not exists public.open_intelligence (
   selected_category text,
   selected_subtags jsonb default '[]'::jsonb,
   custom_tags jsonb default '[]'::jsonb,
+  exchange_share_enabled boolean not null default false,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
@@ -366,6 +367,7 @@ begin
   alter table public.open_intelligence add column if not exists selected_category text;
   alter table public.open_intelligence add column if not exists selected_subtags jsonb default '[]'::jsonb;
   alter table public.open_intelligence add column if not exists custom_tags jsonb default '[]'::jsonb;
+  alter table public.open_intelligence add column if not exists exchange_share_enabled boolean not null default false;
 exception when others then null;
 end $$;
 

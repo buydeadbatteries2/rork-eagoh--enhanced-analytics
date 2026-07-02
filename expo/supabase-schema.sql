@@ -1533,3 +1533,551 @@ begin
   limit p_limit;
 end;
 $$;
+
+-- =============================================================================
+-- PHASE 5B: HUMAN INTELLIGENCE QUALITY, VALIDATION, AND REPUTATION
+-- =============================================================================
+
+-- ── 5B-1: Migrate validation_status values ───────────────────────────────
+-- Old values: pending_review, validated, flagged
+-- New values: pending_review, community_supported, externally_supported,
+--             disputed, rejected, withdrawn
+-- Migrate existing rows safely.
+do $$
+begin
+  -- 'validated' → 'community_supported' (safer default than externally_supported)
+  update public.open_intelligence
+    set validation_status = 'community_supported'
+    where validation_status = 'validated';
+
+  -- 'flagged' → 'disputed'
+  update public.open_intelligence
+    set validation_status = 'disputed'
+    where validation_status = 'flagged';
+exception when others then null;
+end $$;
+
+-- ── 5B-2: Add staleness / outdated tracking columns to open_intelligence ──
+alter table public.open_intelligence add column if not exists staleness_score numeric not null default 0;
+alter table public.open_intelligence add column if not exists staleness_evaluated_at timestamptz;
+alter table public.open_intelligence add column if not exists outdated_flag boolean not null default false;
+alter table public.open_intelligence add column if not exists content_hash text;
+
+-- Add columns for duplicate detection tracking
+alter table public.open_intelligence add column if not exists duplicate_flag boolean not null default false;
+alter table public.open_intelligence add column if not exists duplicate_of uuid; -- references another open_intelligence entry
+
+-- Version tracking for edits
+alter table public.open_intelligence add column if not exists version_number int not null default 1;
+alter table public.open_intelligence add column if not exists last_major_edit_at timestamptz;
+
+create index if not exists oi_validation_status_idx on public.open_intelligence(validation_status);
+create index if not exists oi_content_hash_idx on public.open_intelligence(user_id, content_hash) where content_hash is not null;
+create index if not exists oi_duplicate_idx on public.open_intelligence(duplicate_flag) where duplicate_flag = true;
+create index if not exists oi_outdated_idx on public.open_intelligence(outdated_flag) where outdated_flag = true;
+
+-- ── 5B-3: OPEN INTELLIGENCE FEEDBACK ─────────────────────────────────────
+create table if not exists public.open_intelligence_feedback (
+  id uuid primary key default gen_random_uuid(),
+  entry_id uuid not null references public.open_intelligence(id) on delete cascade,
+  reviewer_user_id uuid not null references auth.users(id) on delete cascade,
+  feedback_type text not null check (feedback_type in (
+    'helpful',
+    'accurate_to_experience',
+    'needs_context',
+    'outdated',
+    'incorrect',
+    'misleading',
+    'abusive_or_prohibited'
+  )),
+  optional_reason text,
+  access_source text not null check (access_source in ('faction', 'exchange', 'personal', 'moderation')),
+  faction_id uuid references public.factions(id) on delete set null,
+  exchange_purchase_id uuid references public.marketplace_sync_purchases(id) on delete set null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique(entry_id, reviewer_user_id)
+);
+
+create index if not exists oif_entry_idx on public.open_intelligence_feedback(entry_id);
+create index if not exists oif_reviewer_idx on public.open_intelligence_feedback(reviewer_user_id, created_at desc);
+create index if not exists oif_feedback_type_idx on public.open_intelligence_feedback(feedback_type);
+
+alter table public.open_intelligence_feedback enable row level security;
+
+drop policy if exists "oif_self_select" on public.open_intelligence_feedback;
+drop policy if exists "oif_self_insert" on public.open_intelligence_feedback;
+drop policy if exists "oif_self_update" on public.open_intelligence_feedback;
+
+-- Reviewers can see their own feedback
+create policy "oif_self_select" on public.open_intelligence_feedback
+  for select using (auth.uid() = reviewer_user_id);
+
+-- Users can submit feedback (eligibility verified server-side in worker)
+create policy "oif_self_insert" on public.open_intelligence_feedback
+  for insert with check (auth.uid() = reviewer_user_id);
+
+-- Users can update their own feedback
+create policy "oif_self_update" on public.open_intelligence_feedback
+  for update using (auth.uid() = reviewer_user_id);
+
+-- ── 5B-4: OPEN INTELLIGENCE DISPUTES ─────────────────────────────────────
+create table if not exists public.open_intelligence_disputes (
+  id uuid primary key default gen_random_uuid(),
+  entry_id uuid not null references public.open_intelligence(id) on delete cascade,
+  disputing_user_id uuid not null references auth.users(id) on delete cascade,
+  reason_category text not null check (reason_category in (
+    'factually_incorrect',
+    'misleading',
+    'outdated_information',
+    'spam_or_low_effort',
+    'inappropriate_content',
+    'copyright_violation',
+    'other'
+  )),
+  explanation text not null,
+  supporting_source_ref text,
+  status text not null default 'pending' check (status in (
+    'pending', 'reviewing', 'upheld', 'dismissed', 'resolved'
+  )),
+  moderation_note text,
+  moderated_by uuid references auth.users(id) on delete set null,
+  moderated_at timestamptz,
+  created_at timestamptz default now(),
+  unique(entry_id, disputing_user_id)
+);
+
+create index if not exists oid_entry_idx on public.open_intelligence_disputes(entry_id);
+create index if not exists oid_disputing_user_idx on public.open_intelligence_disputes(disputing_user_id, created_at desc);
+create index if not exists oid_status_idx on public.open_intelligence_disputes(status) where status in ('pending', 'reviewing');
+
+alter table public.open_intelligence_disputes enable row level security;
+
+drop policy if exists "oid_self_select" on public.open_intelligence_disputes;
+drop policy if exists "oid_self_insert" on public.open_intelligence_disputes;
+drop policy if exists "oid_self_insert_v2" on public.open_intelligence_disputes;
+
+create policy "oid_self_select" on public.open_intelligence_disputes
+  for select using (auth.uid() = disputing_user_id);
+
+create policy "oid_self_insert_v2" on public.open_intelligence_disputes
+  for insert with check (auth.uid() = disputing_user_id);
+
+-- ── 5B-5: INTELLIGENCE CONTRIBUTOR REPUTATION ────────────────────────────
+create table if not exists public.intelligence_contributor_reputation (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  overall_score numeric not null default 50,  -- bounded 0-100, neutral start
+  quality_component numeric not null default 50,
+  usefulness_component numeric not null default 50,
+  validation_component numeric not null default 50,
+  reliability_component numeric not null default 50,
+  dispute_penalty numeric not null default 0,
+  total_entries int not null default 0,
+  entries_used int not null default 0,
+  supported_entries int not null default 0,
+  disputed_entries int not null default 0,
+  rejected_entries int not null default 0,
+  withdrawn_entries int not null default 0,
+  total_feedback_received int not null default 0,
+  positive_feedback int not null default 0,
+  negative_feedback int not null default 0,
+  calculated_at timestamptz default now()
+);
+
+create index if not exists icr_overall_score_idx on public.intelligence_contributor_reputation(overall_score desc);
+
+alter table public.intelligence_contributor_reputation enable row level security;
+
+drop policy if exists "icr_self_select" on public.intelligence_contributor_reputation;
+drop policy if exists "icr_public_select" on public.intelligence_contributor_reputation;
+
+-- Users can see their own reputation
+create policy "icr_self_select" on public.intelligence_contributor_reputation
+  for select using (auth.uid() = user_id);
+
+-- Anyone can see the overall_score publicly (for marketplace display)
+create policy "icr_public_select" on public.intelligence_contributor_reputation
+  for select using (true);
+
+-- No client insert/update — only service_role can write
+
+-- ── 5B-6: OPEN INTELLIGENCE VERSIONS (edit history) ──────────────────────
+create table if not exists public.open_intelligence_versions (
+  id uuid primary key default gen_random_uuid(),
+  entry_id uuid not null references public.open_intelligence(id) on delete cascade,
+  version_number int not null,
+  previous_content text,
+  previous_tags jsonb default '[]'::jsonb,
+  previous_category text,
+  previous_confidence text,
+  previous_validation_status text,
+  change_type text not null check (change_type in ('minor_edit', 'major_edit', 'status_change', 'withdrawal')),
+  changed_by uuid not null references auth.users(id) on delete cascade,
+  changed_at timestamptz default now(),
+  unique(entry_id, version_number)
+);
+
+create index if not exists oiv_entry_idx on public.open_intelligence_versions(entry_id, version_number desc);
+
+alter table public.open_intelligence_versions enable row level security;
+
+drop policy if exists "oiv_owner_select" on public.open_intelligence_versions;
+drop policy if exists "oiv_owner_insert" on public.open_intelligence_versions;
+
+-- Owner can see their own entry version history
+create policy "oiv_owner_select" on public.open_intelligence_versions
+  for select using (
+    exists (
+      select 1 from public.open_intelligence oi
+      where oi.id = entry_id and oi.user_id = auth.uid()
+    )
+  );
+
+-- Owner can insert version records when editing
+create policy "oiv_owner_insert" on public.open_intelligence_versions
+  for insert with check (
+    exists (
+      select 1 from public.open_intelligence oi
+      where oi.id = entry_id and oi.user_id = auth.uid()
+    )
+  );
+
+-- ── 5B-7: FEEDBACK RATE LIMITING (anti-gaming) ───────────────────────────
+-- Track feedback submissions per user to detect bursts and rings
+create table if not exists public.feedback_rate_limits (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  date date not null default current_date,
+  feedback_count int not null default 0,
+  dispute_count int not null default 0,
+  anomaly_flag boolean not null default false,
+  updated_at timestamptz default now(),
+  primary key (user_id, date)
+);
+
+create index if not exists frl_anomaly_idx on public.feedback_rate_limits(anomaly_flag) where anomaly_flag = true;
+
+alter table public.feedback_rate_limits enable row level security;
+
+drop policy if exists "frl_self_select" on public.feedback_rate_limits;
+drop policy if exists "frl_self_insert" on public.feedback_rate_limits;
+drop policy if exists "frl_self_update" on public.feedback_rate_limits;
+
+create policy "frl_self_select" on public.feedback_rate_limits
+  for select using (auth.uid() = user_id);
+
+create policy "frl_self_insert" on public.feedback_rate_limits
+  for insert with check (auth.uid() = user_id);
+
+create policy "frl_self_update" on public.feedback_rate_limits
+  for update using (auth.uid() = user_id);
+
+-- ── 5B-8: VENDOR QUALITY METRICS RPC ─────────────────────────────────────
+-- Safe aggregate quality metrics for a vendor's Exchange-listed entries.
+-- Does NOT expose buyer identities, prompts, or private entry content.
+create or replace function public.get_vendor_quality_metrics(
+  p_vendor_id uuid
+)
+returns table (
+  avg_entry_quality numeric,
+  supported_entry_rate numeric,
+  dispute_rate numeric,
+  rejected_rate numeric,
+  recent_usefulness bigint,
+  eligible_exchange_entries bigint,
+  total_entries bigint
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  return query
+  select
+    coalesce(avg(oi.quality_score), 0)::numeric as avg_entry_quality,
+    case when count(*) > 0
+      then count(*) filter (where oi.validation_status in ('community_supported', 'externally_supported'))::numeric / count(*)::numeric
+      else 0::numeric
+    end as supported_entry_rate,
+    case when count(*) > 0
+      then count(*) filter (where oi.validation_status = 'disputed')::numeric / count(*)::numeric
+      else 0::numeric
+    end as dispute_rate,
+    case when count(*) > 0
+      then count(*) filter (where oi.validation_status = 'rejected')::numeric / count(*)::numeric
+      else 0::numeric
+    end as rejected_rate,
+    coalesce(
+      (select count(*)::bigint from public.analyst_context_usage acu
+       where acu.source_type = 'exchange'
+         and acu.source_owner_id = p_vendor_id
+         and acu.used_at >= now() - interval '30 days'),
+      0::bigint
+    ) as recent_usefulness,
+    count(*) filter (where oi.exchange_share_enabled = true)::bigint as eligible_exchange_entries,
+    count(*)::bigint as total_entries
+  from public.open_intelligence oi
+  where oi.user_id = p_vendor_id;
+end;
+$$;
+
+-- ── 5B-9: FACTION QUALITY METRICS RPC ────────────────────────────────────
+-- Safe aggregate quality metrics for a faction's shared intelligence.
+create or replace function public.get_faction_quality_metrics(
+  p_faction_id uuid
+)
+returns table (
+  total_shared_entries bigint,
+  avg_quality numeric,
+  supported_rate numeric,
+  disputed_rate numeric,
+  active_contributors bigint,
+  entries_used_in_responses bigint
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  return query
+  select
+    count(*)::bigint as total_shared_entries,
+    coalesce(avg(oi.quality_score), 0)::numeric as avg_quality,
+    case when count(*) > 0
+      then count(*) filter (where oi.validation_status in ('community_supported', 'externally_supported'))::numeric / count(*)::numeric
+      else 0::numeric
+    end as supported_rate,
+    case when count(*) > 0
+      then count(*) filter (where oi.validation_status = 'disputed')::numeric / count(*)::numeric
+      else 0::numeric
+    end as disputed_rate,
+    count(distinct fsi.user_id)::bigint as active_contributors,
+    coalesce(
+      (select count(*)::bigint from public.analyst_context_usage acu
+       where acu.source_type = 'faction'
+         and acu.faction_id = p_faction_id
+         and acu.used_at >= now() - interval '30 days'),
+      0::bigint
+    ) as entries_used_in_responses
+  from public.faction_shared_intelligence fsi
+  join public.open_intelligence oi on oi.id = fsi.oi_entry_id
+  where fsi.faction_id = p_faction_id;
+end;
+$$;
+
+-- ── 5B-10: CONTRIBUTOR REPUTATION CALCULATION RPC ────────────────────────
+-- Server-side reputation recalculation using Bayesian smoothing.
+-- Called by the worker after feedback is submitted or periodically.
+-- Neutral prior = 50, minimum sample threshold = 5 entries before deviation.
+create or replace function public.recalculate_contributor_reputation(
+  p_user_id uuid
+)
+returns numeric
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_total_entries int;
+  v_supported int;
+  v_disputed int;
+  v_rejected int;
+  v_withdrawn int;
+  v_entries_used int;
+  v_total_feedback int;
+  v_positive_feedback int;
+  v_negative_feedback int;
+  v_avg_quality numeric;
+  v_prior numeric := 50.0;  -- neutral starting point
+  v_prior_weight int := 5;  -- minimum samples before reputation deviates significantly
+  v_quality_component numeric;
+  v_usefulness_component numeric;
+  v_validation_component numeric;
+  v_reliability_component numeric;
+  v_dispute_penalty numeric;
+  v_overall numeric;
+begin
+  -- Gather entry stats
+  select
+    count(*),
+    count(*) filter (where validation_status in ('community_supported', 'externally_supported')),
+    count(*) filter (where validation_status = 'disputed'),
+    count(*) filter (where validation_status = 'rejected'),
+    count(*) filter (where validation_status = 'withdrawn'),
+    coalesce(avg(quality_score), 0)
+  into v_total_entries, v_supported, v_disputed, v_rejected, v_withdrawn, v_avg_quality
+  from public.open_intelligence
+  where user_id = p_user_id;
+
+  -- Gather usage stats from audit
+  select count(*) into v_entries_used
+  from public.analyst_context_usage
+  where source_owner_id = p_user_id
+    and source_type in ('personal', 'faction', 'exchange');
+
+  -- Gather feedback stats
+  select
+    count(*),
+    count(*) filter (where feedback_type in ('helpful', 'accurate_to_experience')),
+    count(*) filter (where feedback_type in ('incorrect', 'misleading', 'abusive_or_prohibited', 'outdated'))
+  into v_total_feedback, v_positive_feedback, v_negative_feedback
+  from public.open_intelligence_feedback
+  where entry_id in (select id from public.open_intelligence where user_id = p_user_id);
+
+  -- Bayesian-smoothed quality component (prior=50, weight=5 entries)
+  v_quality_component := ((v_prior * v_prior_weight) + coalesce(v_avg_quality, 50) * greatest(v_total_entries, 0))
+    / greatest(v_prior_weight + v_total_entries, 1);
+
+  -- Usefulness component: based on entries used in analyst responses
+  v_usefulness_component := 50.0;
+  if v_total_entries > 0 then
+    v_usefulness_component := 30.0 + (least(v_entries_used::numeric / greatest(v_total_entries::numeric, 1), 1.0) * 40.0);
+  end if;
+
+  -- Validation component: ratio of supported to total (Bayesian smoothed)
+  v_validation_component := ((50.0 * v_prior_weight) +
+    coalesce(v_supported::numeric, 0) * 100.0 / greatest(v_total_entries::numeric, 1) * v_total_entries)
+    / greatest(v_prior_weight + v_total_entries, 1);
+
+  -- Reliability component: 1 - (disputed+rejected+withdrawn) ratio, smoothed
+  v_reliability_component := 50.0;
+  if v_total_entries > 0 then
+    v_reliability_component := 100.0 * (1.0 -
+      ((v_disputed + v_rejected + v_withdrawn)::numeric / v_total_entries));
+    -- Bayesian smoothing toward 50
+    v_reliability_component := ((50.0 * v_prior_weight) + v_reliability_component * v_total_entries)
+      / greatest(v_prior_weight + v_total_entries, 1);
+  end if;
+
+  -- Dispute penalty: scales with dispute rate, capped at 30 points
+  v_dispute_penalty := 0.0;
+  if v_total_entries > 0 then
+    v_dispute_penalty := least(30.0, (v_disputed::numeric / v_total_entries) * 50.0);
+  end if;
+
+  -- Feedback adjustment: positive feedback boosts, negative reduces
+  declare
+    v_feedback_adjustment numeric := 0.0;
+    v_feedback_samples int;
+  begin
+    v_feedback_samples := v_positive_feedback + v_negative_feedback;
+    if v_feedback_samples > 0 then
+      -- Bayesian smoothed feedback ratio
+      v_feedback_adjustment := (((v_positive_feedback - v_negative_feedback)::numeric / v_feedback_samples) * 20.0
+        * least(v_feedback_samples::numeric / 10.0, 1.0));
+    end if;
+
+    -- Overall: weighted average of components minus dispute penalty plus feedback adjustment
+    v_overall := (
+      v_quality_component * 0.30 +
+      v_usefulness_component * 0.20 +
+      v_validation_component * 0.25 +
+      v_reliability_component * 0.25
+    ) - v_dispute_penalty + v_feedback_adjustment;
+
+    -- Clamp to 0-100
+    v_overall := greatest(0, least(100, v_overall));
+  end;
+
+  -- Upsert reputation row
+  insert into public.intelligence_contributor_reputation (
+    user_id, overall_score, quality_component, usefulness_component,
+    validation_component, reliability_component, dispute_penalty,
+    total_entries, entries_used, supported_entries, disputed_entries,
+    rejected_entries, withdrawn_entries, total_feedback_received,
+    positive_feedback, negative_feedback, calculated_at
+  ) values (
+    p_user_id, v_overall, v_quality_component, v_usefulness_component,
+    v_validation_component, v_reliability_component, v_dispute_penalty,
+    v_total_entries, v_entries_used, v_supported, v_disputed,
+    v_rejected, v_withdrawn, v_total_feedback,
+    v_positive_feedback, v_negative_feedback, now()
+  )
+  on conflict (user_id) do update set
+    overall_score = excluded.overall_score,
+    quality_component = excluded.quality_component,
+    usefulness_component = excluded.usefulness_component,
+    validation_component = excluded.validation_component,
+    reliability_component = excluded.reliability_component,
+    dispute_penalty = excluded.dispute_penalty,
+    total_entries = excluded.total_entries,
+    entries_used = excluded.entries_used,
+    supported_entries = excluded.supported_entries,
+    disputed_entries = excluded.disputed_entries,
+    rejected_entries = excluded.rejected_entries,
+    withdrawn_entries = excluded.withdrawn_entries,
+    total_feedback_received = excluded.total_feedback_received,
+    positive_feedback = excluded.positive_feedback,
+    negative_feedback = excluded.negative_feedback,
+    calculated_at = excluded.calculated_at;
+
+  return v_overall;
+end;
+$$;
+
+-- ── 5B-11: STALENESS EVALUATION RPC ──────────────────────────────────────
+-- Domain-aware staleness scoring. Fast-changing domains age faster.
+create or replace function public.evaluate_entry_staleness(
+  p_entry_id uuid
+)
+returns numeric
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_domain text;
+  v_created timestamptz;
+  v_age_days numeric;
+  v_max_age_days int;
+  v_staleness numeric;
+  v_outdated_feedback_count int;
+begin
+  select intelligence_domain, created_at
+  into v_domain, v_created
+  from public.open_intelligence
+  where id = p_entry_id;
+
+  if not found then return 0; end if;
+
+  v_age_days := extract(epoch from (now() - v_created)) / 86400.0;
+
+  -- Domain-specific max age before staleness kicks in
+  v_max_age_days := case v_domain
+    when 'finance' then 30
+    when 'technology' then 60
+    when 'health_fitness' then 90
+    when 'sports' then 120
+    when 'gaming' then 120
+    when 'music' then 180
+    when 'film_tv' then 180
+    when 'fashion' then 180
+    when 'business' then 180
+    when 'education' then 365
+    else 180
+  end;
+
+  -- Linear staleness: 0 at creation, 100 at 2x max_age
+  v_staleness := least(100, (v_age_days / (v_max_age_days * 2)) * 100);
+
+  -- Check for 'outdated' feedback — each one adds 10 to staleness
+  select count(*) into v_outdated_feedback_count
+  from public.open_intelligence_feedback
+  where entry_id = p_entry_id and feedback_type = 'outdated';
+
+  v_staleness := least(100, v_staleness + (v_outdated_feedback_count * 10));
+
+  -- Update the entry
+  update public.open_intelligence
+  set staleness_score = v_staleness,
+      staleness_evaluated_at = now(),
+      outdated_flag = (v_staleness >= 70)
+  where id = p_entry_id;
+
+  return v_staleness;
+end;
+$$;
+
+-- ── 5B-12: Add dispute_count column to open_intelligence for fast filtering ─
+alter table public.open_intelligence add column if not exists active_dispute_count int not null default 0;
+
+create index if not exists oi_active_dispute_idx on public.open_intelligence(active_dispute_count) where active_dispute_count > 0;

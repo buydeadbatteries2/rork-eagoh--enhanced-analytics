@@ -41,6 +41,8 @@
  *
  * No API keys, private OI content, or service-role tokens ever reach the client.
  * Phase 4B — Harden and Verify Exchange Intelligence (deployed).
+ * Phase 5A — Intelligence Usage Auditing and Source Provenance (deployed).
+ * Phase 5B — Human Intelligence Quality, Validation, and Reputation (deployed).
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
@@ -139,8 +141,37 @@ type OpenIntelligenceRow = {
   selected_category?: string | null;
   selected_subtags?: string[] | null;
   custom_tags?: string[] | null;
+  exchange_share_enabled?: boolean;
+  staleness_score?: number;
+  outdated_flag?: boolean;
+  content_hash?: string | null;
+  duplicate_flag?: boolean;
+  active_dispute_count?: number;
+  version_number?: number;
   created_at: string;
   updated_at: string;
+};
+
+/** Validation statuses used in Phase 5B. */
+const VALID_USEABLE_STATUSES = [
+  "pending_review",
+  "community_supported",
+  "externally_supported",
+] as const;
+
+/** Validation statuses that must be excluded from analyst context. */
+const EXCLUDED_STATUSES = ["rejected", "withdrawn"] as const;
+
+/** Contributor reputation row from intelligence_contributor_reputation. */
+type ContributorReputation = {
+  user_id: string;
+  overall_score: number;
+  quality_component: number;
+  usefulness_component: number;
+  validation_component: number;
+  reliability_component: number;
+  dispute_penalty: number;
+  total_entries: number;
 };
 
 type EagohRow = {
@@ -407,7 +438,7 @@ async function retrieveFactionOpenIntelligence(
     .from("open_intelligence")
     .select("*")
     .in("id", entryIds)
-    .in("validation_status", ["pending_review", "validated"]);
+    .in("validation_status", [...VALID_USEABLE_STATUSES]);
 
   if (entriesErr || !entries || entries.length === 0) {
     if (entriesErr) console.warn("[analyst] faction OI entry fetch failed", entriesErr.message);
@@ -422,7 +453,10 @@ async function retrieveFactionOpenIntelligence(
   });
 
   const limit = sessionFactionOILimit(sessionType);
-  const ranked = rankEntries(factionEntries, query, Math.min(limit, factionEntries.length));
+  // Phase 5B: Fetch contributor reputations for ranking
+  const contributorIds = [...new Set(factionEntries.map((e) => e.contributor_user_id).filter(Boolean))];
+  const repMap = await fetchReputationsForUsers(supabase, contributorIds);
+  const ranked = rankEntries(factionEntries, query, Math.min(limit, factionEntries.length), repMap);
   return { entries: ranked, allRanked: factionEntries };
 }
 
@@ -451,7 +485,7 @@ async function retrievePersonalOpenIntelligence(
     .select("*")
     .eq("user_id", userId)
     .eq("eagoh_id", eagohId)
-    .in("validation_status", ["pending_review", "validated"])
+    .in("validation_status", [...VALID_USEABLE_STATUSES])
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -496,16 +530,94 @@ function confidenceMultiplier(level: string): number {
   }
 }
 
-function validationBonus(status: string): number {
+function validationMultiplier(status: string): number {
   switch (status) {
-    case "validated": return 1.15;
-    case "pending_review": return 1.0;
-    case "flagged": return 0.5;
-    default: return 1.0;
+    case "externally_supported":
+    case "community_supported":
+      return 1.15;
+    case "pending_review":
+      return 1.0;
+    case "disputed":
+      // Reduced weight — disputed entries stay in context but get a warning label
+      return 0.6;
+    // rejected and withdrawn are filtered before ranking, but handle defensively
+    case "rejected":
+    case "withdrawn":
+      return 0.0;
+    default:
+      return 1.0;
   }
 }
 
-function scoreEntry(entry: OpenIntelligenceRow, queryTokens: string[]): number {
+/** Backward-compat alias for old callers. */
+function validationBonus(status: string): number {
+  return validationMultiplier(status);
+}
+
+/** Reputation lookup cache per request — avoids repeated queries for the same vendor. */
+function createReputationCache() {
+  const cache = new Map<string, ContributorReputation | null>();
+  return {
+    get: (userId: string) => cache.get(userId),
+    set: (userId: string, rep: ContributorReputation | null) => cache.set(userId, rep),
+  };
+}
+
+/** Fetch contributor reputation for a user. Returns null if not found. */
+async function fetchReputation(
+  serviceClient: SupabaseClient,
+  userId: string,
+  cache: ReturnType<typeof createReputationCache>,
+): Promise<ContributorReputation | null> {
+  const cached = cache.get(userId);
+  if (cached !== undefined) return cached;
+
+  const { data, error } = await serviceClient
+    .from("intelligence_contributor_reputation")
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error || !data) {
+    cache.set(userId, null);
+    return null;
+  }
+
+  const rep = data as ContributorReputation;
+  cache.set(userId, rep);
+  return rep;
+}
+
+/**
+ * Compute a reputation multiplier for ranking.
+ *
+ * Reputation is a SUPPORTING factor (0.9–1.1), NOT the dominant factor.
+ * A high-reputation contributor's irrelevant entry cannot outrank a
+ * highly relevant lower-reputation entry.
+ *
+ * Formula: map 0–100 score to 0.9–1.1 range.
+ */
+function reputationMultiplier(rep: ContributorReputation | null): number {
+  if (!rep) return 1.0;
+  // 50 = neutral (1.0), 100 = max boost (1.1), 0 = penalty (0.9)
+  return 0.9 + (rep.overall_score / 100) * 0.2;
+}
+
+/**
+ * Staleness penalty: outdated entries receive reduced weight.
+ * staleness_score 0 = no penalty, 100 = 50% score reduction.
+ */
+function stalenessPenalty(entry: OpenIntelligenceRow): number {
+  const staleness = entry.staleness_score ?? 0;
+  if (staleness <= 0) return 1.0;
+  return 1.0 - (staleness / 100) * 0.5;
+}
+
+function scoreEntry(
+  entry: OpenIntelligenceRow,
+  queryTokens: string[],
+  reputationRep?: ContributorReputation | null,
+): number {
   let score = 0;
 
   const contentLower = entry.content.toLowerCase();
@@ -530,7 +642,15 @@ function scoreEntry(entry: OpenIntelligenceRow, queryTokens: string[]): number {
 
   score *= confidenceMultiplier(entry.confidence_level);
 
-  score *= validationBonus(entry.validation_status);
+  score *= validationMultiplier(entry.validation_status);
+
+  // Staleness penalty (Phase 5B)
+  score *= stalenessPenalty(entry);
+
+  // Reputation as supporting factor (Phase 5B) — max ±10% adjustment
+  if (reputationRep) {
+    score *= reputationMultiplier(reputationRep);
+  }
 
   const ageDays = (Date.now() - new Date(entry.created_at).getTime()) / (1000 * 60 * 60 * 24);
   if (ageDays < 30) {
@@ -540,20 +660,67 @@ function scoreEntry(entry: OpenIntelligenceRow, queryTokens: string[]): number {
   return Math.round(score * 100) / 100;
 }
 
+/** Pre-populated reputation map: user_id → reputation (or null if not found). */
+type ReputationMap = Map<string, ContributorReputation | null>;
+
+/**
+ * Batch-fetch contributor reputations for a set of user IDs.
+ * Uses the anon-key client (reputation has public read RLS).
+ */
+async function fetchReputationsForUsers(
+  supabase: SupabaseClient,
+  userIds: string[],
+): Promise<ReputationMap> {
+  const result: ReputationMap = new Map();
+  if (userIds.length === 0) return result;
+
+  const unique = [...new Set(userIds)];
+  const { data, error } = await supabase
+    .from("intelligence_contributor_reputation")
+    .select("*")
+    .in("user_id", unique);
+
+  if (error || !data) {
+    // Non-fatal: rank without reputation data
+    console.warn("[analyst] reputation batch fetch failed", error?.message);
+    for (const id of unique) result.set(id, null);
+    return result;
+  }
+
+  for (const row of data as ContributorReputation[]) {
+    result.set(row.user_id, row);
+  }
+  // Fill missing users with null
+  for (const id of unique) {
+    if (!result.has(id)) result.set(id, null);
+  }
+  return result;
+}
+
 function rankEntries(
   entries: OpenIntelligenceRow[],
   query: string,
   topN: number,
+  reputationMap?: ReputationMap,
 ): OpenIntelligenceRow[] {
   if (entries.length === 0) return [];
 
+  // Filter out rejected and withdrawn entries before ranking (Phase 5B)
+  const eligible = entries.filter(
+    (e) => !EXCLUDED_STATUSES.includes(e.validation_status as (typeof EXCLUDED_STATUSES)[number]),
+  );
+  if (eligible.length === 0) return [];
+
   const queryTokens = tokenize(query);
   if (queryTokens.length === 0) {
-    return entries.slice(0, topN);
+    return eligible.slice(0, topN);
   }
 
-  const scored = entries
-    .map((entry) => ({ entry, score: scoreEntry(entry, queryTokens) }))
+  const scored = eligible
+    .map((entry) => {
+      const rep = reputationMap?.get(entry.user_id) ?? null;
+      return { entry, score: scoreEntry(entry, queryTokens, rep) };
+    })
     .filter(({ score }) => score > 0.5)
     .sort((a, b) => b.score - a.score);
 
@@ -579,6 +746,30 @@ function sessionOITokenBudget(sessionType: SessionType): number {
     case "standard": return 2000;
     case "oracle": return 3000;
     case "premium-event": return 1500;
+  }
+}
+
+// ── Source Transparency (Phase 5B) ───────────────────────────────────────────
+
+/**
+ * Format a human-readable validation label for source transparency.
+ * Maps validation_status to clear language the AI model uses in responses.
+ */
+function formatValidationLabel(status: string): string {
+  switch (status) {
+    case "externally_supported":
+      return "Externally supported";
+    case "community_supported":
+      return "Community supported";
+    case "disputed":
+      return "Disputed (reduced weight — treat with caution)";
+    case "rejected":
+      return "Rejected";
+    case "withdrawn":
+      return "Withdrawn";
+    case "pending_review":
+    default:
+      return "Pending review (unverified human experience)";
   }
 }
 
@@ -609,18 +800,22 @@ function formatOIContext(
       .filter(Boolean)
       .join(", ") || entry.tag;
 
+    const validationLabel = formatValidationLabel(entry.validation_status);
+    const stalenessNote = entry.outdated_flag ? " [OUTDATED]" : (entry.staleness_score && entry.staleness_score > 50 ? " [AGING]" : "");
+
     return `[OI Entry ${i + 1}]
 Category: ${entry.selected_category ?? "General"}
 Tags: ${tagLine}
 Confidence: ${confidenceLabel}
 Quality: ${quality}/100
 Influence: ${influence}/100
+Validation: ${validationLabel}${stalenessNote}
 Created: ${date}
 Content: ${content}`;
   });
 
   const text = `PERSONAL OPEN INTELLIGENCE — USER PROVIDED (${entries.length} entries)
-Personal Open Intelligence is private, user-provided knowledge. Treat it as potentially valuable real-world experience, but not automatically verified fact. Consider relevance, confidence, validation status, quality, and recency.
+Personal Open Intelligence is private, user-provided knowledge. Treat it as potentially valuable real-world experience, but not automatically verified fact. Consider relevance, confidence, validation status, quality, and recency. Do not call an entry "verified fact" unless its validation status truly supports that wording.
 
 ${blocks.join("\n\n")}`;
 
@@ -889,10 +1084,15 @@ function stableCohortOrder(entries: OpenIntelligenceRow[]): OpenIntelligenceRow[
   return [...entries].sort((a, b) => {
     // Quality first
     if (b.quality_score !== a.quality_score) return b.quality_score - a.quality_score;
-    // Validated entries come first
-    const aIsValidated = a.validation_status === "validated" ? 1 : 0;
-    const bIsValidated = b.validation_status === "validated" ? 1 : 0;
-    if (aIsValidated !== bIsValidated) return bIsValidated - aIsValidated;
+    // Supported entries come first (Phase 5B: community_supported / externally_supported > pending_review > disputed)
+    const validationRank: Record<string, number> = {
+      externally_supported: 3, community_supported: 2,
+      pending_review: 1, disputed: 0,
+      rejected: -1, withdrawn: -1,
+    };
+    const aValRank = validationRank[a.validation_status] ?? 0;
+    const bValRank = validationRank[b.validation_status] ?? 0;
+    if (aValRank !== bValRank) return bValRank - aValRank;
     // Influence
     if (b.influence_score !== a.influence_score) return b.influence_score - a.influence_score;
     // Confidence
@@ -921,7 +1121,7 @@ function stableCohortOrder(entries: OpenIntelligenceRow[]): OpenIntelligenceRow[
  *      - entry.user_id MUST equal verified vendor ID (defense in depth)
  *      - entry.eagoh_id MUST equal verified vendor EAGOH ID
  *      - exchange_share_enabled MUST be true
- *      - validation_status must be pending_review or validated
+ *      - validation_status must be pending_review, community_supported, or externally_supported
  *   3. Deduplicate by entry ID
  *   4. Build stable ordering (independent of query)
  *   5. Apply purchased percentage to create accessible cohort
@@ -969,7 +1169,7 @@ async function retrieveExchangeOpenIntelligence(
       .eq("user_id", vendorId)
       .eq("eagoh_id", eagohId)
       .eq("exchange_share_enabled", true)
-      .in("validation_status", ["pending_review", "validated"])
+      .in("validation_status", [...VALID_USEABLE_STATUSES])
       .order("created_at", { ascending: false })
       .limit(200);
 
@@ -1032,8 +1232,13 @@ async function retrieveExchangeOpenIntelligence(
 
   // ── Rank accessible cohort against current question ──
   const limit = sessionExchangeOILimit(sessionType);
+
+  // Phase 5B: Fetch vendor contributor reputations for ranking
+  const vendorIds = [...new Set(syncs.map((s) => s.vendorId))];
+  const vendorRepMap = await fetchReputationsForUsers(serviceClient, vendorIds);
+
   const ranked = accessible.length > 0
-    ? rankEntries(accessible, query, Math.min(limit, accessible.length))
+    ? rankEntries(accessible, query, Math.min(limit, accessible.length), vendorRepMap)
     : [];
 
   console.log("[analyst:diag] final exchange entries selected:", ranked.length);
@@ -1096,17 +1301,21 @@ function formatExchangeOIContext(
       ...(entry.custom_tags ?? []),
     ].filter(Boolean).join(", ") || entry.tag;
 
+    const validationLabel = formatValidationLabel(entry.validation_status);
+    const stalenessNote = entry.outdated_flag ? " [OUTDATED]" : "";
+
     return `[Exchange Entry ${i + 1}]
 Category: ${entry.selected_category ?? "General"}
 Tags: ${tagLine}
 Confidence: ${confidenceLabel}
 Quality: ${quality}/100
+Validation: ${validationLabel}${stalenessNote}
 Created: ${date}
 Content: ${content}`;
   });
 
   const text = `EXCHANGE INTELLIGENCE — LICENSED HUMAN KNOWLEDGE (${result.entries.length} entries)
-Exchange Intelligence contains human-provided knowledge temporarily licensed through an active synchronization purchase. Treat it as valuable experience, not automatically verified fact. Do not imply ownership by the buyer.
+Exchange Intelligence contains human-provided knowledge temporarily licensed through an active synchronization purchase. Treat it as valuable experience, not automatically verified fact. Do not imply ownership by the buyer. Distinguish between community-supported, externally supported, disputed, and unverified experiential knowledge. Do not call an entry "verified fact" unless its validation status truly supports that wording.
 
 Active synchronizations: ${result.syncCount}. Vendor EAGOHs: ${result.vendorEagohCount}.
 
@@ -1145,17 +1354,21 @@ function formatFactionOIContext(
       .filter(Boolean)
       .join(", ") || entry.tag;
 
+    const validationLabel = formatValidationLabel(entry.validation_status);
+    const stalenessNote = entry.outdated_flag ? " [OUTDATED]" : "";
+
     return `[Faction Entry ${i + 1}]
 Category: ${entry.selected_category ?? "General"}
 Tags: ${tagLine}
 Confidence: ${confidenceLabel}
 Quality: ${quality}/100
+Validation: ${validationLabel}${stalenessNote}
 Created: ${date}
 Content: ${content}`;
   });
 
   const text = `FACTION INTELLIGENCE — SHARED HUMAN KNOWLEDGE (${entries.length} entries)
-Faction Intelligence contains human-provided knowledge deliberately shared with authorized Faction members. Treat it as valuable experience, but not automatically verified fact. Compare it with Personal Open Intelligence and Current External Research.
+Faction Intelligence contains human-provided knowledge deliberately shared with authorized Faction members. Treat it as valuable experience, but not automatically verified fact. Compare it with Personal Open Intelligence and Current External Research. Distinguish between community-supported, externally supported, disputed, and unverified experiential knowledge. Do not call an entry "verified fact" unless its validation status truly supports that wording.
 
 ${blocks.join("\n\n")}`;
 
@@ -1835,6 +2048,724 @@ function buildMessages(params: {
   return messages;
 }
 
+// ── Phase 5B: Server-side Quality Evaluation ─────────────────────────────────
+
+/**
+ * Evaluate Open Intelligence quality server-side.
+ *
+ * Scores observable qualities: detail, clarity, specificity, relevance,
+ * internal consistency, supporting context, category/tag alignment, and
+ * non-duplicative content.
+ *
+ * Quality means presentation and usefulness, NOT guaranteed truth.
+ * Returns a score from 0–100.
+ */
+function evaluateOpenIntelligenceQuality(params: {
+  content: string;
+  category?: string | null;
+  tags?: string[] | null;
+  confidenceLevel: string;
+}): number {
+  const text = params.content.trim();
+  if (text.length === 0) return 0;
+
+  let score = 0;
+
+  // 1. Detail: character count relative to expected ranges
+  const charCount = text.replace(/\s/g, "").length;
+  if (charCount >= 200) score += 20;
+  else if (charCount >= 100) score += 15;
+  else if (charCount >= 50) score += 10;
+  else if (charCount >= 20) score += 5;
+
+  // 2. Clarity: sentence structure (periods, commas, semicolons indicate structured writing)
+  const sentenceCount = (text.match(/\./g) ?? []).length;
+  const avgSentenceLen = sentenceCount > 0 ? text.length / sentenceCount : text.length;
+  if (avgSentenceLen > 0 && avgSentenceLen < 200) score += 10; // readable sentences
+  else if (avgSentenceLen > 0) score += 5;
+
+  // 3. Specificity: proper nouns, numbers, entity mentions
+  const properNouns = (text.match(/\b[A-Z][a-z]{2,}\b/g) ?? []).length;
+  const numbers = (text.match(/\b\d+(?:\.\d+)?/g) ?? []).length;
+  score += Math.min(15, properNouns * 3 + numbers * 2);
+
+  // 4. Category/tag alignment — having tags shows deliberate categorization
+  const tagCount = (params.tags ?? []).length + (params.category ? 1 : 0);
+  score += Math.min(10, tagCount * 3);
+
+  // 5. Confidence alignment — higher confidence claims get slight quality credit
+  // (but quality is about presentation, not truth)
+  const confidenceBoost: Record<string, number> = {
+    verified_observation: 5,
+    strong_confidence: 4,
+    moderate_confidence: 3,
+    weak_suspicion: 1,
+  };
+  score += confidenceBoost[params.confidenceLevel] ?? 2;
+
+  // 6. Supporting context: mentions of sources, references, evidence
+  const supportKeywords = ["because", "according to", "source", "evidence", "observed", "measured", "reported", "data", "study", "analysis"];
+  const lowerText = text.toLowerCase();
+  const supportCount = supportKeywords.filter((k) => lowerText.includes(k)).length;
+  score += Math.min(10, supportCount * 3);
+
+  // 7. Internal consistency: absence of obvious contradictions
+  // (simplified check — look for negation patterns that might indicate contradictions)
+  const negationPairs = (text.match(/\bnot\b|\bnever\b|\bcannot\b|\bcan't\b|\bdon't\b/gi) ?? []).length;
+  if (negationPairs <= 2) score += 5; // few negations = more consistent tone
+
+  // 8. Non-duplicative content — penalize repeated phrases
+  const words = text.toLowerCase().split(/\s+/);
+  const wordFreq = new Map<string, number>();
+  for (const w of words) {
+    if (w.length > 3) wordFreq.set(w, (wordFreq.get(w) ?? 0) + 1);
+  }
+  const repeatedWords = [...wordFreq.values()].filter((c) => c > 3).length;
+  if (repeatedWords === 0) score += 5;
+  else score -= Math.min(10, repeatedWords * 2);
+
+  return Math.max(0, Math.min(100, score));
+}
+
+/** Simple hash for duplicate detection. */
+function contentHash(text: string): string {
+  const normalized = text.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  let hash = 0;
+  for (let i = 0; i < normalized.length; i++) {
+    const char = normalized.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return "ch_" + Math.abs(hash).toString(16).slice(0, 16);
+}
+
+/** Normalize text for near-duplicate comparison. */
+function normalizeForComparison(text: string): string {
+  return text.trim().toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ");
+}
+
+/**
+ * Check for duplicates: exact hash match or high Jaccard similarity.
+ * Returns the existing entry ID if a duplicate is found, null otherwise.
+ */
+function findDuplicate(
+  entries: { id: string; content: string; content_hash?: string | null }[],
+  newContent: string,
+  newHash: string,
+): string | null {
+  const normalizedNew = normalizeForComparison(newContent);
+  const newTokens = new Set(normalizedNew.split(" ").filter((w) => w.length > 2));
+
+  for (const entry of entries) {
+    // Exact hash match
+    if (entry.content_hash === newHash) return entry.id;
+
+    // Near-duplicate: Jaccard similarity > 0.8
+    const normalizedEntry = normalizeForComparison(entry.content);
+    const entryTokens = new Set(normalizedEntry.split(" ").filter((w) => w.length > 2));
+    if (newTokens.size === 0 || entryTokens.size === 0) continue;
+
+    let intersection = 0;
+    for (const t of newTokens) {
+      if (entryTokens.has(t)) intersection++;
+    }
+    const union = newTokens.size + entryTokens.size - intersection;
+    const jaccard = intersection / union;
+    if (jaccard > 0.8) return entry.id;
+  }
+
+  return null;
+}
+
+// ── Phase 5B: Feedback Submission Handler ─────────────────────────────────────
+
+/** Feedback type values allowed by the schema. */
+const FEEDBACK_TYPES = [
+  "helpful",
+  "accurate_to_experience",
+  "needs_context",
+  "outdated",
+  "incorrect",
+  "misleading",
+  "abusive_or_prohibited",
+] as const;
+
+/** Daily feedback limit to prevent gaming. */
+const MAX_DAILY_FEEDBACK = 20;
+const MAX_DAILY_DISPUTES = 5;
+
+async function handleSubmitFeedback(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  let payload: {
+    entryId: string;
+    feedbackType: string;
+    optionalReason?: string;
+    accessSource: string;
+    factionId?: string;
+    exchangePurchaseId?: string;
+  };
+  try {
+    payload = (await request.json()) as typeof payload;
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request." }, 400);
+  }
+
+  // Validate feedback type
+  if (!FEEDBACK_TYPES.includes(payload.feedbackType as (typeof FEEDBACK_TYPES)[number])) {
+    return jsonResponse({ ok: false, error: "Invalid feedback type." }, 400);
+  }
+
+  // Validate access source
+  if (!["faction", "exchange", "personal", "moderation"].includes(payload.accessSource)) {
+    return jsonResponse({ ok: false, error: "Invalid access source." }, 400);
+  }
+
+  // Authenticate
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) {
+    return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+  }
+
+  // 1. Fetch the entry to verify it exists and get owner
+  const { data: entry, error: entryErr } = await serviceClient
+    .from("open_intelligence")
+    .select("id, user_id, validation_status")
+    .eq("id", payload.entryId)
+    .maybeSingle();
+
+  if (entryErr || !entry) {
+    return jsonResponse({ ok: false, error: "Entry not found." }, 404);
+  }
+
+  const entryRow = entry as { id: string; user_id: string; validation_status: string };
+
+  // 2. Prevent self-feedback
+  if (entryRow.user_id === userId) {
+    return jsonResponse({ ok: false, error: "Cannot provide feedback on your own entry." }, 403);
+  }
+
+  // 3. Verify feedback eligibility — user must have legitimate access
+  const canAccess = await verifyFeedbackEligibility(
+    serviceClient,
+    userId,
+    entryRow.user_id,
+    payload.entryId,
+    payload.accessSource,
+    payload.factionId,
+    payload.exchangePurchaseId,
+  );
+
+  if (!canAccess) {
+    return jsonResponse({ ok: false, error: "You do not have authorized access to this intelligence." }, 403);
+  }
+
+  // 4. Anti-gaming: check daily rate limits
+  const rateLimitOk = await checkAndUpdateRateLimits(serviceClient, userId, "feedback");
+  if (!rateLimitOk) {
+    return jsonResponse({ ok: false, error: "Daily feedback limit reached. Please try again tomorrow." }, 429);
+  }
+
+  // 5. Check for anomaly patterns (basic)
+  const anomalyFlag = await detectFeedbackAnomaly(serviceClient, userId);
+
+  // 6. Upsert feedback (unique constraint on entry_id + reviewer_user_id)
+  const { error: insertErr } = await serviceClient
+    .from("open_intelligence_feedback")
+    .upsert({
+      entry_id: payload.entryId,
+      reviewer_user_id: userId,
+      feedback_type: payload.feedbackType,
+      optional_reason: payload.optionalReason ?? null,
+      access_source: payload.accessSource,
+      faction_id: payload.factionId ?? null,
+      exchange_purchase_id: payload.exchangePurchaseId ?? null,
+    }, { onConflict: "entry_id,reviewer_user_id" });
+
+  if (insertErr) {
+    console.warn("[feedback] insert failed", insertErr.message);
+    return jsonResponse({ ok: false, error: "Failed to submit feedback." }, 500);
+  }
+
+  // 7. Flag anomaly if detected (but don't reject — flag for review)
+  if (anomalyFlag) {
+    await serviceClient
+      .from("feedback_rate_limits")
+      .update({ anomaly_flag: true })
+      .eq("user_id", userId)
+      .eq("date", new Date().toISOString().slice(0, 10));
+    console.warn("[feedback] anomaly flag set for user", { userId: userId.slice(0, 8) });
+  }
+
+  // 8. If feedback is 'outdated', trigger staleness evaluation
+  if (payload.feedbackType === "outdated") {
+    try {
+      await serviceClient.rpc("evaluate_entry_staleness", { p_entry_id: payload.entryId });
+    } catch (e) {
+      // Non-fatal
+      console.warn("[feedback] staleness eval failed", e instanceof Error ? e.message : "unknown");
+    }
+  }
+
+  // 9. Recalculate the contributor's reputation (best-effort)
+  try {
+    await serviceClient.rpc("recalculate_contributor_reputation", { p_user_id: entryRow.user_id });
+  } catch (e) {
+    console.warn("[feedback] reputation recalc failed", e instanceof Error ? e.message : "unknown");
+  }
+
+  return jsonResponse({ ok: true });
+}
+
+/**
+ * Verify that the reviewer had legitimate access to the intelligence entry.
+ * Access is granted through: faction membership, active exchange sync, or moderation.
+ */
+async function verifyFeedbackEligibility(
+  serviceClient: SupabaseClient,
+  reviewerUserId: string,
+  entryOwnerId: string,
+  entryId: string,
+  accessSource: string,
+  factionId?: string,
+  exchangePurchaseId?: string,
+): Promise<boolean> {
+  if (accessSource === "personal") {
+    // Personal entries — only the owner should be able to self-review, but we blocked that above
+    // This access source is for moderation or special cases
+    return false;
+  }
+
+  if (accessSource === "faction") {
+    if (!factionId) return false;
+    // Check: reviewer is an active member of the faction AND entry is shared with that faction
+    const { data: membership } = await serviceClient
+      .from("faction_members")
+      .select("status")
+      .eq("faction_id", factionId)
+      .eq("user_id", reviewerUserId)
+      .maybeSingle();
+
+    if (!membership || (membership as { status: string }).status !== "active") return false;
+
+    const { data: shared } = await serviceClient
+      .from("faction_shared_intelligence")
+      .select("id")
+      .eq("faction_id", factionId)
+      .eq("oi_entry_id", entryId)
+      .maybeSingle();
+
+    return !!shared;
+  }
+
+  if (accessSource === "exchange") {
+    // Check: reviewer has an active sync purchase for the vendor's EAGOH
+    const serverNow = new Date().toISOString();
+    const { data: purchase } = await serviceClient
+      .from("marketplace_sync_purchases")
+      .select("id, active, expires_at")
+      .eq("buyer_id", reviewerUserId)
+      .eq("active", true)
+      .gt("expires_at", serverNow)
+      .maybeSingle();
+
+    return !!purchase;
+  }
+
+  if (accessSource === "moderation") {
+    // Moderation access — would need admin check; for now, deny from client
+    return false;
+  }
+
+  return false;
+}
+
+/**
+ * Check and update daily rate limits. Returns false if limit exceeded.
+ */
+async function checkAndUpdateRateLimits(
+  serviceClient: SupabaseClient,
+  userId: string,
+  type: "feedback" | "dispute",
+): Promise<boolean> {
+  const today = new Date().toISOString().slice(0, 10);
+  const maxDaily = type === "feedback" ? MAX_DAILY_FEEDBACK : MAX_DAILY_DISPUTES;
+
+  const { data: existing } = await serviceClient
+    .from("feedback_rate_limits")
+    .select("feedback_count, dispute_count")
+    .eq("user_id", userId)
+    .eq("date", today)
+    .maybeSingle();
+
+  if (existing) {
+    const row = existing as { feedback_count: number; dispute_count: number };
+    const currentCount = type === "feedback" ? row.feedback_count : row.dispute_count;
+    if (currentCount >= maxDaily) return false;
+
+    await serviceClient
+      .from("feedback_rate_limits")
+      .update({
+        feedback_count: type === "feedback" ? row.feedback_count + 1 : row.feedback_count,
+        dispute_count: type === "dispute" ? row.dispute_count + 1 : row.dispute_count,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", userId)
+      .eq("date", today);
+  } else {
+    await serviceClient
+      .from("feedback_rate_limits")
+      .insert({
+        user_id: userId,
+        date: today,
+        feedback_count: type === "feedback" ? 1 : 0,
+        dispute_count: type === "dispute" ? 1 : 0,
+      });
+  }
+
+  return true;
+}
+
+/**
+ * Basic anomaly detection for feedback gaming.
+ * Flags: rapid bursts, targeting same user repeatedly, reciprocal patterns.
+ */
+async function detectFeedbackAnomaly(
+  serviceClient: SupabaseClient,
+  userId: string,
+): Promise<boolean> {
+  // Check if user submitted >10 feedback in the last hour (burst)
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { data: recentFeedback } = await serviceClient
+    .from("open_intelligence_feedback")
+    .select("id")
+    .eq("reviewer_user_id", userId)
+    .gte("created_at", oneHourAgo);
+
+  if (recentFeedback && recentFeedback.length > 10) return true;
+
+  // Check if user is targeting the same contributor repeatedly (>5 feedback to one person today)
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: todayFeedback } = await serviceClient
+    .from("open_intelligence_feedback")
+    .select("entry_id")
+    .eq("reviewer_user_id", userId)
+    .gte("created_at", today + "T00:00:00Z");
+
+  if (todayFeedback && todayFeedback.length > 0) {
+    // Get entry owners
+    const entryIds = todayFeedback.map((f) => (f as { entry_id: string }).entry_id);
+    const { data: entries } = await serviceClient
+      .from("open_intelligence")
+      .select("user_id")
+      .in("id", entryIds);
+
+    if (entries) {
+      const ownerCount = new Map<string, number>();
+      for (const e of entries as Array<{ user_id: string }>) {
+        ownerCount.set(e.user_id, (ownerCount.get(e.user_id) ?? 0) + 1);
+      }
+      for (const count of ownerCount.values()) {
+        if (count > 5) return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+// ── Phase 5B: Dispute Submission Handler ──────────────────────────────────────
+
+async function handleSubmitDispute(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  let payload: {
+    entryId: string;
+    reasonCategory: string;
+    explanation: string;
+    supportingSourceRef?: string;
+    factionId?: string;
+    exchangePurchaseId?: string;
+  };
+  try {
+    payload = (await request.json()) as typeof payload;
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request." }, 400);
+  }
+
+  const validCategories = [
+    "factually_incorrect", "misleading", "outdated_information",
+    "spam_or_low_effort", "inappropriate_content", "copyright_violation", "other",
+  ];
+  if (!validCategories.includes(payload.reasonCategory)) {
+    return jsonResponse({ ok: false, error: "Invalid reason category." }, 400);
+  }
+
+  if (!payload.explanation?.trim() || payload.explanation.trim().length < 10) {
+    return jsonResponse({ ok: false, error: "Explanation must be at least 10 characters." }, 400);
+  }
+
+  // Authenticate
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) {
+    return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+  }
+
+  // Fetch entry
+  const { data: entry, error: entryErr } = await serviceClient
+    .from("open_intelligence")
+    .select("id, user_id")
+    .eq("id", payload.entryId)
+    .maybeSingle();
+
+  if (entryErr || !entry) {
+    return jsonResponse({ ok: false, error: "Entry not found." }, 404);
+  }
+
+  const entryRow = entry as { id: string; user_id: string };
+
+  // Prevent self-dispute
+  if (entryRow.user_id === userId) {
+    return jsonResponse({ ok: false, error: "Cannot dispute your own entry." }, 403);
+  }
+
+  // Verify access eligibility (same as feedback)
+  const accessSource = payload.factionId ? "faction" : payload.exchangePurchaseId ? "exchange" : "faction";
+  const canAccess = await verifyFeedbackEligibility(
+    serviceClient, userId, entryRow.user_id, payload.entryId,
+    accessSource, payload.factionId, payload.exchangePurchaseId,
+  );
+  if (!canAccess) {
+    return jsonResponse({ ok: false, error: "You do not have authorized access to this intelligence." }, 403);
+  }
+
+  // Rate limit
+  const rateLimitOk = await checkAndUpdateRateLimits(serviceClient, userId, "dispute");
+  if (!rateLimitOk) {
+    return jsonResponse({ ok: false, error: "Daily dispute limit reached." }, 429);
+  }
+
+  // Insert dispute (unique constraint prevents duplicate disputes by same user)
+  const { error: insertErr } = await serviceClient
+    .from("open_intelligence_disputes")
+    .insert({
+      entry_id: payload.entryId,
+      disputing_user_id: userId,
+      reason_category: payload.reasonCategory,
+      explanation: payload.explanation.trim(),
+      supporting_source_ref: payload.supportingSourceRef ?? null,
+      status: "pending",
+    });
+
+  if (insertErr) {
+    if (insertErr.message.includes("duplicate") || insertErr.message.includes("unique")) {
+      return jsonResponse({ ok: false, error: "You have already disputed this entry." }, 409);
+    }
+    console.warn("[dispute] insert failed", insertErr.message);
+    return jsonResponse({ ok: false, error: "Failed to submit dispute." }, 500);
+  }
+
+  // Update entry's active dispute count and set validation_status to 'disputed' if pending
+  await serviceClient
+    .from("open_intelligence")
+    .update({
+      active_dispute_count: (await serviceClient
+        .from("open_intelligence_disputes")
+        .select("id", { count: "exact", head: true })
+        .eq("entry_id", payload.entryId)
+        .in("status", ["pending", "reviewing", "upheld"])
+      ).count ?? 1,
+    })
+    .eq("id", payload.entryId);
+
+  // If entry was pending_review, mark it as disputed
+  await serviceClient
+    .from("open_intelligence")
+    .update({ validation_status: "disputed" })
+    .eq("id", payload.entryId)
+    .eq("validation_status", "pending_review");
+
+  // Recalculate contributor reputation
+  try {
+    await serviceClient.rpc("recalculate_contributor_reputation", { p_user_id: entryRow.user_id });
+  } catch (e) {
+    console.warn("[dispute] reputation recalc failed", e instanceof Error ? e.message : "unknown");
+  }
+
+  return jsonResponse({ ok: true });
+}
+
+// ── Phase 5B: Reputation Fetch Handler ───────────────────────────────────────
+
+async function handleGetReputation(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const url = new URL(request.url);
+  const targetUserId = url.searchParams.get("userId") ?? userId;
+
+  // Reputation is publicly readable (public_select RLS policy)
+  const { data, error } = await supabase
+    .from("intelligence_contributor_reputation")
+    .select("*")
+    .eq("user_id", targetUserId)
+    .maybeSingle();
+
+  if (error) {
+    return jsonResponse({ ok: false, error: "Failed to fetch reputation." }, 500);
+  }
+
+  if (!data) {
+    // Return neutral defaults for new users
+    return jsonResponse({
+      ok: true,
+      reputation: {
+        user_id: targetUserId,
+        overall_score: 50,
+        quality_component: 50,
+        usefulness_component: 50,
+        validation_component: 50,
+        reliability_component: 50,
+        dispute_penalty: 0,
+        total_entries: 0,
+        entries_used: 0,
+        supported_entries: 0,
+        disputed_entries: 0,
+        rejected_entries: 0,
+        withdrawn_entries: 0,
+      },
+    });
+  }
+
+  return jsonResponse({ ok: true, reputation: data });
+}
+
+// ── Phase 5B: Quality Evaluation Handler ─────────────────────────────────────
+
+async function handleEvaluateQuality(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  let payload: { entryId: string };
+  try {
+    payload = (await request.json()) as typeof payload;
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request." }, 400);
+  }
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) {
+    return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+  }
+
+  // Fetch entry — only the owner can request quality evaluation
+  const { data: entry, error } = await serviceClient
+    .from("open_intelligence")
+    .select("id, user_id, content, selected_category, selected_subtags, custom_tags, confidence_level, quality_score, validation_status, content_hash, duplicate_flag")
+    .eq("id", payload.entryId)
+    .maybeSingle();
+
+  if (error || !entry) {
+    return jsonResponse({ ok: false, error: "Entry not found." }, 404);
+  }
+
+  const entryRow = entry as {
+    id: string; user_id: string; content: string; selected_category: string | null;
+    selected_subtags: string[] | null; custom_tags: string[] | null;
+    confidence_level: string; quality_score: number; validation_status: string;
+    content_hash: string | null; duplicate_flag: boolean;
+  };
+
+  if (entryRow.user_id !== userId) {
+    return jsonResponse({ ok: false, error: "Only the entry owner can request quality evaluation." }, 403);
+  }
+
+  // Evaluate quality
+  const newQuality = evaluateOpenIntelligenceQuality({
+    content: entryRow.content,
+    category: entryRow.selected_category,
+    tags: [...(entryRow.selected_subtags ?? []), ...(entryRow.custom_tags ?? [])],
+    confidenceLevel: entryRow.confidence_level,
+  });
+
+  // Check for duplicates among the user's other entries
+  const { data: otherEntries } = await serviceClient
+    .from("open_intelligence")
+    .select("id, content, content_hash")
+    .eq("user_id", userId)
+    .neq("id", payload.entryId)
+    .limit(100);
+
+  const newHash = contentHash(entryRow.content);
+  const duplicateOf = otherEntries
+    ? findDuplicate(otherEntries as Array<{ id: string; content: string; content_hash: string | null }>, entryRow.content, newHash)
+    : null;
+
+  // Update entry with new quality score, content hash, and duplicate flag
+  await serviceClient
+    .from("open_intelligence")
+    .update({
+      quality_score: newQuality,
+      content_hash: newHash,
+      duplicate_flag: duplicateOf !== null,
+      duplicate_of: duplicateOf,
+    })
+    .eq("id", payload.entryId);
+
+  return jsonResponse({
+    ok: true,
+    qualityScore: newQuality,
+    duplicateDetected: duplicateOf !== null,
+    duplicateOf: duplicateOf,
+  });
+}
+
 // ── Main Handler ─────────────────────────────────────────────────────────────
 
 async function handleAnalystChat(request: Request, env: Env): Promise<Response> {
@@ -1937,7 +2868,9 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
     const tokenBudget = sessionOITokenBudget(sessionType);
 
     if (rawEntries.length > 0) {
-      const ranked = rankEntries(rawEntries, prompt, Math.min(limit, rawEntries.length));
+      // Phase 5B: Fetch contributor reputations for ranking (personal entries are all owned by the same user)
+      const personalRepMap = await fetchReputationsForUsers(supabase, [userId]);
+      const ranked = rankEntries(rawEntries, prompt, Math.min(limit, rawEntries.length), personalRepMap);
       rankedPersonalEntries = ranked;
       const formatted = formatOIContext(ranked, tokenBudget);
       oiContext = formatted.text;
@@ -2366,6 +3299,26 @@ export default {
 
     if (url.pathname === "/analyst/chat" && request.method === "POST") {
       return handleAnalystChat(request, env);
+    }
+
+    // Phase 5B: Feedback submission
+    if (url.pathname === "/feedback/submit" && request.method === "POST") {
+      return handleSubmitFeedback(request, env);
+    }
+
+    // Phase 5B: Dispute submission
+    if (url.pathname === "/dispute/submit" && request.method === "POST") {
+      return handleSubmitDispute(request, env);
+    }
+
+    // Phase 5B: Reputation lookup
+    if (url.pathname === "/reputation" && request.method === "GET") {
+      return handleGetReputation(request, env);
+    }
+
+    // Phase 5B: Server-side quality evaluation
+    if (url.pathname === "/quality/evaluate" && request.method === "POST") {
+      return handleEvaluateQuality(request, env);
     }
 
     return jsonResponse({ ok: false, error: "Not found" }, 404);

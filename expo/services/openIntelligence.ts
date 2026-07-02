@@ -11,7 +11,15 @@ export type EntryType = "quick_observation" | "basic_deep_entry" | "advanced_dee
 
 export type ConfidenceLevel = "weak_suspicion" | "moderate_confidence" | "strong_confidence" | "verified_observation";
 
-export type ValidationStatus = "pending_review" | "validated" | "flagged";
+export type ValidationStatus =
+  | "pending_review"
+  | "validated" // legacy — migrated to community_supported server-side
+  | "community_supported"
+  | "externally_supported"
+  | "disputed"
+  | "rejected"
+  | "withdrawn"
+  | "flagged"; // legacy — migrated to disputed server-side
 
 export type InfluenceScore = "low" | "medium" | "high";
 
@@ -129,6 +137,14 @@ export type OpenIntelligenceRow = {
   selected_category?: string | null;
   selected_subtags?: string[] | null;
   custom_tags?: string[] | null;
+  // Phase 5B fields
+  exchange_share_enabled?: boolean;
+  staleness_score?: number;
+  outdated_flag?: boolean;
+  content_hash?: string | null;
+  duplicate_flag?: boolean;
+  active_dispute_count?: number;
+  version_number?: number;
   created_at: string;
   updated_at: string;
 };

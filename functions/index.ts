@@ -1,7 +1,8 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker (Phase 5B corrected)
+ * EAGOH Analyst Chat — Cloudflare Worker (Phase 5B sync)
  *
  * Secure server-side intelligence grounding system.
+ * Column names synchronized with live Supabase schema.
  *
  * Every analyst session (Quick Check, Quick Analysis, Standard Analysis,
  * Oracle Deep Dive, Premium Event) routes through this worker.
@@ -2458,7 +2459,7 @@ async function verifyFeedbackEligibility(
     // 1. Fetch the specific purchase and verify it belongs to the reviewer
     const { data: purchase } = await serviceClient
       .from("marketplace_sync_purchases")
-      .select("id, buyer_id, vendor_id, eagoh_id, active, starts_at, expires_at")
+      .select("id, buyer_id, vendor_id, eagoh_id, active, started_at, expires_at")
       .eq("id", exchangePurchaseId)
       .maybeSingle();
 
@@ -2466,7 +2467,7 @@ async function verifyFeedbackEligibility(
 
     const purchaseRow = purchase as {
       id: string; buyer_id: string; vendor_id: string; eagoh_id: string;
-      active: boolean; starts_at: string; expires_at: string;
+      active: boolean; started_at: string; expires_at: string;
     };
 
     // 2. Purchase buyer must equal the authenticated reviewer
@@ -2477,9 +2478,9 @@ async function verifyFeedbackEligibility(
 
     // 4. Purchase must have started and not expired (server time)
     const serverNow = new Date();
-    const startsAt = new Date(purchaseRow.starts_at);
+    const startedAt = new Date(purchaseRow.started_at);
     const expiresAt = new Date(purchaseRow.expires_at);
-    if (serverNow < startsAt || serverNow >= expiresAt) return false;
+    if (serverNow < startedAt || serverNow >= expiresAt) return false;
 
     // 5. Purchase vendor EAGOH must equal the entry's EAGOH
     if (purchaseRow.eagoh_id !== entryEagohId) return false;
@@ -2490,17 +2491,16 @@ async function verifyFeedbackEligibility(
     // 7. Verify the listing still references the same vendor and EAGOH
     const { data: listing } = await serviceClient
       .from("marketplace_listings")
-      .select("vendor_id, eagoh_id, is_active, is_deleted")
+      .select("vendor_id, eagoh_id, active")
       .eq("vendor_id", purchaseRow.vendor_id)
       .eq("eagoh_id", purchaseRow.eagoh_id)
       .maybeSingle();
 
     if (listing) {
       const listingRow = listing as {
-        vendor_id: string; eagoh_id: string;
-        is_active: boolean; is_deleted: boolean;
+        vendor_id: string; eagoh_id: string; active: boolean;
       };
-      if (!listingRow.is_active || listingRow.is_deleted) return false;
+      if (!listingRow.active) return false;
       if (listingRow.vendor_id !== purchaseRow.vendor_id) return false;
       if (listingRow.eagoh_id !== purchaseRow.eagoh_id) return false;
     }
@@ -3014,7 +3014,7 @@ async function handleUpdateOIEntry(request: Request, env: Env): Promise<Response
       entry_id: payload.entryId,
       version_number: currentVersion,
       previous_content: entryRow.content,
-      previous_tags: JSON.stringify(entryRow.selected_subtags ?? []),
+      previous_tags: entryRow.selected_subtags ?? [],
       previous_category: entryRow.selected_category,
       previous_confidence: entryRow.confidence_level,
       previous_validation_status: entryRow.validation_status,

@@ -531,33 +531,75 @@ create index if not exists fsi_user_idx on public.faction_shared_intelligence(us
 
 alter table public.faction_shared_intelligence enable row level security;
 
-drop policy if exists "fsi_select_all" on public.faction_shared_intelligence;
-drop policy if exists "fsi_self_insert" on public.faction_shared_intelligence;
-drop policy if exists "fsi_commander_delete" on public.faction_shared_intelligence;
-drop policy if exists "fsi_select_faction_members" on public.faction_shared_intelligence;
-drop policy if exists "fsi_self_insert" on public.faction_shared_intelligence;
-drop policy if exists "fsi_commander_delete" on public.faction_shared_intelligence;
+-- Idempotent RLS policies for faction_shared_intelligence
+do $$
+declare
+  already_exists boolean;
+begin
+  select exists (
+    select 1 from pg_catalog.pg_policies
+    where schemaname = 'public'
+      and tablename = 'faction_shared_intelligence'
+      and policyname = 'fsi_select_faction_members'
+  ) into already_exists;
+  if not already_exists then
+    execute $policy$
+      create policy "fsi_select_faction_members" on public.faction_shared_intelligence
+        for select using (
+          exists (
+            select 1 from public.faction_members fm
+            where fm.faction_id = faction_id
+              and fm.user_id = auth.uid()
+              and fm.status = 'active'
+          )
+        )
+    $policy$;
+  end if;
+end;
+$$;
 
-create policy "fsi_select_faction_members" on public.faction_shared_intelligence
-  for select using (
-    exists (
-      select 1 from public.faction_members fm
-      where fm.faction_id = faction_id
-        and fm.user_id = auth.uid()
-        and fm.status = 'active'
-    )
-  );
+do $$
+declare
+  already_exists boolean;
+begin
+  select exists (
+    select 1 from pg_catalog.pg_policies
+    where schemaname = 'public'
+      and tablename = 'faction_shared_intelligence'
+      and policyname = 'fsi_self_insert'
+  ) into already_exists;
+  if not already_exists then
+    execute $policy$
+      create policy "fsi_self_insert" on public.faction_shared_intelligence
+        for insert with check (auth.uid() = user_id)
+    $policy$;
+  end if;
+end;
+$$;
 
-create policy "fsi_self_insert" on public.faction_shared_intelligence
-  for insert with check (auth.uid() = user_id);
-
-create policy "fsi_commander_delete" on public.faction_shared_intelligence
-  for delete using (
-    exists (
-      select 1 from public.factions f
-      where f.id = faction_id and f.commander_id = auth.uid()
-    )
-  );
+do $$
+declare
+  already_exists boolean;
+begin
+  select exists (
+    select 1 from pg_catalog.pg_policies
+    where schemaname = 'public'
+      and tablename = 'faction_shared_intelligence'
+      and policyname = 'fsi_commander_delete'
+  ) into already_exists;
+  if not already_exists then
+    execute $policy$
+      create policy "fsi_commander_delete" on public.faction_shared_intelligence
+        for delete using (
+          exists (
+            select 1 from public.factions f
+            where f.id = faction_id and f.commander_id = auth.uid()
+          )
+        )
+    $policy$;
+  end if;
+end;
+$$;
 
 -- =============================================================================
 -- FACTION SLOT PURCHASES (expansion history)

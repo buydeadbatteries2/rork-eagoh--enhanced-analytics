@@ -763,5 +763,212 @@ export async function submitDispute(params: {
   }
 }
 
+// ── Phase 6B: Entry Management (secure worker only) ────────────────────
+
+export type EntryActionResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+/** Withdraw an entry through the secure worker. Sets validation_status to withdrawn. */
+export async function withdrawEntry(entryId: string): Promise<EntryActionResult> {
+  if (!FUNCTIONS_BASE_URL) return { ok: false, error: "Backend not configured." };
+  const token = await getWorkerAuth();
+  if (!token) return { ok: false, error: "Not authenticated." };
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE_URL}/oi/withdraw`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ entryId }),
+    });
+    const data = (await res.json()) as { ok: boolean; error?: string };
+    return data.ok ? { ok: true } : { ok: false, error: data.error ?? "Failed." };
+  } catch {
+    return { ok: false, error: "Network error. Try again." };
+  }
+}
+
+/** Restore a withdrawn entry through the secure worker. Sets validation_status to pending_review. */
+export async function restoreEntry(entryId: string): Promise<EntryActionResult> {
+  if (!FUNCTIONS_BASE_URL) return { ok: false, error: "Backend not configured." };
+  const token = await getWorkerAuth();
+  if (!token) return { ok: false, error: "Not authenticated." };
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE_URL}/oi/restore`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ entryId }),
+    });
+    const data = (await res.json()) as { ok: boolean; error?: string };
+    return data.ok ? { ok: true } : { ok: false, error: data.error ?? "Failed." };
+  } catch {
+    return { ok: false, error: "Network error. Try again." };
+  }
+}
+
+/** Toggle faction sharing for an entry through the secure worker. */
+export async function toggleFactionShare(
+  entryId: string,
+  factionId: string,
+  enabled: boolean,
+): Promise<EntryActionResult> {
+  if (!FUNCTIONS_BASE_URL) return { ok: false, error: "Backend not configured." };
+  const token = await getWorkerAuth();
+  if (!token) return { ok: false, error: "Not authenticated." };
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE_URL}/oi/faction-share`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ entryId, factionId, enabled }),
+    });
+    const data = (await res.json()) as { ok: boolean; error?: string };
+    return data.ok ? { ok: true } : { ok: false, error: data.error ?? "Failed." };
+  } catch {
+    return { ok: false, error: "Network error. Try again." };
+  }
+}
+
+// ── Phase 6B: Version History ────────────────────────────────────────────
+
+export type VersionHistoryEntry = {
+  id: string;
+  entry_id: string;
+  version_number: number;
+  previous_content: string | null;
+  previous_category: string | null;
+  previous_subtags: string[] | null;
+  previous_custom_tags: string[] | null;
+  previous_confidence_level: string | null;
+  previous_validation_status: string | null;
+  previous_quality_score: number | null;
+  previous_influence_score: number | null;
+  change_type: string;
+  changed_by: string;
+  changed_at: string;
+};
+
+export type VersionHistoryResult =
+  | { ok: true; versions: VersionHistoryEntry[] }
+  | { ok: false; error: string };
+
+/** Fetch version history for an entry through the secure worker. Owner-only. */
+export async function fetchVersionHistory(entryId: string): Promise<VersionHistoryResult> {
+  if (!FUNCTIONS_BASE_URL) return { ok: false, error: "Backend not configured." };
+  const token = await getWorkerAuth();
+  if (!token) return { ok: false, error: "Not authenticated." };
+  try {
+    const res = await fetch(
+      `${FUNCTIONS_BASE_URL}/oi/versions?entryId=${encodeURIComponent(entryId)}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const data = (await res.json()) as { ok: boolean; error?: string; versions?: VersionHistoryEntry[] };
+    if (data.ok && data.versions) {
+      return { ok: true, versions: data.versions };
+    }
+    return { ok: false, error: data.error ?? "Failed." };
+  } catch {
+    return { ok: false, error: "Network error. Try again." };
+  }
+}
+
+/** Change type display labels. */
+export const CHANGE_TYPE_LABELS: Record<string, string> = {
+  create: "Created",
+  edit: "Edited",
+  moderation: "Moderated",
+  withdrawal: "Withdrawn",
+  restoration: "Restored",
+  status_change: "Status Changed",
+};
+
+// ── Phase 6B: Moderation Queue (admin only) ──────────────────────────────
+
+export type ModerationDispute = {
+  id: string;
+  reasonCategory: string;
+  explanation: string;
+  supportingUrl: string | null;
+  status: string;
+  createdAt: string;
+};
+
+export type ModerationQueueItem = {
+  entryId: string;
+  contentPreview: string;
+  validationStatus: string;
+  reportCount: number;
+  contributorReputation: number | null;
+  disputes: ModerationDispute[];
+};
+
+export type ModerationQueueResult =
+  | { ok: true; queue: ModerationQueueItem[] }
+  | { ok: false; error: string };
+
+/** Fetch the moderation queue (admin only). */
+export async function fetchModerationQueue(): Promise<ModerationQueueResult> {
+  if (!FUNCTIONS_BASE_URL) return { ok: false, error: "Backend not configured." };
+  const token = await getWorkerAuth();
+  if (!token) return { ok: false, error: "Not authenticated." };
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE_URL}/moderation/queue`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = (await res.json()) as { ok: boolean; error?: string; queue?: ModerationQueueItem[] };
+    if (data.ok && data.queue) {
+      return { ok: true, queue: data.queue };
+    }
+    return { ok: false, error: data.error ?? "Failed." };
+  } catch {
+    return { ok: false, error: "Network error. Try again." };
+  }
+}
+
+export type ModerationAction =
+  | "dismiss_dispute"
+  | "mark_community_supported"
+  | "mark_externally_supported"
+  | "mark_disputed"
+  | "reject_entry";
+
+export const MODERATION_ACTION_LABELS: Record<ModerationAction, string> = {
+  dismiss_dispute: "Dismiss Dispute",
+  mark_community_supported: "Mark Community Supported",
+  mark_externally_supported: "Mark Externally Supported",
+  mark_disputed: "Mark Disputed",
+  reject_entry: "Reject Entry",
+};
+
+/** Perform a moderation action (admin only). */
+export async function performModerationAction(
+  entryId: string,
+  action: ModerationAction,
+  disputeId?: string,
+): Promise<EntryActionResult> {
+  if (!FUNCTIONS_BASE_URL) return { ok: false, error: "Backend not configured." };
+  const token = await getWorkerAuth();
+  if (!token) return { ok: false, error: "Not authenticated." };
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE_URL}/moderation/action`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ entryId, action, disputeId: disputeId ?? undefined }),
+    });
+    const data = (await res.json()) as { ok: boolean; error?: string };
+    return data.ok ? { ok: true } : { ok: false, error: data.error ?? "Failed." };
+  } catch {
+    return { ok: false, error: "Network error. Try again." };
+  }
+}
+
+/** Check if the current user has admin moderation access. */
+export function hasModerationAccess(profile: { admin_tier_override: string | null; admin_tier_expires_at: string | null } | null | undefined): boolean {
+  if (!profile || !profile.admin_tier_override) return false;
+  if (profile.admin_tier_expires_at) {
+    const expires = new Date(profile.admin_tier_expires_at).getTime();
+    if (Date.now() > expires) return false;
+  }
+  return true;
+}
+
 /** Re-export helpers */
 export { influenceLabel };

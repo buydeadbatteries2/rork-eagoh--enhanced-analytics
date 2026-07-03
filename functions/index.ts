@@ -1,5 +1,5 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker (Phase 5B schema sync — verified)
+ * EAGOH Analyst Chat — Cloudflare Worker (Phase 6B — entry management & moderation)
  *
  * Secure server-side intelligence grounding system.
  * Column names synchronized with live Supabase schema.
@@ -3149,6 +3149,643 @@ async function handleUpdateOIEntry(request: Request, env: Env): Promise<Response
   });
 }
 
+// ── Phase 6B: Withdraw Entry ────────────────────────────────────────────────
+
+async function handleWithdrawOIEntry(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  let payload: { entryId: string };
+  try {
+    payload = (await request.json()) as { entryId: string };
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request." }, 400);
+  }
+  if (!payload.entryId) {
+    return jsonResponse({ ok: false, error: "Entry ID required." }, 400);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+
+  // Verify ownership
+  const { data: entry, error: entryErr } = await serviceClient
+    .from("open_intelligence")
+    .select("id, user_id, content, confidence_level, selected_category, selected_subtags, custom_tags, exchange_share_enabled, validation_status, version_number, quality_score, influence_score")
+    .eq("id", payload.entryId)
+    .maybeSingle();
+
+  if (entryErr || !entry) {
+    return jsonResponse({ ok: false, error: "Entry not found." }, 404);
+  }
+
+  const entryRow = entry as {
+    id: string; user_id: string; content: string; confidence_level: string;
+    selected_category: string | null; selected_subtags: string[] | null;
+    custom_tags: string[] | null; exchange_share_enabled: boolean;
+    validation_status: string; version_number: number;
+    quality_score: number; influence_score: number;
+  };
+
+  if (entryRow.user_id !== userId) {
+    return jsonResponse({ ok: false, error: "Only the entry owner can withdraw this entry." }, 403);
+  }
+
+  // Already withdrawn or rejected — cannot withdraw again
+  if (entryRow.validation_status === "withdrawn") {
+    return jsonResponse({ ok: false, error: "Entry is already withdrawn." }, 409);
+  }
+  if (entryRow.validation_status === "rejected") {
+    return jsonResponse({ ok: false, error: "Cannot withdraw a rejected entry." }, 403);
+  }
+
+  // Save version history before withdrawing
+  const currentVersion = entryRow.version_number ?? 1;
+  await serviceClient
+    .from("open_intelligence_versions")
+    .insert({
+      entry_id: payload.entryId,
+      version_number: currentVersion,
+      previous_content: entryRow.content,
+      previous_category: entryRow.selected_category,
+      previous_subtags: entryRow.selected_subtags ?? [],
+      previous_custom_tags: entryRow.custom_tags ?? [],
+      previous_confidence_level: entryRow.confidence_level,
+      previous_validation_status: entryRow.validation_status,
+      previous_quality_score: entryRow.quality_score,
+      previous_influence_score: entryRow.influence_score,
+      change_type: "withdrawal",
+      changed_by: userId,
+    });
+
+  // Set status to withdrawn, disable all sharing
+  await serviceClient
+    .from("open_intelligence")
+    .update({
+      validation_status: "withdrawn",
+      exchange_share_enabled: false,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", payload.entryId);
+
+  // Remove all faction sharing links for this entry
+  await serviceClient
+    .from("faction_shared_intelligence")
+    .delete()
+    .eq("oi_entry_id", payload.entryId);
+
+  // Recalculate contributor reputation
+  try {
+    await serviceClient.rpc("recalculate_contributor_reputation", { p_user_id: userId });
+  } catch (e) {
+    console.warn("[oi-withdraw] reputation recalc failed", e instanceof Error ? e.message : "unknown");
+  }
+
+  return jsonResponse({ ok: true });
+}
+
+// ── Phase 6B: Restore Entry ─────────────────────────────────────────────────
+
+async function handleRestoreOIEntry(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  let payload: { entryId: string };
+  try {
+    payload = (await request.json()) as { entryId: string };
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request." }, 400);
+  }
+  if (!payload.entryId) {
+    return jsonResponse({ ok: false, error: "Entry ID required." }, 400);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+
+  // Verify ownership
+  const { data: entry, error: entryErr } = await serviceClient
+    .from("open_intelligence")
+    .select("id, user_id, content, confidence_level, selected_category, selected_subtags, custom_tags, validation_status, version_number, quality_score, influence_score")
+    .eq("id", payload.entryId)
+    .maybeSingle();
+
+  if (entryErr || !entry) {
+    return jsonResponse({ ok: false, error: "Entry not found." }, 404);
+  }
+
+  const entryRow = entry as {
+    id: string; user_id: string; content: string; confidence_level: string;
+    selected_category: string | null; selected_subtags: string[] | null;
+    custom_tags: string[] | null; validation_status: string;
+    version_number: number; quality_score: number; influence_score: number;
+  };
+
+  if (entryRow.user_id !== userId) {
+    return jsonResponse({ ok: false, error: "Only the entry owner can restore this entry." }, 403);
+  }
+
+  if (entryRow.validation_status !== "withdrawn") {
+    return jsonResponse({ ok: false, error: "Only withdrawn entries can be restored." }, 409);
+  }
+
+  // Save version history before restoring
+  const currentVersion = entryRow.version_number ?? 1;
+  await serviceClient
+    .from("open_intelligence_versions")
+    .insert({
+      entry_id: payload.entryId,
+      version_number: currentVersion,
+      previous_content: entryRow.content,
+      previous_category: entryRow.selected_category,
+      previous_subtags: entryRow.selected_subtags ?? [],
+      previous_custom_tags: entryRow.custom_tags ?? [],
+      previous_confidence_level: entryRow.confidence_level,
+      previous_validation_status: entryRow.validation_status,
+      previous_quality_score: entryRow.quality_score,
+      previous_influence_score: entryRow.influence_score,
+      change_type: "restoration",
+      changed_by: userId,
+    });
+
+  // Restore to pending_review — do NOT re-enable any sharing
+  await serviceClient
+    .from("open_intelligence")
+    .update({
+      validation_status: "pending_review",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", payload.entryId);
+
+  // Recalculate contributor reputation
+  try {
+    await serviceClient.rpc("recalculate_contributor_reputation", { p_user_id: userId });
+  } catch (e) {
+    console.warn("[oi-restore] reputation recalc failed", e instanceof Error ? e.message : "unknown");
+  }
+
+  return jsonResponse({ ok: true });
+}
+
+// ── Phase 6B: Toggle Faction Sharing ────────────────────────────────────────
+
+async function handleToggleFactionShare(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  let payload: { entryId: string; factionId: string; enabled: boolean };
+  try {
+    payload = (await request.json()) as { entryId: string; factionId: string; enabled: boolean };
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request." }, 400);
+  }
+  if (!payload.entryId || !payload.factionId) {
+    return jsonResponse({ ok: false, error: "Entry ID and Faction ID required." }, 400);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+
+  // Verify ownership
+  const { data: entry, error: entryErr } = await serviceClient
+    .from("open_intelligence")
+    .select("id, user_id, validation_status")
+    .eq("id", payload.entryId)
+    .maybeSingle();
+
+  if (entryErr || !entry) {
+    return jsonResponse({ ok: false, error: "Entry not found." }, 404);
+  }
+
+  const entryRow = entry as { id: string; user_id: string; validation_status: string };
+
+  if (entryRow.user_id !== userId) {
+    return jsonResponse({ ok: false, error: "Only the entry owner can manage sharing." }, 403);
+  }
+
+  // Cannot share rejected or withdrawn entries
+  if (entryRow.validation_status === "rejected" || entryRow.validation_status === "withdrawn") {
+    return jsonResponse({ ok: false, error: "Cannot share rejected or withdrawn entries." }, 403);
+  }
+
+  if (payload.enabled) {
+    // Check if already shared with this faction
+    const { data: existing } = await serviceClient
+      .from("faction_shared_intelligence")
+      .select("id")
+      .eq("oi_entry_id", payload.entryId)
+      .eq("faction_id", payload.factionId)
+      .maybeSingle();
+
+    if (!existing) {
+      await serviceClient
+        .from("faction_shared_intelligence")
+        .insert({
+          faction_id: payload.factionId,
+          user_id: userId,
+          oi_entry_id: payload.entryId,
+        });
+    }
+  } else {
+    // Remove sharing — owner can always unshare their own entry
+    await serviceClient
+      .from("faction_shared_intelligence")
+      .delete()
+      .eq("oi_entry_id", payload.entryId)
+      .eq("faction_id", payload.factionId);
+  }
+
+  return jsonResponse({ ok: true });
+}
+
+// ── Phase 6B: Version History ───────────────────────────────────────────────
+
+async function handleGetVersionHistory(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+
+  const url = new URL(request.url);
+  const entryId = url.searchParams.get("entryId");
+  if (!entryId) {
+    return jsonResponse({ ok: false, error: "Entry ID required." }, 400);
+  }
+
+  // Verify ownership — only the owner can see version history
+  const { data: entry } = await serviceClient
+    .from("open_intelligence")
+    .select("id, user_id")
+    .eq("id", entryId)
+    .maybeSingle();
+
+  const entryRow = entry as { id: string; user_id: string } | null;
+  if (!entryRow || entryRow.user_id !== userId) {
+    return jsonResponse({ ok: false, error: "Only the entry owner can view version history." }, 403);
+  }
+
+  const { data: versions, error: versionsErr } = await serviceClient
+    .from("open_intelligence_versions")
+    .select("id, entry_id, version_number, previous_content, previous_category, previous_subtags, previous_custom_tags, previous_confidence_level, previous_validation_status, previous_quality_score, previous_influence_score, change_type, changed_by, changed_at")
+    .eq("entry_id", entryId)
+    .order("version_number", { ascending: false })
+    .limit(50);
+
+  if (versionsErr) {
+    return jsonResponse({ ok: false, error: "Failed to fetch version history." }, 500);
+  }
+
+  return jsonResponse({ ok: true, versions: versions ?? [] });
+}
+
+// ── Phase 6B: Moderation Queue (admin only) ─────────────────────────────────
+
+async function isAdmin(serviceClient: SupabaseClient, userId: string): Promise<boolean> {
+  const { data: profile } = await serviceClient
+    .from("profiles")
+    .select("admin_tier_override, admin_tier_expires_at")
+    .eq("id", userId)
+    .maybeSingle();
+
+  const p = profile as { admin_tier_override: string | null; admin_tier_expires_at: string | null } | null;
+  if (!p || !p.admin_tier_override) return false;
+  if (p.admin_tier_expires_at) {
+    const expires = new Date(p.admin_tier_expires_at).getTime();
+    if (Date.now() > expires) return false;
+  }
+  return true;
+}
+
+async function handleGetModerationQueue(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+
+  const admin = await isAdmin(serviceClient, userId);
+  if (!admin) {
+    return jsonResponse({ ok: false, error: "Moderation access required." }, 403);
+  }
+
+  // Fetch disputed entries with active disputes
+  const { data: disputedEntries, error: disputeErr } = await serviceClient
+    .from("open_intelligence")
+    .select("id, content, validation_status, user_id, eagoh_id, quality_score, active_dispute_count, created_at, updated_at")
+    .in("validation_status", ["disputed", "pending_review"])
+    .order("updated_at", { ascending: false })
+    .limit(50);
+
+  if (disputeErr) {
+    return jsonResponse({ ok: false, error: "Failed to fetch moderation queue." }, 500);
+  }
+
+  const entries = (disputedEntries ?? []) as {
+    id: string; content: string; validation_status: string; user_id: string;
+    eagoh_id: string; quality_score: number; active_dispute_count: number;
+    created_at: string; updated_at: string;
+  }[];
+
+  // For each entry, fetch its disputes (without reporter identity)
+  const queueItems: ModerationQueueItem[] = [];
+  for (const entry of entries) {
+    const { data: disputes } = await serviceClient
+      .from("open_intelligence_disputes")
+      .select("id, reason_category, explanation, supporting_url, status, created_at")
+      .eq("entry_id", entry.id)
+      .in("status", ["pending", "reviewing"])
+      .order("created_at", { ascending: false });
+
+    const disputeRows = (disputes ?? []) as {
+      id: string; reason_category: string; explanation: string;
+      supporting_url: string | null; status: string; created_at: string;
+    }[];
+
+    if (disputeRows.length === 0 && entry.validation_status !== "disputed") continue;
+
+    // Fetch contributor reputation summary (safe public fields only)
+    const { data: rep } = await serviceClient
+      .from("intelligence_contributor_reputation")
+      .select("overall_score")
+      .eq("user_id", entry.user_id)
+      .maybeSingle();
+    const repRow = rep as { overall_score: number } | null;
+
+    queueItems.push({
+      entryId: entry.id,
+      contentPreview: entry.content.slice(0, 200),
+      validationStatus: entry.validation_status,
+      reportCount: entry.active_dispute_count ?? disputeRows.length,
+      contributorReputation: repRow ? Math.round(repRow.overall_score) : null,
+      disputes: disputeRows.map((d) => ({
+        id: d.id,
+        reasonCategory: d.reason_category,
+        explanation: d.explanation,
+        supportingUrl: d.supporting_url,
+        status: d.status,
+        createdAt: d.created_at,
+      })),
+    });
+  }
+
+  return jsonResponse({ ok: true, queue: queueItems });
+}
+
+type ModerationQueueItem = {
+  entryId: string;
+  contentPreview: string;
+  validationStatus: string;
+  reportCount: number;
+  contributorReputation: number | null;
+  disputes: {
+    id: string;
+    reasonCategory: string;
+    explanation: string;
+    supportingUrl: string | null;
+    status: string;
+    createdAt: string;
+  }[];
+};
+
+// ── Phase 6B: Moderation Action (admin only) ────────────────────────────────
+
+async function handleModerationAction(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  let payload: { entryId: string; action: string; disputeId?: string };
+  try {
+    payload = (await request.json()) as { entryId: string; action: string; disputeId?: string };
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request." }, 400);
+  }
+
+  const validActions = ["dismiss_dispute", "mark_community_supported", "mark_externally_supported", "mark_disputed", "reject_entry"];
+  if (!validActions.includes(payload.action)) {
+    return jsonResponse({ ok: false, error: "Invalid moderation action." }, 400);
+  }
+  if (!payload.entryId) {
+    return jsonResponse({ ok: false, error: "Entry ID required." }, 400);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+
+  const admin = await isAdmin(serviceClient, userId);
+  if (!admin) {
+    return jsonResponse({ ok: false, error: "Moderation access required." }, 403);
+  }
+
+  // Fetch entry for version history
+  const { data: entry } = await serviceClient
+    .from("open_intelligence")
+    .select("id, user_id, content, confidence_level, selected_category, selected_subtags, custom_tags, exchange_share_enabled, validation_status, version_number, quality_score, influence_score")
+    .eq("id", payload.entryId)
+    .maybeSingle();
+
+  const entryRow = entry as {
+    id: string; user_id: string; content: string; confidence_level: string;
+    selected_category: string | null; selected_subtags: string[] | null;
+    custom_tags: string[] | null; exchange_share_enabled: boolean;
+    validation_status: string; version_number: number;
+    quality_score: number; influence_score: number;
+  } | null;
+
+  if (!entryRow) {
+    return jsonResponse({ ok: false, error: "Entry not found." }, 404);
+  }
+
+  // Save version history for moderation action
+  const currentVersion = entryRow.version_number ?? 1;
+  await serviceClient
+    .from("open_intelligence_versions")
+    .insert({
+      entry_id: payload.entryId,
+      version_number: currentVersion,
+      previous_content: entryRow.content,
+      previous_category: entryRow.selected_category,
+      previous_subtags: entryRow.selected_subtags ?? [],
+      previous_custom_tags: entryRow.custom_tags ?? [],
+      previous_confidence_level: entryRow.confidence_level,
+      previous_validation_status: entryRow.validation_status,
+      previous_quality_score: entryRow.quality_score,
+      previous_influence_score: entryRow.influence_score,
+      change_type: "moderation",
+      changed_by: userId,
+    });
+
+  let newStatus = entryRow.validation_status;
+
+  switch (payload.action) {
+    case "dismiss_dispute":
+      // Dismiss the specific dispute, keep entry status as-is unless it was only disputed
+      if (payload.disputeId) {
+        await serviceClient
+          .from("open_intelligence_disputes")
+          .update({ status: "dismissed", reviewed_by: userId, reviewed_at: new Date().toISOString() })
+          .eq("id", payload.disputeId);
+      }
+      // If entry was disputed and no more active disputes remain, restore to pending_review
+      if (entryRow.validation_status === "disputed") {
+        const { count } = await serviceClient
+          .from("open_intelligence_disputes")
+          .select("id", { count: "exact", head: true })
+          .eq("entry_id", payload.entryId)
+          .in("status", ["pending", "reviewing", "upheld"]);
+        if ((count ?? 0) === 0) {
+          newStatus = "pending_review";
+        }
+      }
+      break;
+
+    case "mark_community_supported":
+      newStatus = "community_supported";
+      // Dismiss all pending disputes for this entry
+      await serviceClient
+        .from("open_intelligence_disputes")
+        .update({ status: "dismissed", reviewed_by: userId, reviewed_at: new Date().toISOString() })
+        .eq("entry_id", payload.entryId)
+        .in("status", ["pending", "reviewing"]);
+      break;
+
+    case "mark_externally_supported":
+      newStatus = "externally_supported";
+      await serviceClient
+        .from("open_intelligence_disputes")
+        .update({ status: "dismissed", reviewed_by: userId, reviewed_at: new Date().toISOString() })
+        .eq("entry_id", payload.entryId)
+        .in("status", ["pending", "reviewing"]);
+      break;
+
+    case "mark_disputed":
+      newStatus = "disputed";
+      if (payload.disputeId) {
+        await serviceClient
+          .from("open_intelligence_disputes")
+          .update({ status: "upheld", reviewed_by: userId, reviewed_at: new Date().toISOString() })
+          .eq("id", payload.disputeId);
+      }
+      break;
+
+    case "reject_entry":
+      newStatus = "rejected";
+      // Disable all sharing
+      await serviceClient
+        .from("open_intelligence")
+        .update({
+          validation_status: "rejected",
+          exchange_share_enabled: false,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", payload.entryId);
+      // Remove all faction sharing
+      await serviceClient
+        .from("faction_shared_intelligence")
+        .delete()
+        .eq("oi_entry_id", payload.entryId);
+      // Dismiss or uphold all disputes
+      await serviceClient
+        .from("open_intelligence_disputes")
+        .update({ status: "resolved", reviewed_by: userId, reviewed_at: new Date().toISOString() })
+        .eq("entry_id", payload.entryId)
+        .in("status", ["pending", "reviewing"]);
+      // Recalculate contributor reputation
+      try {
+        await serviceClient.rpc("recalculate_contributor_reputation", { p_user_id: entryRow.user_id });
+      } catch (e) {
+        console.warn("[moderation] reputation recalc failed", e instanceof Error ? e.message : "unknown");
+      }
+      return jsonResponse({ ok: true });
+  }
+
+  // Update entry status
+  if (newStatus !== entryRow.validation_status) {
+    await serviceClient
+      .from("open_intelligence")
+      .update({
+        validation_status: newStatus,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", payload.entryId);
+  }
+
+  // Recalculate contributor reputation
+  try {
+    await serviceClient.rpc("recalculate_contributor_reputation", { p_user_id: entryRow.user_id });
+  } catch (e) {
+    console.warn("[moderation] reputation recalc failed", e instanceof Error ? e.message : "unknown");
+  }
+
+  return jsonResponse({ ok: true });
+}
+
 // ── Main Handler ─────────────────────────────────────────────────────────────
 
 async function handleAnalystChat(request: Request, env: Env): Promise<Response> {
@@ -3707,6 +4344,36 @@ export default {
     // Phase 5B: OI entry update (version history + dispute preservation)
     if (url.pathname === "/oi/update" && request.method === "POST") {
       return handleUpdateOIEntry(request, env);
+    }
+
+    // Phase 6B: OI entry withdraw
+    if (url.pathname === "/oi/withdraw" && request.method === "POST") {
+      return handleWithdrawOIEntry(request, env);
+    }
+
+    // Phase 6B: OI entry restore
+    if (url.pathname === "/oi/restore" && request.method === "POST") {
+      return handleRestoreOIEntry(request, env);
+    }
+
+    // Phase 6B: Toggle faction sharing
+    if (url.pathname === "/oi/faction-share" && request.method === "POST") {
+      return handleToggleFactionShare(request, env);
+    }
+
+    // Phase 6B: Version history
+    if (url.pathname === "/oi/versions" && request.method === "GET") {
+      return handleGetVersionHistory(request, env);
+    }
+
+    // Phase 6B: Moderation queue (admin only)
+    if (url.pathname === "/moderation/queue" && request.method === "GET") {
+      return handleGetModerationQueue(request, env);
+    }
+
+    // Phase 6B: Moderation action (admin only)
+    if (url.pathname === "/moderation/action" && request.method === "POST") {
+      return handleModerationAction(request, env);
     }
 
     return jsonResponse({ ok: false, error: "Not found" }, 404);

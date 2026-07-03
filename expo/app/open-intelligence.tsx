@@ -56,6 +56,7 @@ import {
   Eye,
   FlaskConical,
   Hash,
+  ListChecks,
   Plus,
   Save,
   Search,
@@ -81,6 +82,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
 
 type OptionTone = "cyan" | "gold" | "violet" | "ember" | "success";
 
@@ -688,6 +690,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
   const { balances } = useEdge();
   const { palette: pal } = useAppTheme();
   const queryClient = useQueryClient();
+  const router = useRouter();
 
   const [selectedEagohId, setSelectedEagohId] = useState<string>("");
   const [entryType, setEntryType] = useState<EntryType>("quick_observation");
@@ -835,9 +838,12 @@ export default function OpenIntelligenceScreen(): JSX.Element {
             <Text style={styles.kicker}>OPEN INTELLIGENCE</Text>
             <Text style={styles.title}>Observation Feed</Text>
           </View>
-          <View style={styles.headerBadge}>
-            <FlaskConical color={palette.cyan} size={18} />
-          </View>
+          <Pressable
+            onPress={() => { h.selection(); router.push("/my-intelligence" as never); }}
+            style={({ pressed }) => [styles.headerBadge, pressed && styles.pressed]}
+          >
+            <ListChecks color={palette.cyan} size={18} />
+          </Pressable>
         </View>
 
       <KeyboardAvoidingView

@@ -114,6 +114,14 @@ function AuthGate(): JSX.Element {
           name="edge-store"
           options={{ presentation: "modal", headerShown: false }}
         />
+        <Stack.Screen
+          name="my-intelligence"
+          options={{ presentation: "modal", headerShown: false }}
+        />
+        <Stack.Screen
+          name="moderation"
+          options={{ presentation: "modal", headerShown: false }}
+        />
       </Stack>
     </GestureHandlerRootView>
   );

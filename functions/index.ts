@@ -4308,6 +4308,9 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
 }
 
 // ── Export ───────────────────────────────────────────────────────────────────
+// Redeploy trigger: reset Durable Object storage after platform-side reset.
+// Force re-bundle to pick up installed @supabase/supabase-js dependency.
+// Retry deploy after bun install completed.
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {

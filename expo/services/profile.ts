@@ -43,6 +43,7 @@ export type UserProfile = {
   admin_tier_override: AdminTierOverride;
   admin_tier_expires_at: string | null;
   admin_tier_note: string | null;
+  is_admin: boolean;
   edge_subscription: number;
   edge_purchased: number;
   selected_labs: string[];
@@ -60,7 +61,7 @@ export type UserProfile = {
 };
 
 /** Users can never update admin override fields from the app. Only service_role / Supabase dashboard can. */
-export type ProfileUpdate = Partial<Omit<UserProfile, "id" | "created_at" | "updated_at" | "admin_tier_override" | "admin_tier_expires_at" | "admin_tier_note">> & { last_rollover_at?: string | null; last_allocation?: number };
+export type ProfileUpdate = Partial<Omit<UserProfile, "id" | "created_at" | "updated_at" | "admin_tier_override" | "admin_tier_expires_at" | "admin_tier_note" | "is_admin">> & { last_rollover_at?: string | null; last_allocation?: number };
 
 const DEFAULT_PROFILE = (id: string, username?: string | null): UserProfile => ({
   id,
@@ -69,6 +70,7 @@ const DEFAULT_PROFILE = (id: string, username?: string | null): UserProfile => (
   admin_tier_override: null,
   admin_tier_expires_at: null,
   admin_tier_note: null,
+  is_admin: false,
   edge_subscription: 0,
   edge_purchased: 0,
   selected_labs: [],

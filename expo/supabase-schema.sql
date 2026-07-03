@@ -20,6 +20,7 @@ create table if not exists public.profiles (
   admin_tier_override text,
   admin_tier_expires_at timestamptz,
   admin_tier_note text,
+  is_admin boolean default false,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
@@ -29,6 +30,7 @@ alter table public.profiles add column if not exists last_allocation int default
 alter table public.profiles add column if not exists admin_tier_override text;
 alter table public.profiles add column if not exists admin_tier_expires_at timestamptz;
 alter table public.profiles add column if not exists admin_tier_note text;
+alter table public.profiles add column if not exists is_admin boolean default false;
 
 alter table public.profiles enable row level security;
 

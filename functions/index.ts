@@ -1,5 +1,6 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker (Phase 6B — entry management & moderation)
+ * EAGOH Analyst Chat — Cloudflare Worker (Phase 6B — entry management, moderation, is_admin access)
+ * Phase 6B UI: is_admin flag replaces subscription-tier-based moderation access.
  *
  * Secure server-side intelligence grounding system.
  * Column names synchronized with live Supabase schema.
@@ -3485,15 +3486,18 @@ async function handleGetVersionHistory(request: Request, env: Env): Promise<Resp
 
 // ── Phase 6B: Moderation Queue (admin only) ─────────────────────────────────
 
+// Phase 6B: Admin access via explicit is_admin flag. Subscription tiers are NOT sufficient.
+// Only profiles with is_admin = true can access moderation endpoints.
 async function isAdmin(serviceClient: SupabaseClient, userId: string): Promise<boolean> {
+  if (!userId) return false;
   const { data: profile } = await serviceClient
     .from("profiles")
-    .select("admin_tier_override, admin_tier_expires_at")
+    .select("is_admin, admin_tier_override, admin_tier_expires_at")
     .eq("id", userId)
     .maybeSingle();
 
-  const p = profile as { admin_tier_override: string | null; admin_tier_expires_at: string | null } | null;
-  if (!p || !p.admin_tier_override) return false;
+  const p = profile as { is_admin: boolean | null; admin_tier_override: string | null; admin_tier_expires_at: string | null } | null;
+  if (!p || !p.is_admin) return false;
   if (p.admin_tier_expires_at) {
     const expires = new Date(p.admin_tier_expires_at).getTime();
     if (Date.now() > expires) return false;

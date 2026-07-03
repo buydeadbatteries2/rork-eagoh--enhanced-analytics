@@ -36,32 +36,51 @@ import {
   influenceLabel,
   getRecentTags,
   listEntriesForEagoh,
+  listAllEntries,
   submitEntry,
+  updateEntry,
+  withdrawEntry,
+  restoreEntry,
+  toggleExchangeShare,
+  toggleFactionShare,
+  fetchVersionHistory,
+  hasModerationAccess,
   VALIDATION_STATUS_LABELS,
   validationStatusColor,
+  CHANGE_TYPE_LABELS,
   type ConfidenceLevel,
   type EntryType,
   type OpenIntelligenceRow,
+  type VersionHistoryEntry,
 } from "@/services/openIntelligence";
+import { listUserFactions, type FactionRow } from "@/services/factions";
+import { supabase } from "@/lib/supabase";
 import { useHaptics } from "@/hooks/useHaptics";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   Activity,
+  AlertTriangle,
   BarChart3,
   BrainCircuit,
   Check,
   ChevronDown,
   ChevronRight,
   Clock,
+  Edit3,
   Eye,
+  FileClock,
   FlaskConical,
+  GitBranch,
   Hash,
   ListChecks,
   Plus,
+  RotateCcw,
   Save,
   Search,
+  ShieldAlert,
   Sparkles,
   Tag,
+  Trash2,
   X,
   Zap,
 } from "lucide-react-native";
@@ -71,6 +90,7 @@ import {
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -681,6 +701,653 @@ const LearningEntry = memo(function LearningEntry({
   );
 });
 
+// ── My Intelligence: Entry Card ───────────────────────────────────────
+
+type MyExpandedEntry = {
+  entry: OpenIntelligenceRow;
+  sharedFactionIds: string[];
+};
+
+function MyEntryStatusBadge({ status }: { status: string }): JSX.Element {
+  const color = validationStatusColor(status);
+  const label = VALIDATION_STATUS_LABELS[status] ?? "Pending Review";
+  return (
+    <View style={[styles.myBadge, { borderColor: `${color}44`, backgroundColor: `${color}12` }]}>
+      <ShieldAlert color={color} size={9} />
+      <Text style={[styles.myBadgeText, { color }]}>{label}</Text>
+    </View>
+  );
+}
+
+function MySharePill({ enabled, label }: { enabled: boolean; label: string }): JSX.Element {
+  const color = enabled ? palette.success : palette.muted;
+  return (
+    <View style={[styles.mySharePill, { borderColor: `${color}33` }]}>
+      <Text style={[styles.mySharePillText, { color }]}>
+        {label}: {enabled ? "On" : "Off"}
+      </Text>
+    </View>
+  );
+}
+
+function MyEntryCard({
+  data,
+  factions,
+  onEdit,
+  onWithdraw,
+  onRestore,
+  onToggleExchange,
+  onToggleFaction,
+  onShowVersions,
+  busy,
+}: {
+  data: MyExpandedEntry;
+  factions: FactionRow[];
+  onEdit: (entry: OpenIntelligenceRow) => void;
+  onWithdraw: (entry: OpenIntelligenceRow) => void;
+  onRestore: (entryId: string) => void;
+  onToggleExchange: (entryId: string, enabled: boolean) => void;
+  onToggleFaction: (entryId: string, factionId: string, enabled: boolean) => void;
+  onShowVersions: (entryId: string) => void;
+  busy: string | null;
+}): JSX.Element {
+  const h = useHaptics();
+  const { entry, sharedFactionIds } = data;
+  const status = entry.validation_status ?? "pending_review";
+  const isWithdrawn = status === "withdrawn";
+  const isRejected = status === "rejected";
+  const isDisputed = status === "disputed" || (entry.active_dispute_count ?? 0) > 0;
+  const isOutdated = entry.outdated_flag ?? false;
+  const [factionPickerOpen, setFactionPickerOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  const canEdit = !isWithdrawn && !isRejected;
+  const canWithdraw = !isWithdrawn && !isRejected;
+  const canRestore = isWithdrawn;
+  const canShare = !isWithdrawn && !isRejected;
+
+  const createdDate = useMemo(() => new Date(entry.created_at).toLocaleDateString(), [entry.created_at]);
+  const updatedDate = useMemo(() => new Date(entry.updated_at).toLocaleDateString(), [entry.updated_at]);
+
+  return (
+    <View style={styles.myEntryCard}>
+      <View style={styles.myEntryTopRow}>
+        <MyEntryStatusBadge status={status} />
+        {isOutdated ? (
+          <View style={[styles.myWarnBadge, { borderColor: `${palette.gold}33` }]}>
+            <Clock color={palette.gold} size={9} />
+            <Text style={[styles.myWarnText, { color: palette.gold }]}>Outdated</Text>
+          </View>
+        ) : null}
+        {isDisputed ? (
+          <View style={[styles.myWarnBadge, { borderColor: `${palette.ember}33` }]}>
+            <AlertTriangle color={palette.ember} size={9} />
+            <Text style={[styles.myWarnText, { color: palette.ember }]}>Disputed</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <Text style={styles.myEntryContent} numberOfLines={expanded ? undefined : 3}>
+        {entry.content}
+      </Text>
+      {entry.content.length > 120 ? (
+        <Pressable onPress={() => { h.selection(); setExpanded(!expanded); }} style={styles.myExpandBtn}>
+          <Text style={styles.myExpandText}>{expanded ? "Show less" : "Show more"}</Text>
+        </Pressable>
+      ) : null}
+
+      <View style={styles.myMetaGrid}>
+        <View style={styles.myMetaItem}>
+          <Text style={styles.myMetaLabel}>Category</Text>
+          <Text style={styles.myMetaValue}>{entry.selected_category ?? entry.tag ?? "—"}</Text>
+        </View>
+        <View style={styles.myMetaItem}>
+          <Text style={styles.myMetaLabel}>Confidence</Text>
+          <Text style={styles.myMetaValue}>{(entry.confidence_level ?? "").replace(/_/g, " ")}</Text>
+        </View>
+        <View style={styles.myMetaItem}>
+          <Text style={styles.myMetaLabel}>Quality</Text>
+          <Text style={[styles.myMetaValue, { color: palette.cyan }]}>{entry.quality_score}</Text>
+        </View>
+        <View style={styles.myMetaItem}>
+          <Text style={styles.myMetaLabel}>Version</Text>
+          <Text style={styles.myMetaValue}>{entry.version_number ?? 1}</Text>
+        </View>
+        <View style={styles.myMetaItem}>
+          <Text style={styles.myMetaLabel}>Created</Text>
+          <Text style={styles.myMetaValue}>{createdDate}</Text>
+        </View>
+        <View style={styles.myMetaItem}>
+          <Text style={styles.myMetaLabel}>Updated</Text>
+          <Text style={styles.myMetaValue}>{updatedDate}</Text>
+        </View>
+      </View>
+
+      <View style={styles.myShareRow}>
+        <MySharePill enabled={entry.exchange_share_enabled ?? false} label="Exchange" />
+        {sharedFactionIds.length > 0 ? (
+          <MySharePill enabled={true} label={`Faction (${sharedFactionIds.length})`} />
+        ) : (
+          <MySharePill enabled={false} label="Faction" />
+        )}
+      </View>
+
+      <View style={styles.myActionsRow}>
+        {canEdit ? (
+          <Pressable
+            onPress={() => { h.selection(); onEdit(entry); }}
+            style={({ pressed }) => [styles.myActionBtn, pressed && styles.pressed]}
+            disabled={busy !== null}
+          >
+            <Edit3 color={palette.cyan} size={13} />
+            <Text style={[styles.myActionText, { color: palette.cyan }]}>Edit</Text>
+          </Pressable>
+        ) : null}
+
+        {canWithdraw ? (
+          <Pressable
+            onPress={() => { h.selection(); onWithdraw(entry); }}
+            style={({ pressed }) => [styles.myActionBtn, { borderColor: `${palette.ember}33` }, pressed && styles.pressed]}
+            disabled={busy !== null}
+          >
+            {busy === `withdraw:${entry.id}` ? (
+              <ActivityIndicator color={palette.ember} size={13} />
+            ) : (
+              <Trash2 color={palette.ember} size={13} />
+            )}
+            <Text style={[styles.myActionText, { color: palette.ember }]}>Withdraw</Text>
+          </Pressable>
+        ) : null}
+
+        {canRestore ? (
+          <Pressable
+            onPress={() => { h.selection(); onRestore(entry.id); }}
+            style={({ pressed }) => [styles.myActionBtn, { borderColor: `${palette.success}33` }, pressed && styles.pressed]}
+            disabled={busy !== null}
+          >
+            {busy === `restore:${entry.id}` ? (
+              <ActivityIndicator color={palette.success} size={13} />
+            ) : (
+              <RotateCcw color={palette.success} size={13} />
+            )}
+            <Text style={[styles.myActionText, { color: palette.success }]}>Restore</Text>
+          </Pressable>
+        ) : null}
+
+        <Pressable
+          onPress={() => { h.selection(); onShowVersions(entry.id); }}
+          style={({ pressed }) => [styles.myActionBtn, pressed && styles.pressed]}
+          disabled={busy !== null}
+        >
+          <FileClock color={palette.muted} size={13} />
+          <Text style={[styles.myActionText, { color: palette.muted }]}>History</Text>
+        </Pressable>
+      </View>
+
+      {canShare ? (
+        <View style={styles.mySharingSection}>
+          <Pressable
+            onPress={() => { h.selection(); onToggleExchange(entry.id, !(entry.exchange_share_enabled ?? false)); }}
+            style={({ pressed }) => [styles.myToggleRow, pressed && styles.pressed]}
+            disabled={busy !== null}
+          >
+            <Text style={styles.myToggleLabel}>Exchange Sharing</Text>
+            <View style={[styles.myToggleSwitch, entry.exchange_share_enabled && { backgroundColor: palette.cyan, borderColor: palette.cyan }]}>
+              <View style={[styles.myToggleKnob, entry.exchange_share_enabled && { transform: [{ translateX: 16 }] }]} />
+            </View>
+          </Pressable>
+
+          {factions.length > 0 ? (
+            <View>
+              <Pressable
+                onPress={() => { h.selection(); setFactionPickerOpen(!factionPickerOpen); }}
+                style={({ pressed }) => [styles.myToggleRow, pressed && styles.pressed]}
+              >
+                <Text style={styles.myToggleLabel}>Faction Sharing</Text>
+                <ChevronDown color={palette.muted} size={14} />
+              </Pressable>
+
+              {factionPickerOpen ? (
+                <View style={styles.myFactionList}>
+                  {factions.map((f) => {
+                    const isShared = sharedFactionIds.includes(f.id);
+                    return (
+                      <Pressable
+                        key={f.id}
+                        onPress={() => { h.selection(); onToggleFaction(entry.id, f.id, !isShared); }}
+                        style={({ pressed }) => [styles.myFactionItem, pressed && styles.pressed]}
+                        disabled={busy !== null}
+                      >
+                        <Text style={styles.myFactionName}>{f.name}</Text>
+                        <View style={[styles.myToggleSwitch, isShared && { backgroundColor: palette.violet, borderColor: palette.violet }]}>
+                          <View style={[styles.myToggleKnob, isShared && { transform: [{ translateX: 16 }] }]} />
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+// ── Edit Entry Modal ───────────────────────────────────────────────────
+
+function EditEntryModal({
+  visible,
+  entry,
+  domainId,
+  onClose,
+  onSaved,
+}: {
+  visible: boolean;
+  entry: OpenIntelligenceRow | null;
+  domainId: string;
+  onClose: () => void;
+  onSaved: () => void;
+}): JSX.Element {
+  const h = useHaptics();
+  const [editContent, setEditContent] = useState<string>("");
+  const [editConfidence, setEditConfidence] = useState<ConfidenceLevel>("moderate_confidence");
+  const [editCategory, setEditCategory] = useState<string>("");
+  const [editSubtags, setEditSubtags] = useState<string[]>([]);
+  const [editCustomTags, setEditCustomTags] = useState<string[]>([]);
+  const [customInput, setCustomInput] = useState<string>("");
+  const [submitting, setSubmitting] = useState(false);
+  const [resultMsg, setResultMsg] = useState<string | null>(null);
+
+  const tags = useMemo(() => getTagsForDomain(domainId), [domainId]);
+  const [openCats, setOpenCats] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (visible && entry) {
+      setEditContent(entry.content);
+      setEditConfidence((entry.confidence_level as ConfidenceLevel) ?? "moderate_confidence");
+      setEditCategory(entry.selected_category ?? "");
+      setEditSubtags(entry.selected_subtags ?? []);
+      setEditCustomTags(entry.custom_tags ?? []);
+      setResultMsg(null);
+      setOpenCats({});
+    }
+  }, [visible, entry]);
+
+  const canSubmit = editContent.trim().length > 0 && !submitting;
+
+  const handleAddCustom = useCallback((): void => {
+    const trimmed = customInput.trim().slice(0, 30);
+    if (trimmed && !editCustomTags.includes(trimmed)) {
+      setEditCustomTags((prev) => [...prev, trimmed]);
+      setCustomInput("");
+    }
+  }, [customInput, editCustomTags]);
+
+  const handleSave = useCallback(async (): Promise<void> => {
+    if (!entry || !editContent.trim()) return;
+    h.light();
+    setSubmitting(true);
+    setResultMsg(null);
+
+    const result = await updateEntry({
+      entryId: entry.id,
+      content: editContent.trim(),
+      confidenceLevel: editConfidence,
+      selectedCategory: editCategory || null,
+      selectedSubtags: editSubtags.length > 0 ? editSubtags : null,
+      customTags: editCustomTags.length > 0 ? editCustomTags : null,
+    });
+
+    setSubmitting(false);
+
+    if (result.ok) {
+      setResultMsg("Entry updated. Quality recalculated server-side.");
+      h.success();
+      onSaved();
+      setTimeout(() => onClose(), 800);
+    } else {
+      setResultMsg(result.error ?? "Failed to update entry.");
+    }
+  }, [entry, editContent, editConfidence, editCategory, editSubtags, editCustomTags, h, onSaved, onClose]);
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <View style={styles.modalSheet}>
+          <LinearGradient colors={["#0A1628", "#050D18"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
+          <View style={styles.modalHandle} />
+          <View style={styles.modalHeader}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Edit3 color={palette.cyan} size={18} />
+              <Text style={styles.modalTitle}>Edit Intelligence</Text>
+            </View>
+            <Pressable onPress={onClose} style={styles.modalCloseBtn}>
+              <X color={palette.muted} size={20} />
+            </Pressable>
+          </View>
+
+          <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+            <Text style={styles.sectionLabel}>Content</Text>
+            <TextInput
+              value={editContent}
+              onChangeText={setEditContent}
+              placeholder="Edit your observation..."
+              placeholderTextColor={palette.muted}
+              multiline
+              style={styles.modalContentInput}
+              textAlignVertical="top"
+            />
+
+            <Text style={[styles.sectionLabel, { marginTop: 14 }]}>Confidence Level</Text>
+            <View style={styles.modalConfidenceRow}>
+              {(["weak_suspicion", "moderate_confidence", "strong_confidence", "verified_observation"] as ConfidenceLevel[]).map((level) => {
+                const isSelected = editConfidence === level;
+                return (
+                  <Pressable
+                    key={level}
+                    onPress={() => { h.selection(); setEditConfidence(level); }}
+                    style={({ pressed }) => [
+                      styles.modalConfidenceChip,
+                      isSelected && { borderColor: palette.cyan, backgroundColor: "rgba(108,230,255,0.10)" },
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text style={[styles.modalConfidenceText, isSelected && { color: palette.cyan }]}>
+                      {level.replace(/_/g, " ")}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Text style={[styles.sectionLabel, { marginTop: 14 }]}>Category</Text>
+            <View style={styles.modalCatRow}>
+              {tags.map((cat) => {
+                const isSelected = editCategory === cat.id;
+                return (
+                  <Pressable
+                    key={cat.id}
+                    onPress={() => { h.selection(); setEditCategory(isSelected ? "" : cat.id); }}
+                    style={({ pressed }) => [
+                      styles.modalCatChip,
+                      isSelected && { borderColor: palette.cyan, backgroundColor: "rgba(108,230,255,0.10)" },
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text style={[styles.modalCatText, isSelected && { color: palette.cyan }]}>{cat.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Text style={[styles.sectionLabel, { marginTop: 14 }]}>Subtags</Text>
+            {tags.map((cat) => {
+              const isOpen = openCats[cat.id] ?? false;
+              const selectedInCat = cat.tags.filter((t) => editSubtags.includes(t.id)).length;
+              return (
+                <View key={cat.id} style={styles.modalTagCat}>
+                  <Pressable
+                    onPress={() => setOpenCats((prev) => ({ ...prev, [cat.id]: !prev[cat.id] }))}
+                    style={({ pressed }) => [styles.modalTagCatHeader, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.modalTagCatLabel}>
+                      {cat.label}{selectedInCat > 0 ? <Text style={styles.categoryCount}> ({selectedInCat})</Text> : null}
+                    </Text>
+                    {isOpen ? <ChevronDown color={palette.muted} size={14} /> : <ChevronRight color={palette.muted} size={14} />}
+                  </Pressable>
+                  {isOpen ? (
+                    <View style={styles.tagGrid}>
+                      {cat.tags.map((tag) => {
+                        const isSelected = editSubtags.includes(tag.id);
+                        return (
+                          <Pressable
+                            key={tag.id}
+                            onPress={() => {
+                              h.selection();
+                              setEditSubtags((prev) => prev.includes(tag.id) ? prev.filter((id) => id !== tag.id) : [...prev, tag.id]);
+                            }}
+                            style={({ pressed }) => [
+                              styles.tagChip,
+                              isSelected && { borderColor: palette.cyan, backgroundColor: "rgba(108,230,255,0.12)" },
+                              pressed && styles.pressed,
+                            ]}
+                          >
+                            {isSelected ? <Check color={palette.cyan} size={11} /> : <Hash color={palette.muted} size={11} />}
+                            <Text style={[styles.tagChipText, isSelected && { color: palette.cyan }]}>{tag.label}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })}
+
+            <Text style={[styles.sectionLabel, { marginTop: 14 }]}>Custom Tags</Text>
+            <View style={styles.customTagWrap}>
+              <TextInput
+                value={customInput}
+                onChangeText={(t) => setCustomInput(t.slice(0, 30))}
+                placeholder="Add custom tag (max 30 chars)"
+                placeholderTextColor={palette.muted}
+                maxLength={30}
+                style={styles.customTagInput}
+                onSubmitEditing={handleAddCustom}
+                returnKeyType="done"
+              />
+              <Pressable
+                onPress={handleAddCustom}
+                disabled={!customInput.trim()}
+                style={({ pressed }) => [styles.customAddBtn, !customInput.trim() && { opacity: 0.4 }, pressed && styles.pressed]}
+              >
+                <Plus color={palette.void} size={14} />
+              </Pressable>
+            </View>
+            {editCustomTags.length > 0 ? (
+              <View style={styles.selectedTagsRow}>
+                {editCustomTags.map((ct) => (
+                  <Pressable
+                    key={`edit-${ct}`}
+                    onPress={() => { h.selection(); setEditCustomTags((prev) => prev.filter((t) => t !== ct)); }}
+                    style={({ pressed }) => [styles.selectedChip, pressed && styles.pressed]}
+                  >
+                    <Check color={palette.cyan} size={10} />
+                    <Text style={styles.selectedChipText}>{ct}</Text>
+                    <X color={palette.muted} size={12} />
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+
+            <Text style={styles.modalNotice}>
+              Quality score, influence score, and validation status are calculated
+              server-side and cannot be set manually.
+            </Text>
+
+            {resultMsg ? (
+              <View style={[styles.modalResultBox, { borderColor: `${resultMsg.includes("updated") ? palette.success : palette.ember}33` }]}>
+                <Text style={[styles.modalResultText, { color: resultMsg.includes("updated") ? palette.success : palette.ember }]}>
+                  {resultMsg}
+                </Text>
+              </View>
+            ) : null}
+
+            <Pressable
+              onPress={handleSave}
+              disabled={!canSubmit}
+              style={({ pressed }) => [
+                styles.modalSubmitBtn,
+                !canSubmit && { backgroundColor: "rgba(255,255,255,0.06)" },
+                pressed && { opacity: 0.85 },
+              ]}
+            >
+              {submitting ? (
+                <ActivityIndicator color={palette.void} size="small" />
+              ) : (
+                <>
+                  <Save color={canSubmit ? palette.void : palette.muted} size={15} />
+                  <Text style={[styles.modalSubmitText, !canSubmit && { color: palette.muted }]}>Save Changes</Text>
+                </>
+              )}
+            </Pressable>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// ── Version History Modal ──────────────────────────────────────────────
+
+function VersionHistoryModal({
+  visible,
+  entryId,
+  onClose,
+}: {
+  visible: boolean;
+  entryId: string | null;
+  onClose: () => void;
+}): JSX.Element {
+  const [versions, setVersions] = useState<VersionHistoryEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (visible && entryId) {
+      setLoading(true);
+      setError(null);
+      fetchVersionHistory(entryId).then((result) => {
+        setLoading(false);
+        if (result.ok) {
+          setVersions(result.versions);
+        } else {
+          setError(result.error);
+        }
+      });
+    }
+  }, [visible, entryId]);
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <View style={styles.modalSheet}>
+          <LinearGradient colors={["#0A1628", "#050D18"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
+          <View style={styles.modalHandle} />
+          <View style={styles.modalHeader}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <GitBranch color={palette.cyan} size={18} />
+              <Text style={styles.modalTitle}>Version History</Text>
+            </View>
+            <Pressable onPress={onClose} style={styles.modalCloseBtn}>
+              <X color={palette.muted} size={20} />
+            </Pressable>
+          </View>
+
+          <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalBody}>
+            {loading ? (
+              <ActivityIndicator color={palette.cyan} size="large" style={{ paddingVertical: 30 }} />
+            ) : error ? (
+              <Text style={styles.modalErrorText}>{error}</Text>
+            ) : versions.length === 0 ? (
+              <Text style={styles.modalEmptyText}>No version history yet.</Text>
+            ) : (
+              versions.map((v) => {
+                const changeLabel = CHANGE_TYPE_LABELS[v.change_type] ?? v.change_type;
+                const dateLabel = new Date(v.changed_at).toLocaleDateString();
+                return (
+                  <View key={v.id} style={styles.versionItem}>
+                    <View style={styles.versionHeader}>
+                      <View style={[styles.versionBadge, { borderColor: `${palette.cyan}33` }]}>
+                        <Text style={[styles.versionBadgeText, { color: palette.cyan }]}>v{v.version_number}</Text>
+                      </View>
+                      <Text style={styles.versionChangeType}>{changeLabel}</Text>
+                      <Text style={styles.versionDate}>{dateLabel}</Text>
+                    </View>
+                    {v.previous_content ? (
+                      <Text style={styles.versionContent} numberOfLines={3}>{v.previous_content}</Text>
+                    ) : (
+                      <Text style={styles.versionNoContent}>No content snapshot</Text>
+                    )}
+                    {v.previous_validation_status ? (
+                      <Text style={styles.versionMetaText}>
+                        Status: {VALIDATION_STATUS_LABELS[v.previous_validation_status] ?? v.previous_validation_status}
+                      </Text>
+                    ) : null}
+                  </View>
+                );
+              })
+            )}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// ── Confirm Dialog ─────────────────────────────────────────────────────
+
+function ConfirmDialog({
+  visible,
+  title,
+  message,
+  confirmLabel,
+  confirmColor,
+  onConfirm,
+  onCancel,
+  busy,
+}: {
+  visible: boolean;
+  title: string;
+  message: string;
+  confirmLabel: string;
+  confirmColor: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  busy: boolean;
+}): JSX.Element {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+      <View style={styles.modalOverlay}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onCancel} />
+        <View style={styles.confirmSheet}>
+          <LinearGradient colors={["#0A1628", "#050D18"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
+          <Text style={styles.confirmTitle}>{title}</Text>
+          <Text style={styles.confirmMessage}>{message}</Text>
+          <View style={styles.confirmBtnRow}>
+            <Pressable
+              onPress={onCancel}
+              disabled={busy}
+              style={({ pressed }) => [styles.confirmCancelBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.confirmCancelText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={onConfirm}
+              disabled={busy}
+              style={({ pressed }) => [
+                styles.confirmActionBtn,
+                { backgroundColor: confirmColor },
+                busy && { opacity: 0.6 },
+                pressed && styles.pressed,
+              ]}
+            >
+              {busy ? (
+                <ActivityIndicator color={palette.void} size="small" />
+              ) : (
+                <Text style={styles.confirmActionText}>{confirmLabel}</Text>
+              )}
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // ── Main Screen ───────────────────────────────────────────────────────
 
 export default function OpenIntelligenceScreen(): JSX.Element {
@@ -706,6 +1373,21 @@ export default function OpenIntelligenceScreen(): JSX.Element {
   const contentInputRef = useRef<TextInput | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
   const scrollYRef = useRef<number>(0);
+
+  // ── My Intelligence tab state ──
+  const [activeTab, setActiveTab] = useState<"add" | "my">("add");
+  const [editingEntry, setEditingEntry] = useState<OpenIntelligenceRow | null>(null);
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [versionModalVisible, setVersionModalVisible] = useState(false);
+  const [versionEntryId, setVersionEntryId] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [myActionMsg, setMyActionMsg] = useState<string | null>(null);
+  const [withdrawTarget, setWithdrawTarget] = useState<OpenIntelligenceRow | null>(null);
+  const [withdrawConfirmVisible, setWithdrawConfirmVisible] = useState(false);
+  const [restoreTargetId, setRestoreTargetId] = useState<string | null>(null);
+  const [restoreConfirmVisible, setRestoreConfirmVisible] = useState(false);
+
+  const isAdmin = hasModerationAccess(profile);
 
   useEffect(() => {
     const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
@@ -785,6 +1467,132 @@ export default function OpenIntelligenceScreen(): JSX.Element {
     );
   }, []);
 
+  // ── My Intelligence queries ──
+  const myEntriesQuery = useQuery<OpenIntelligenceRow[]>({
+    queryKey: ["oi", "my-entries", profile?.id],
+    enabled: !!profile?.id && activeTab === "my",
+    queryFn: () => listAllEntries(profile!.id, 100),
+  });
+
+  const myFactionsQuery = useQuery<FactionRow[]>({
+    queryKey: ["factions", "user", profile?.id],
+    enabled: !!profile?.id && activeTab === "my",
+    queryFn: () => listUserFactions(profile!.id),
+  });
+
+  const sharedFactionQuery = useQuery<Array<{ oi_entry_id: string; faction_id: string }>>({
+    queryKey: ["oi", "my-shared-factions", profile?.id],
+    enabled: !!profile?.id && activeTab === "my" && (myFactionsQuery.data?.length ?? 0) > 0,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("faction_shared_intelligence")
+        .select("oi_entry_id, faction_id")
+        .eq("user_id", profile!.id);
+      if (error) throw error;
+      return (data ?? []) as Array<{ oi_entry_id: string; faction_id: string }>;
+    },
+  });
+
+  const myFactions = myFactionsQuery.data ?? [];
+
+  const myExpandedEntries: MyExpandedEntry[] = useMemo(() => {
+    const entries = myEntriesQuery.data ?? [];
+    const sharedMap = sharedFactionQuery.data ?? [];
+    return entries.map((entry) => ({
+      entry,
+      sharedFactionIds: sharedMap
+        .filter((s) => s.oi_entry_id === entry.id)
+        .map((s) => s.faction_id),
+    }));
+  }, [myEntriesQuery.data, sharedFactionQuery.data]);
+
+  const refreshMyEntries = useCallback((): void => {
+    queryClient.invalidateQueries({ queryKey: ["oi", "my-entries"] });
+    queryClient.invalidateQueries({ queryKey: ["oi", "my-shared-factions"] });
+  }, [queryClient]);
+
+  const handleEditEntry = useCallback((entry: OpenIntelligenceRow): void => {
+    setEditingEntry(entry);
+    setEditModalVisible(true);
+  }, []);
+
+  const handleWithdrawEntry = useCallback((entry: OpenIntelligenceRow): void => {
+    setWithdrawTarget(entry);
+    setWithdrawConfirmVisible(true);
+  }, []);
+
+  const handleConfirmWithdraw = useCallback(async (): Promise<void> => {
+    if (!withdrawTarget) return;
+    setBusy(`withdraw:${withdrawTarget.id}`);
+    setMyActionMsg(null);
+    const result = await withdrawEntry(withdrawTarget.id);
+    setBusy(null);
+    if (result.ok) {
+      h.success();
+      setMyActionMsg("Entry withdrawn. It is no longer visible in analyst context.");
+      refreshMyEntries();
+    } else {
+      setMyActionMsg(result.error ?? "Failed to withdraw entry.");
+    }
+    setWithdrawConfirmVisible(false);
+    setWithdrawTarget(null);
+  }, [withdrawTarget, h, refreshMyEntries]);
+
+  const handleRestoreEntry = useCallback((entryId: string): void => {
+    setRestoreTargetId(entryId);
+    setRestoreConfirmVisible(true);
+  }, []);
+
+  const handleConfirmRestore = useCallback(async (): Promise<void> => {
+    if (!restoreTargetId) return;
+    setBusy(`restore:${restoreTargetId}`);
+    setMyActionMsg(null);
+    const result = await restoreEntry(restoreTargetId);
+    setBusy(null);
+    if (result.ok) {
+      h.success();
+      setMyActionMsg("Entry restored to Pending Review. Re-enable sharing manually.");
+      refreshMyEntries();
+    } else {
+      setMyActionMsg(result.error ?? "Failed to restore entry.");
+    }
+    setRestoreConfirmVisible(false);
+    setRestoreTargetId(null);
+  }, [restoreTargetId, h, refreshMyEntries]);
+
+  const handleToggleExchange = useCallback(async (entryId: string, enabled: boolean): Promise<void> => {
+    setBusy(`exchange:${entryId}`);
+    setMyActionMsg(null);
+    const result = await toggleExchangeShare(entryId, enabled);
+    setBusy(null);
+    if (result.ok) {
+      h.selection();
+      setMyActionMsg(`Exchange sharing ${enabled ? "enabled" : "disabled"}.`);
+      refreshMyEntries();
+    } else {
+      setMyActionMsg(result.error ?? "Failed to toggle sharing.");
+    }
+  }, [h, refreshMyEntries]);
+
+  const handleToggleFaction = useCallback(async (entryId: string, factionId: string, enabled: boolean): Promise<void> => {
+    setBusy(`faction:${entryId}:${factionId}`);
+    setMyActionMsg(null);
+    const result = await toggleFactionShare(entryId, factionId, enabled);
+    setBusy(null);
+    if (result.ok) {
+      h.selection();
+      setMyActionMsg(`Faction sharing ${enabled ? "enabled" : "disabled"}.`);
+      refreshMyEntries();
+    } else {
+      setMyActionMsg(result.error ?? "Failed to toggle faction sharing.");
+    }
+  }, [h, refreshMyEntries]);
+
+  const handleShowVersions = useCallback((entryId: string): void => {
+    setVersionEntryId(entryId);
+    setVersionModalVisible(true);
+  }, []);
+
   const handleAddCustomTag = useCallback((tag: string): void => {
     setCustomTags((prev) => (prev.includes(tag) ? prev : [...prev, tag]));
   }, []);
@@ -838,14 +1646,110 @@ export default function OpenIntelligenceScreen(): JSX.Element {
             <Text style={styles.kicker}>OPEN INTELLIGENCE</Text>
             <Text style={styles.title}>Observation Feed</Text>
           </View>
-          <Pressable
-            onPress={() => { h.selection(); router.push("/my-intelligence" as never); }}
-            style={({ pressed }) => [styles.headerBadge, pressed && styles.pressed]}
-          >
-            <ListChecks color={palette.cyan} size={18} />
-          </Pressable>
+          {isAdmin ? (
+            <Pressable
+              onPress={() => { h.selection(); router.push("/moderation" as never); }}
+              style={({ pressed }) => [styles.headerBadge, { borderColor: `${palette.gold}33`, backgroundColor: `${palette.gold}0A` }, pressed && styles.pressed]}
+            >
+              <ShieldAlert color={palette.gold} size={18} />
+            </Pressable>
+          ) : (
+            <View style={{ width: 40 }} />
+          )}
         </View>
 
+      {/* Tab Switcher */}
+      <View style={styles.tabBar}>
+        <Pressable
+          onPress={() => { h.selection(); setActiveTab("add"); }}
+          style={({ pressed }) => [
+            styles.tabBtn,
+            activeTab === "add" && styles.tabBtnActive,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Plus color={activeTab === "add" ? palette.cyan : palette.muted} size={14} />
+          <Text style={[styles.tabText, activeTab === "add" && { color: palette.cyan }]}>Add Intelligence</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => { h.selection(); setActiveTab("my"); }}
+          style={({ pressed }) => [
+            styles.tabBtn,
+            activeTab === "my" && styles.tabBtnActive,
+            pressed && styles.pressed,
+          ]}
+        >
+          <ListChecks color={activeTab === "my" ? palette.cyan : palette.muted} size={14} />
+          <Text style={[styles.tabText, activeTab === "my" && { color: palette.cyan }]}>My Intelligence</Text>
+        </Pressable>
+      </View>
+
+      {activeTab === "my" ? (
+        /* ── My Intelligence Tab ── */
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: 50 }]}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Summary */}
+          <View style={styles.mySummaryRow}>
+            <View style={styles.mySummaryItem}>
+              <Text style={styles.mySummaryValue}>{myExpandedEntries.length}</Text>
+              <Text style={styles.mySummaryLabel}>Total Entries</Text>
+            </View>
+            <View style={styles.mySummaryItem}>
+              <Text style={[styles.mySummaryValue, { color: palette.cyan }]}>
+                {myExpandedEntries.filter((e) => e.entry.exchange_share_enabled ?? false).length}
+              </Text>
+              <Text style={styles.mySummaryLabel}>Exchange Shared</Text>
+            </View>
+            <View style={styles.mySummaryItem}>
+              <Text style={[styles.mySummaryValue, { color: palette.violet }]}>
+                {myExpandedEntries.filter((e) => e.sharedFactionIds.length > 0).length}
+              </Text>
+              <Text style={styles.mySummaryLabel}>Faction Shared</Text>
+            </View>
+          </View>
+
+          {myActionMsg ? (
+            <View style={[styles.myActionMsgBox, { borderColor: `${myActionMsg.includes("Failed") ? palette.ember : palette.success}33` }]}>
+              <Text style={[styles.myActionMsgText, { color: myActionMsg.includes("Failed") ? palette.ember : palette.success }]}>
+                {myActionMsg}
+              </Text>
+            </View>
+          ) : null}
+
+          {myEntriesQuery.isLoading ? (
+            <ActivityIndicator color={palette.cyan} size="large" style={{ paddingVertical: 40 }} />
+          ) : myExpandedEntries.length === 0 ? (
+            <View style={styles.myEmptyState}>
+              <Activity color={palette.muted} size={32} />
+              <Text style={styles.myEmptyTitle}>No Intelligence Entries</Text>
+              <Text style={styles.myEmptyDesc}>
+                Submit observations from the Add Intelligence tab to see them here.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.myEntriesList}>
+              {myExpandedEntries.map((data) => (
+                <MyEntryCard
+                  key={data.entry.id}
+                  data={data}
+                  factions={myFactions}
+                  onEdit={handleEditEntry}
+                  onWithdraw={handleWithdrawEntry}
+                  onRestore={handleRestoreEntry}
+                  onToggleExchange={handleToggleExchange}
+                  onToggleFaction={handleToggleFaction}
+                  onShowVersions={handleShowVersions}
+                  busy={busy}
+                />
+              ))}
+            </View>
+          )}
+        </ScrollView>
+      ) : (
+        /* ── Add Intelligence Tab (original form) ── */
       <KeyboardAvoidingView
         style={styles.kav}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -1025,6 +1929,55 @@ export default function OpenIntelligenceScreen(): JSX.Element {
 
         </ScrollView>
       </KeyboardAvoidingView>
+      )}
+
+      {/* Edit Entry Modal */}
+      <EditEntryModal
+        visible={editModalVisible}
+        entry={editingEntry}
+        domainId={editingEntry ? normalizeDomainId(editingEntry.intelligence_domain ?? "sports") : "sports"}
+        onClose={() => setEditModalVisible(false)}
+        onSaved={refreshMyEntries}
+      />
+
+      {/* Version History Modal */}
+      <VersionHistoryModal
+        visible={versionModalVisible}
+        entryId={versionEntryId}
+        onClose={() => setVersionModalVisible(false)}
+      />
+
+      {/* Withdraw Confirmation */}
+      <ConfirmDialog
+        visible={withdrawConfirmVisible}
+        title="Withdraw Entry?"
+        message={
+          "This entry will stop being used by analysts.\n" +
+          "Faction sharing will be removed.\n" +
+          "Exchange sharing will be disabled.\n" +
+          "The entry will not be permanently deleted."
+        }
+        confirmLabel="Withdraw"
+        confirmColor={palette.ember}
+        onConfirm={handleConfirmWithdraw}
+        onCancel={() => { setWithdrawConfirmVisible(false); setWithdrawTarget(null); }}
+        busy={busy !== null}
+      />
+
+      {/* Restore Confirmation */}
+      <ConfirmDialog
+        visible={restoreConfirmVisible}
+        title="Restore Entry?"
+        message={
+          "The entry returns to Pending Review.\n" +
+          "Sharing must be manually enabled again."
+        }
+        confirmLabel="Restore"
+        confirmColor={palette.success}
+        onConfirm={handleConfirmRestore}
+        onCancel={() => { setRestoreConfirmVisible(false); setRestoreTargetId(null); }}
+        busy={busy !== null}
+      />
     </SafeAreaView>
   );
 }
@@ -1433,4 +2386,240 @@ const styles = StyleSheet.create({
   errorText: { color: palette.ember, fontSize: 11, fontWeight: "800", textAlign: "center" },
   successText: { color: palette.success, fontSize: 11, fontWeight: "800", textAlign: "center" },
   bottomSpacer: { height: 50 },
+
+  // ── Tab Bar ──
+  tabBar: {
+    flexDirection: "row",
+    gap: 4,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.line,
+  },
+  tabBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(255,255,255,0.02)",
+  },
+  tabBtnActive: {
+    borderColor: palette.cyan,
+    backgroundColor: "rgba(108,230,255,0.08)",
+  },
+  tabText: { color: palette.muted, fontSize: 12, fontWeight: "900" },
+
+  // ── My Intelligence: Summary ──
+  mySummaryRow: {
+    flexDirection: "row",
+    gap: 8,
+    padding: 14,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(10,20,38,0.45)",
+  },
+  mySummaryItem: { flex: 1, alignItems: "center", gap: 2 },
+  mySummaryValue: { fontSize: 22, fontWeight: "900", color: palette.text },
+  mySummaryLabel: { fontSize: 9, fontWeight: "700", color: palette.muted, textTransform: "uppercase", letterSpacing: 0.5 },
+
+  // ── My Intelligence: Action Message ──
+  myActionMsgBox: {
+    padding: 10,
+    borderRadius: 5,
+    borderWidth: 1,
+    backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  myActionMsgText: { fontSize: 11, fontWeight: "800", textAlign: "center" },
+
+  // ── My Intelligence: Entries List ──
+  myEntriesList: { gap: 10 },
+  myEntryCard: {
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(10,20,38,0.50)",
+    padding: 12,
+    gap: 8,
+  },
+  myEntryTopRow: { flexDirection: "row", alignItems: "center", gap: 5, flexWrap: "wrap" },
+  myEntryContent: { color: palette.text, fontSize: 12, fontWeight: "700", lineHeight: 18 },
+  myExpandBtn: { alignSelf: "flex-start", paddingVertical: 2 },
+  myExpandText: { color: palette.cyan, fontSize: 10, fontWeight: "800" },
+
+  // Badges
+  myBadge: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 4, borderWidth: 1,
+  },
+  myBadgeText: { fontSize: 9, fontWeight: "800", letterSpacing: 0.5 },
+  myWarnBadge: {
+    flexDirection: "row", alignItems: "center", gap: 3,
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 4, borderWidth: 1,
+    backgroundColor: "rgba(255,77,109,0.06)",
+  },
+  myWarnText: { fontSize: 9, fontWeight: "800", letterSpacing: 0.5 },
+
+  // Meta grid
+  myMetaGrid: {
+    flexDirection: "row", flexWrap: "wrap", gap: 6,
+    paddingTop: 6, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.05)",
+  },
+  myMetaItem: { width: "48%", gap: 1 },
+  myMetaLabel: { fontSize: 8, fontWeight: "700", color: palette.muted, textTransform: "uppercase", letterSpacing: 0.5 },
+  myMetaValue: { fontSize: 11, fontWeight: "800", color: palette.text },
+
+  // Share pills
+  myShareRow: { flexDirection: "row", gap: 6, flexWrap: "wrap" },
+  mySharePill: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 4, borderWidth: 1,
+    backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  mySharePillText: { fontSize: 9, fontWeight: "800" },
+
+  // Actions
+  myActionsRow: { flexDirection: "row", gap: 6, flexWrap: "wrap" },
+  myActionBtn: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 4, borderWidth: 1,
+    borderColor: palette.line, backgroundColor: "rgba(255,255,255,0.03)",
+    minHeight: 32,
+  },
+  myActionText: { fontSize: 10, fontWeight: "800" },
+
+  // Sharing toggles
+  mySharingSection: {
+    gap: 4, paddingTop: 8, marginTop: 4,
+    borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.05)",
+  },
+  myToggleRow: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingVertical: 8, paddingHorizontal: 4,
+  },
+  myToggleLabel: { flex: 1, color: palette.text, fontSize: 12, fontWeight: "800" },
+  myToggleSwitch: {
+    width: 34, height: 18, borderRadius: 9,
+    borderWidth: 1, borderColor: palette.line,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    justifyContent: "center",
+  },
+  myToggleKnob: {
+    width: 14, height: 14, borderRadius: 7,
+    backgroundColor: palette.text,
+    marginLeft: 2,
+  },
+
+  myFactionList: { paddingLeft: 20, gap: 2 },
+  myFactionItem: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingVertical: 6, paddingHorizontal: 4,
+  },
+  myFactionName: { flex: 1, color: palette.text, fontSize: 11, fontWeight: "700" },
+
+  // Empty state
+  myEmptyState: { alignItems: "center", paddingVertical: 50, gap: 8 },
+  myEmptyTitle: { color: palette.text, fontSize: 16, fontWeight: "900" },
+  myEmptyDesc: { color: palette.muted, fontSize: 12, fontWeight: "700", textAlign: "center", lineHeight: 18 },
+
+  // ── Modal (shared) ──
+  modalOverlay: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(2,4,10,0.80)" },
+  modalSheet: {
+    borderTopLeftRadius: 16, borderTopRightRadius: 16,
+    maxHeight: "85%", minHeight: "50%", overflow: "hidden",
+  },
+  modalHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.15)", alignSelf: "center", marginTop: 8 },
+  modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingTop: 10, paddingBottom: 8 },
+  modalTitle: { color: palette.text, fontSize: 17, fontWeight: "900" },
+  modalCloseBtn: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },
+  modalScroll: { flex: 1 },
+  modalBody: { padding: 16, paddingTop: 4, paddingBottom: 40 },
+  sectionLabel: { color: palette.cyan, fontSize: 10, fontWeight: "900", letterSpacing: 1.5, marginBottom: 6, textTransform: "uppercase" },
+
+  // Edit modal
+  modalContentInput: {
+    color: palette.text, fontSize: 13, fontWeight: "700",
+    minHeight: 100, borderRadius: 5, padding: 12,
+    borderWidth: 1, borderColor: palette.line,
+    backgroundColor: "rgba(10,18,30,0.50)",
+  },
+  modalConfidenceRow: { flexDirection: "row", flexWrap: "wrap", gap: 5 },
+  modalConfidenceChip: {
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 4, borderWidth: 1,
+    borderColor: palette.line, backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  modalConfidenceText: { fontSize: 10, fontWeight: "800", color: palette.muted },
+
+  modalCatRow: { flexDirection: "row", flexWrap: "wrap", gap: 5 },
+  modalCatChip: {
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 4, borderWidth: 1,
+    borderColor: palette.line, backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  modalCatText: { fontSize: 10, fontWeight: "800", color: palette.muted },
+
+  modalTagCat: { marginBottom: 4 },
+  modalTagCatHeader: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingVertical: 8, paddingHorizontal: 4,
+  },
+  modalTagCatLabel: { color: palette.text, fontSize: 12, fontWeight: "900", flex: 1 },
+
+  modalNotice: {
+    color: palette.muted, fontSize: 10, fontWeight: "700",
+    lineHeight: 15, marginTop: 10, padding: 8, borderRadius: 4,
+    backgroundColor: "rgba(255,181,71,0.06)",
+  },
+  modalResultBox: { marginTop: 12, padding: 10, borderRadius: 5, borderWidth: 1, backgroundColor: "rgba(255,255,255,0.03)" },
+  modalResultText: { fontSize: 12, fontWeight: "800" },
+
+  modalSubmitBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 8, borderRadius: 6, paddingVertical: 12, marginTop: 16,
+    backgroundColor: palette.cyan,
+  },
+  modalSubmitText: { color: palette.void, fontSize: 14, fontWeight: "900" },
+
+  // Version history
+  versionItem: {
+    borderRadius: 5, borderWidth: 1, borderColor: palette.line,
+    backgroundColor: "rgba(10,20,38,0.45)", padding: 10, marginBottom: 8, gap: 4,
+  },
+  versionHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
+  versionBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 3, borderWidth: 1 },
+  versionBadgeText: { fontSize: 10, fontWeight: "900" },
+  versionChangeType: { fontSize: 11, fontWeight: "800", color: palette.text, flex: 1 },
+  versionDate: { fontSize: 10, fontWeight: "700", color: palette.muted },
+  versionContent: { color: palette.text, fontSize: 11, fontWeight: "600", lineHeight: 16 },
+  versionNoContent: { color: palette.muted, fontSize: 10, fontWeight: "700", fontStyle: "italic" },
+  versionMetaText: { fontSize: 9, fontWeight: "700", color: palette.muted },
+
+  modalErrorText: { color: palette.ember, fontSize: 12, fontWeight: "800", textAlign: "center", paddingVertical: 20 },
+  modalEmptyText: { color: palette.muted, fontSize: 12, fontWeight: "700", textAlign: "center", paddingVertical: 20 },
+
+  // Confirm dialog
+  confirmSheet: {
+    borderRadius: 12,
+    padding: 20,
+    marginHorizontal: 20,
+    overflow: "hidden",
+  },
+  confirmTitle: { color: palette.text, fontSize: 18, fontWeight: "900", marginBottom: 8 },
+  confirmMessage: { color: palette.muted, fontSize: 13, fontWeight: "700", lineHeight: 20, marginBottom: 16 },
+  confirmBtnRow: { flexDirection: "row", gap: 10 },
+  confirmCancelBtn: {
+    flex: 1, paddingVertical: 12, borderRadius: 6, borderWidth: 1,
+    borderColor: palette.line, alignItems: "center", justifyContent: "center",
+  },
+  confirmCancelText: { color: palette.muted, fontSize: 14, fontWeight: "800" },
+  confirmActionBtn: {
+    flex: 1, paddingVertical: 12, borderRadius: 6,
+    alignItems: "center", justifyContent: "center",
+  },
+  confirmActionText: { color: palette.void, fontSize: 14, fontWeight: "900" },
 });

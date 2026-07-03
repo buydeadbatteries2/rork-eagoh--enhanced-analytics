@@ -960,9 +960,13 @@ export async function performModerationAction(
   }
 }
 
-/** Check if the current user has admin moderation access. */
-export function hasModerationAccess(profile: { admin_tier_override: string | null; admin_tier_expires_at: string | null } | null | undefined): boolean {
-  if (!profile || !profile.admin_tier_override) return false;
+/** Check if the current user has admin moderation access.
+ *
+ *  Uses the explicit is_admin flag verified server-side. Subscription tiers
+ *  and admin_tier_override are NOT sufficient for moderation access.
+ */
+export function hasModerationAccess(profile: { is_admin: boolean | null; admin_tier_expires_at: string | null } | null | undefined): boolean {
+  if (!profile || !profile.is_admin) return false;
   if (profile.admin_tier_expires_at) {
     const expires = new Date(profile.admin_tier_expires_at).getTime();
     if (Date.now() > expires) return false;

@@ -34,24 +34,28 @@ import {
   toggleFactionShare,
   fetchVersionHistory,
   hasModerationAccess,
+  getTagsForDomain,
   type OpenIntelligenceRow,
   type VersionHistoryEntry,
-  type ValidationStatus,
   type ConfidenceLevel,
-  type EntryType,
 } from "@/services/openIntelligence";
+import { normalizeDomainId } from "@/services/domains";
 import { listUserFactions, type FactionRow } from "@/services/factions";
 import { supabase } from "@/lib/supabase";
 import {
   Activity,
   AlertTriangle,
+  Check,
   ChevronLeft,
   ChevronDown,
+  ChevronRight,
   Clock,
   Edit3,
   FileClock,
   Flag,
   GitBranch,
+  Hash,
+  Plus,
   RotateCcw,
   Save,
   Shield,
@@ -348,18 +352,38 @@ function EditEntryModal({
   const h = useHaptics();
   const [content, setContent] = useState<string>("");
   const [confidenceLevel, setConfidenceLevel] = useState<ConfidenceLevel>("moderate_confidence");
+  const [editCategory, setEditCategory] = useState<string>("");
+  const [editSubtags, setEditSubtags] = useState<string[]>([]);
+  const [editCustomTags, setEditCustomTags] = useState<string[]>([]);
+  const [customInput, setCustomInput] = useState<string>("");
+  const [openCats, setOpenCats] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
   const [resultMsg, setResultMsg] = useState<string | null>(null);
+
+  const domainId = entry ? normalizeDomainId(entry.intelligence_domain ?? "sports") : "sports";
+  const tags = useMemo(() => getTagsForDomain(domainId), [domainId]);
 
   useEffect(() => {
     if (visible && entry) {
       setContent(entry.content);
       setConfidenceLevel((entry.confidence_level as ConfidenceLevel) ?? "moderate_confidence");
+      setEditCategory(entry.selected_category ?? "");
+      setEditSubtags(entry.selected_subtags ?? []);
+      setEditCustomTags(entry.custom_tags ?? []);
       setResultMsg(null);
+      setOpenCats({});
     }
   }, [visible, entry]);
 
   const canSubmit = content.trim().length > 0 && !submitting;
+
+  const handleAddCustom = useCallback((): void => {
+    const trimmed = customInput.trim().slice(0, 30);
+    if (trimmed && !editCustomTags.includes(trimmed)) {
+      setEditCustomTags((prev) => [...prev, trimmed]);
+      setCustomInput("");
+    }
+  }, [customInput, editCustomTags]);
 
   const handleSave = useCallback(async (): Promise<void> => {
     if (!entry || !content.trim()) return;
@@ -371,6 +395,9 @@ function EditEntryModal({
       entryId: entry.id,
       content: content.trim(),
       confidenceLevel,
+      selectedCategory: editCategory || null,
+      selectedSubtags: editSubtags.length > 0 ? editSubtags : null,
+      customTags: editCustomTags.length > 0 ? editCustomTags : null,
     });
 
     setSubmitting(false);
@@ -383,7 +410,7 @@ function EditEntryModal({
     } else {
       setResultMsg(result.error ?? "Failed to update entry.");
     }
-  }, [entry, content, confidenceLevel, h, onSaved, onClose]);
+  }, [entry, content, confidenceLevel, editCategory, editSubtags, editCustomTags, h, onSaved, onClose]);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -436,6 +463,105 @@ function EditEntryModal({
                 );
               })}
             </View>
+
+            <Text style={[mgmtStyles.sectionLabel, { marginTop: 14 }]}>Category</Text>
+            <View style={mgmtStyles.confidenceRow}>
+              {tags.map((cat) => {
+                const isSelected = editCategory === cat.id;
+                return (
+                  <Pressable
+                    key={cat.id}
+                    onPress={() => { h.selection(); setEditCategory(isSelected ? "" : cat.id); }}
+                    style={({ pressed }) => [
+                      mgmtStyles.confidenceChip,
+                      isSelected && { borderColor: palette.cyan, backgroundColor: "rgba(108,230,255,0.10)" },
+                      pressed && mgmtStyles.pressed,
+                    ]}
+                  >
+                    <Text style={[mgmtStyles.confidenceText, isSelected && { color: palette.cyan }]}>{cat.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Text style={[mgmtStyles.sectionLabel, { marginTop: 14 }]}>Subtags</Text>
+            {tags.map((cat) => {
+              const isOpen = openCats[cat.id] ?? false;
+              const selectedInCat = cat.tags.filter((t) => editSubtags.includes(t.id)).length;
+              return (
+                <View key={cat.id} style={mgmtStyles.tagCatSection}>
+                  <Pressable
+                    onPress={() => setOpenCats((prev) => ({ ...prev, [cat.id]: !prev[cat.id] }))}
+                    style={({ pressed }) => [mgmtStyles.tagCatHeader, pressed && mgmtStyles.pressed]}
+                  >
+                    <Text style={mgmtStyles.tagCatLabel}>
+                      {cat.label}{selectedInCat > 0 ? ` (${selectedInCat})` : ""}
+                    </Text>
+                    {isOpen ? <ChevronDown color={palette.muted} size={14} /> : <ChevronRight color={palette.muted} size={14} />}
+                  </Pressable>
+                  {isOpen ? (
+                    <View style={mgmtStyles.tagGrid}>
+                      {cat.tags.map((tag) => {
+                        const isSelected = editSubtags.includes(tag.id);
+                        return (
+                          <Pressable
+                            key={tag.id}
+                            onPress={() => {
+                              h.selection();
+                              setEditSubtags((prev) => prev.includes(tag.id) ? prev.filter((id) => id !== tag.id) : [...prev, tag.id]);
+                            }}
+                            style={({ pressed }) => [
+                              mgmtStyles.tagChipModal,
+                              isSelected && { borderColor: palette.cyan, backgroundColor: "rgba(108,230,255,0.12)" },
+                              pressed && mgmtStyles.pressed,
+                            ]}
+                          >
+                            {isSelected ? <Check color={palette.cyan} size={11} /> : <Hash color={palette.muted} size={11} />}
+                            <Text style={[mgmtStyles.tagChipModalText, isSelected && { color: palette.cyan }]}>{tag.label}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })}
+
+            <Text style={[mgmtStyles.sectionLabel, { marginTop: 14 }]}>Custom Tags</Text>
+            <View style={mgmtStyles.customTagWrap}>
+              <TextInput
+                value={customInput}
+                onChangeText={(t) => setCustomInput(t.slice(0, 30))}
+                placeholder="Add custom tag (max 30)"
+                placeholderTextColor={palette.muted}
+                maxLength={30}
+                style={mgmtStyles.customTagInput}
+                onSubmitEditing={handleAddCustom}
+                returnKeyType="done"
+              />
+              <Pressable
+                onPress={handleAddCustom}
+                disabled={!customInput.trim()}
+                style={({ pressed }) => [mgmtStyles.customAddBtn, !customInput.trim() && { opacity: 0.4 }, pressed && mgmtStyles.pressed]}
+              >
+                <Plus color={palette.void} size={14} />
+              </Pressable>
+            </View>
+            {editCustomTags.length > 0 ? (
+              <View style={mgmtStyles.selectedTagsRow}>
+                {editCustomTags.map((ct) => (
+                  <Pressable
+                    key={`edit-${ct}`}
+                    onPress={() => { h.selection(); setEditCustomTags((prev) => prev.filter((t) => t !== ct)); }}
+                    style={({ pressed }) => [mgmtStyles.selectedChipModal, pressed && mgmtStyles.pressed]}
+                  >
+                    <Check color={palette.cyan} size={10} />
+                    <Text style={mgmtStyles.selectedChipText}>{ct}</Text>
+                    <X color={palette.muted} size={12} />
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
 
             <Text style={mgmtStyles.noticeText}>
               Quality score, influence score, and validation status are calculated
@@ -590,6 +716,10 @@ export default function MyIntelligenceScreen(): JSX.Element {
   const [versionEntryId, setVersionEntryId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [withdrawConfirmVisible, setWithdrawConfirmVisible] = useState(false);
+  const [withdrawTargetId, setWithdrawTargetId] = useState<string | null>(null);
+  const [restoreConfirmVisible, setRestoreConfirmVisible] = useState(false);
+  const [restoreTargetId, setRestoreTargetId] = useState<string | null>(null);
 
   // Fetch user's entries
   const entriesQuery = useQuery<OpenIntelligenceRow[]>({
@@ -645,10 +775,16 @@ export default function MyIntelligenceScreen(): JSX.Element {
     setEditModalVisible(true);
   }, []);
 
-  const handleWithdraw = useCallback(async (entryId: string): Promise<void> => {
-    setBusy(`withdraw:${entryId}`);
+  const handleWithdraw = useCallback((entryId: string): void => {
+    setWithdrawTargetId(entryId);
+    setWithdrawConfirmVisible(true);
+  }, []);
+
+  const handleConfirmWithdraw = useCallback(async (): Promise<void> => {
+    if (!withdrawTargetId) return;
+    setBusy(`withdraw:${withdrawTargetId}`);
     setActionMsg(null);
-    const result = await withdrawEntry(entryId);
+    const result = await withdrawEntry(withdrawTargetId);
     setBusy(null);
     if (result.ok) {
       h.success();
@@ -657,12 +793,20 @@ export default function MyIntelligenceScreen(): JSX.Element {
     } else {
       setActionMsg(result.error ?? "Failed to withdraw entry.");
     }
-  }, [h, refreshAll]);
+    setWithdrawConfirmVisible(false);
+    setWithdrawTargetId(null);
+  }, [withdrawTargetId, h, refreshAll]);
 
-  const handleRestore = useCallback(async (entryId: string): Promise<void> => {
-    setBusy(`restore:${entryId}`);
+  const handleRestore = useCallback((entryId: string): void => {
+    setRestoreTargetId(entryId);
+    setRestoreConfirmVisible(true);
+  }, []);
+
+  const handleConfirmRestore = useCallback(async (): Promise<void> => {
+    if (!restoreTargetId) return;
+    setBusy(`restore:${restoreTargetId}`);
     setActionMsg(null);
-    const result = await restoreEntry(entryId);
+    const result = await restoreEntry(restoreTargetId);
     setBusy(null);
     if (result.ok) {
       h.success();
@@ -671,7 +815,9 @@ export default function MyIntelligenceScreen(): JSX.Element {
     } else {
       setActionMsg(result.error ?? "Failed to restore entry.");
     }
-  }, [h, refreshAll]);
+    setRestoreConfirmVisible(false);
+    setRestoreTargetId(null);
+  }, [restoreTargetId, h, refreshAll]);
 
   const handleToggleExchange = useCallback(async (entryId: string, enabled: boolean): Promise<void> => {
     setBusy(`exchange:${entryId}`);
@@ -810,6 +956,88 @@ export default function MyIntelligenceScreen(): JSX.Element {
         entryId={versionEntryId}
         onClose={() => setVersionModalVisible(false)}
       />
+
+      {/* Withdraw Confirmation */}
+      <Modal visible={withdrawConfirmVisible} transparent animationType="fade" onRequestClose={() => setWithdrawConfirmVisible(false)}>
+        <View style={mgmtStyles.modalOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setWithdrawConfirmVisible(false)} />
+          <View style={mgmtStyles.confirmSheet}>
+            <LinearGradient colors={["#0A1628", "#050D18"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
+            <Text style={mgmtStyles.confirmTitle}>Withdraw Entry?</Text>
+            <Text style={mgmtStyles.confirmMessage}>
+              {"This entry will stop being used by analysts.\n" +
+              "Faction sharing will be removed.\n" +
+              "Exchange sharing will be disabled.\n" +
+              "The entry will not be permanently deleted."}
+            </Text>
+            <View style={mgmtStyles.confirmBtnRow}>
+              <Pressable
+                onPress={() => { setWithdrawConfirmVisible(false); setWithdrawTargetId(null); }}
+                disabled={busy !== null}
+                style={({ pressed }) => [mgmtStyles.confirmCancelBtn, pressed && mgmtStyles.pressed]}
+              >
+                <Text style={mgmtStyles.confirmCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleConfirmWithdraw}
+                disabled={busy !== null}
+                style={({ pressed }) => [
+                  mgmtStyles.confirmActionBtn,
+                  { backgroundColor: palette.ember },
+                  busy !== null && { opacity: 0.6 },
+                  pressed && mgmtStyles.pressed,
+                ]}
+              >
+                {busy !== null ? (
+                  <ActivityIndicator color={palette.void} size="small" />
+                ) : (
+                  <Text style={mgmtStyles.confirmActionText}>Withdraw</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Restore Confirmation */}
+      <Modal visible={restoreConfirmVisible} transparent animationType="fade" onRequestClose={() => setRestoreConfirmVisible(false)}>
+        <View style={mgmtStyles.modalOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setRestoreConfirmVisible(false)} />
+          <View style={mgmtStyles.confirmSheet}>
+            <LinearGradient colors={["#0A1628", "#050D18"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
+            <Text style={mgmtStyles.confirmTitle}>Restore Entry?</Text>
+            <Text style={mgmtStyles.confirmMessage}>
+              {"The entry returns to Pending Review.\n" +
+              "Sharing must be manually enabled again."}
+            </Text>
+            <View style={mgmtStyles.confirmBtnRow}>
+              <Pressable
+                onPress={() => { setRestoreConfirmVisible(false); setRestoreTargetId(null); }}
+                disabled={busy !== null}
+                style={({ pressed }) => [mgmtStyles.confirmCancelBtn, pressed && mgmtStyles.pressed]}
+              >
+                <Text style={mgmtStyles.confirmCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleConfirmRestore}
+                disabled={busy !== null}
+                style={({ pressed }) => [
+                  mgmtStyles.confirmActionBtn,
+                  { backgroundColor: palette.success },
+                  busy !== null && { opacity: 0.6 },
+                  pressed && mgmtStyles.pressed,
+                ]}
+              >
+                {busy !== null ? (
+                  <ActivityIndicator color={palette.void} size="small" />
+                ) : (
+                  <Text style={mgmtStyles.confirmActionText}>Restore</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1017,6 +1245,64 @@ const mgmtStyles = StyleSheet.create({
 
   errorText: { color: palette.ember, fontSize: 12, fontWeight: "800", textAlign: "center", paddingVertical: 20 },
   emptyText: { color: palette.muted, fontSize: 12, fontWeight: "700", textAlign: "center", paddingVertical: 20 },
+
+  // Edit modal: tag editing
+  tagCatSection: { marginBottom: 4 },
+  tagCatHeader: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingVertical: 8, paddingHorizontal: 4,
+  },
+  tagCatLabel: { color: palette.text, fontSize: 12, fontWeight: "900", flex: 1 },
+  tagGrid: { flexDirection: "row", flexWrap: "wrap", gap: 5, paddingLeft: 4 },
+  tagChipModal: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 8, paddingVertical: 5, borderRadius: 5, borderWidth: 1,
+    borderColor: palette.line, backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  tagChipModalText: { color: palette.muted, fontSize: 11, fontWeight: "800" },
+
+  customTagWrap: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingLeft: 4, marginTop: 4,
+  },
+  customTagInput: {
+    flex: 1, color: palette.text, fontSize: 13, fontWeight: "700",
+    minHeight: 40, borderRadius: 5, paddingHorizontal: 10, borderWidth: 1,
+    borderColor: "rgba(255, 181, 71, 0.3)", backgroundColor: "rgba(255,181,71,0.06)",
+  },
+  customAddBtn: {
+    width: 32, height: 32, borderRadius: 5,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: palette.gold,
+  },
+  selectedTagsRow: { flexDirection: "row", flexWrap: "wrap", gap: 5, marginBottom: 6, marginTop: 6 },
+  selectedChipModal: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 8, paddingVertical: 5, borderRadius: 5, borderWidth: 1,
+    borderColor: "rgba(108,230,255,0.35)", backgroundColor: "rgba(108,230,255,0.12)",
+  },
+  selectedChipText: { color: palette.cyan, fontSize: 11, fontWeight: "800" },
+
+  // Confirm dialog
+  confirmSheet: {
+    borderRadius: 12,
+    padding: 20,
+    marginHorizontal: 20,
+    overflow: "hidden",
+  },
+  confirmTitle: { color: palette.text, fontSize: 18, fontWeight: "900", marginBottom: 8 },
+  confirmMessage: { color: palette.muted, fontSize: 13, fontWeight: "700", lineHeight: 20, marginBottom: 16 },
+  confirmBtnRow: { flexDirection: "row", gap: 10 },
+  confirmCancelBtn: {
+    flex: 1, paddingVertical: 12, borderRadius: 6, borderWidth: 1,
+    borderColor: palette.line, alignItems: "center", justifyContent: "center",
+  },
+  confirmCancelText: { color: palette.muted, fontSize: 14, fontWeight: "800" },
+  confirmActionBtn: {
+    flex: 1, paddingVertical: 12, borderRadius: 6,
+    alignItems: "center", justifyContent: "center",
+  },
+  confirmActionText: { color: palette.void, fontSize: 14, fontWeight: "900" },
 
   pressed: { transform: [{ scale: 0.985 }], opacity: 0.88 },
 });

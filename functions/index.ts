@@ -4308,9 +4308,6 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
 }
 
 // ── Export ───────────────────────────────────────────────────────────────────
-// Redeploy trigger: reset Durable Object storage after platform-side reset.
-// Force re-bundle to pick up installed @supabase/supabase-js dependency.
-// Retry deploy after bun install completed.
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -4321,7 +4318,7 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/ping") {
-      return jsonResponse({ ok: true, now: new Date().toISOString() });
+      return jsonResponse({ ok: true, now: new Date().toISOString(), service: "eagoh-analyst-worker", version: "6b-ui" });
     }
 
     if (url.pathname === "/analyst/chat" && request.method === "POST") {

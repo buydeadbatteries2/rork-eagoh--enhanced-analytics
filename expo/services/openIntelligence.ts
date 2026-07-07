@@ -1272,13 +1272,21 @@ export type SavedFilterPreset = {
   createdAt: string;
 };
 
-const SAVED_FILTERS_KEY = "eagoh_saved_filters";
+/**
+ * Storage key is user-scoped so one account never sees another account's
+ * presets on the same device.
+ */
+const SAVED_FILTERS_KEY_PREFIX = "eagoh_oi_saved_filters_";
 const MAX_SAVED_FILTERS = 5;
 
-/** Load the user's saved filter presets from AsyncStorage. */
-export async function loadSavedFilters(): Promise<SavedFilterPreset[]> {
+function savedFiltersKey(userId: string): string {
+  return `${SAVED_FILTERS_KEY_PREFIX}${userId}`;
+}
+
+/** Load the authenticated user's saved filter presets from AsyncStorage. */
+export async function loadSavedFilters(userId: string): Promise<SavedFilterPreset[]> {
   try {
-    const stored = await AsyncStorage.getItem(SAVED_FILTERS_KEY);
+    const stored = await AsyncStorage.getItem(savedFiltersKey(userId));
     const list: SavedFilterPreset[] = stored ? JSON.parse(stored) : [];
     return list.slice(0, MAX_SAVED_FILTERS);
   } catch {
@@ -1286,10 +1294,14 @@ export async function loadSavedFilters(): Promise<SavedFilterPreset[]> {
   }
 }
 
-/** Save a new filter preset. Enforces the 5-preset limit. */
-export async function saveFilterPreset(name: string, filters: MyIntelligenceFilters): Promise<SavedFilterPreset[]> {
+/** Save a new filter preset for the authenticated user. Enforces the 5-preset limit. */
+export async function saveFilterPreset(
+  userId: string,
+  name: string,
+  filters: MyIntelligenceFilters,
+): Promise<SavedFilterPreset[]> {
   try {
-    const existing = await loadSavedFilters();
+    const existing = await loadSavedFilters(userId);
     const preset: SavedFilterPreset = {
       id: `preset_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       name: name.trim().slice(0, 40),
@@ -1297,23 +1309,125 @@ export async function saveFilterPreset(name: string, filters: MyIntelligenceFilt
       createdAt: new Date().toISOString(),
     };
     const updated = [preset, ...existing].slice(0, MAX_SAVED_FILTERS);
-    await AsyncStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(updated));
+    await AsyncStorage.setItem(savedFiltersKey(userId), JSON.stringify(updated));
     return updated;
   } catch {
     return [];
   }
 }
 
-/** Delete a saved filter preset by id. */
-export async function deleteFilterPreset(presetId: string): Promise<SavedFilterPreset[]> {
+/** Delete a saved filter preset by id for the authenticated user. */
+export async function deleteFilterPreset(
+  userId: string,
+  presetId: string,
+): Promise<SavedFilterPreset[]> {
   try {
-    const existing = await loadSavedFilters();
+    const existing = await loadSavedFilters(userId);
     const updated = existing.filter((p) => p.id !== presetId);
-    await AsyncStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(updated));
+    await AsyncStorage.setItem(savedFiltersKey(userId), JSON.stringify(updated));
     return updated;
   } catch {
     return [];
   }
+}
+
+// ── Phase 7A: Server-side paginated query for My Intelligence ───────────────
+
+export interface PaginatedEntriesResult {
+  entries: OpenIntelligenceRow[];
+  hasMore: boolean;
+  nextPage: number | undefined;
+}
+
+/**
+ * Fetch a single page of the authenticated user's entries with server-side
+ * filtering, sorting, and `.range()` pagination.
+ *
+ * Ownership is always scoped to userId. Search uses PostgREST ilike on
+ * content, tag (which embeds subtags + custom tags via formatTagField),
+ * and selected_category — covering all four search targets.
+ * Faction sharing filter uses the pre-fetched sharedFactionEntryIds list.
+ */
+export async function listMyEntriesPage(
+  userId: string,
+  page: number,
+  pageSize: number,
+  filters: MyIntelligenceFilters,
+  sharedFactionEntryIds: string[],
+): Promise<PaginatedEntriesResult> {
+  let query = supabase
+    .from("open_intelligence")
+    .select("*")
+    .eq("user_id", userId);
+
+  // Search: ilike on content, tag (embeds subtags + custom tags), selected_category
+  const q = filters.search.trim();
+  if (q) {
+    const like = `%${q}%`;
+    query = query.or(
+      `content.ilike.${like},tag.ilike.${like},selected_category.ilike.${like}`,
+    );
+  }
+
+  // Category filter
+  if (filters.category !== "all") {
+    query = query.eq("selected_category", filters.category);
+  }
+
+  // Validation status filter
+  if (filters.validationStatus !== "all") {
+    query = query.eq("validation_status", filters.validationStatus);
+  }
+
+  // Confidence filter
+  if (filters.confidence !== "all") {
+    query = query.eq("confidence_level", filters.confidence);
+  }
+
+  // Sharing filter
+  if (filters.sharing === "exchange") {
+    query = query.eq("exchange_share_enabled", true);
+  } else if (filters.sharing === "faction") {
+    if (sharedFactionEntryIds.length === 0) {
+      return { entries: [], hasMore: false, nextPage: undefined };
+    }
+    query = query.in("id", sharedFactionEntryIds);
+  } else if (filters.sharing === "private") {
+    query = query.eq("exchange_share_enabled", false);
+    if (sharedFactionEntryIds.length > 0) {
+      const list = sharedFactionEntryIds.map((id) => `"${id}"`).join(",");
+      query = query.filter("id", "not.in", `(${list})`);
+    }
+  }
+
+  // Sort
+  switch (filters.sort) {
+    case "newest":
+      query = query.order("created_at", { ascending: false });
+      break;
+    case "oldest":
+      query = query.order("created_at", { ascending: true });
+      break;
+    case "highest_quality":
+      query = query.order("quality_score", { ascending: false });
+      break;
+    case "lowest_quality":
+      query = query.order("quality_score", { ascending: true });
+      break;
+    case "recently_updated":
+      query = query.order("updated_at", { ascending: false });
+      break;
+  }
+
+  // Range pagination
+  const from = page * pageSize;
+  const to = from + pageSize - 1;
+  const { data, error } = await query.range(from, to);
+  if (error) throw error;
+
+  const entries = (data ?? []) as OpenIntelligenceRow[];
+  const hasMore = entries.length === pageSize;
+  return { entries, hasMore, nextPage: hasMore ? page + 1 : undefined };
 }
 
 /** Re-export helpers */

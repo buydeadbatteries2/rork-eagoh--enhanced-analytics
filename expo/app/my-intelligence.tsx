@@ -27,7 +27,7 @@ import {
   validationStatusColor,
   CHANGE_TYPE_LABELS,
   statusExplanation,
-  listAllEntries,
+  listMyEntriesPage,
   updateEntry,
   withdrawEntry,
   restoreEntry,
@@ -36,8 +36,6 @@ import {
   fetchVersionHistory,
   hasModerationAccess,
   getTagsForDomain,
-  applyEntryFilters,
-  paginate,
   loadSavedFilters,
   saveFilterPreset,
   deleteFilterPreset,
@@ -53,6 +51,7 @@ import {
   type SortOption,
   type SharingFilter,
   type SavedFilterPreset,
+  type PaginatedEntriesResult,
 } from "@/services/openIntelligence";
 import { normalizeDomainId } from "@/services/domains";
 import { listUserFactions, type FactionRow } from "@/services/factions";
@@ -97,7 +96,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 
 // ── Entry Card ──────────────────────────────────────────────────────────
@@ -754,25 +753,14 @@ export default function MyIntelligenceScreen(): JSX.Element {
   const [savedPresets, setSavedPresets] = useState<SavedFilterPreset[]>([]);
   const [savePresetName, setSavePresetName] = useState("");
   const [showSavePresetInput, setShowSavePresetInput] = useState(false);
-  const [visibleCount, setVisibleCount] = useState<number>(10);
   const PAGE_SIZE = 10;
 
-  // Load saved filter presets on mount
+  // Load saved filter presets on mount (user-scoped)
   useEffect(() => {
-    loadSavedFilters().then(setSavedPresets).catch(() => undefined);
-  }, []);
-
-  // Reset pagination when filters change
-  useEffect(() => {
-    setVisibleCount(PAGE_SIZE);
-  }, [filters]);
-
-  // Fetch user's entries (increased limit for search)
-  const entriesQuery = useQuery<OpenIntelligenceRow[]>({
-    queryKey: ["oi", "my-entries", profile?.id],
-    enabled: !!profile?.id,
-    queryFn: () => listAllEntries(profile!.id, 200),
-  });
+    if (profile?.id) {
+      loadSavedFilters(profile.id).then(setSavedPresets).catch(() => undefined);
+    }
+  }, [profile?.id]);
 
   // Fetch user's factions for sharing toggles
   const factionsQuery = useQuery<FactionRow[]>({
@@ -781,11 +769,12 @@ export default function MyIntelligenceScreen(): JSX.Element {
     queryFn: () => listUserFactions(profile!.id),
   });
 
-  // Fetch shared faction intelligence for the user's entries
+  // Fetch shared faction intelligence for the user's entries (lightweight — needed
+  // for the faction sharing filter, which cannot be expressed in the OI query alone)
   const sharedFactionQuery = useQuery<Array<{ oi_entry_id: string; faction_id: string }>>(
     {
       queryKey: ["oi", "my-shared-factions", profile?.id],
-      enabled: !!profile?.id && (factionsQuery.data?.length ?? 0) > 0,
+      enabled: !!profile?.id,
       queryFn: async () => {
         const { data, error } = await supabase
           .from("faction_shared_intelligence")
@@ -799,7 +788,12 @@ export default function MyIntelligenceScreen(): JSX.Element {
 
   const factions = factionsQuery.data ?? [];
 
-  // Build a map of entryId -> shared faction IDs (for filtering)
+  // Entry IDs that are shared with at least one faction (used by the sharing filter)
+  const sharedFactionEntryIds = useMemo(() => {
+    return Array.from(new Set((sharedFactionQuery.data ?? []).map((s) => s.oi_entry_id)));
+  }, [sharedFactionQuery.data]);
+
+  // Map entryId -> shared faction IDs (for display in cards)
   const sharedFactionMap = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const s of sharedFactionQuery.data ?? []) {
@@ -810,31 +804,48 @@ export default function MyIntelligenceScreen(): JSX.Element {
     return map;
   }, [sharedFactionQuery.data]);
 
-  // Build expanded entries with faction sharing info (filtered + sorted + paginated)
-  const filteredEntries = useMemo(() => {
-    const entries = entriesQuery.data ?? [];
-    return applyEntryFilters(entries, filters, sharedFactionMap);
-  }, [entriesQuery.data, filters, sharedFactionMap]);
+  // Server-side paginated query with real `.range()` pagination.
+  // Page resets whenever filters/search/sort or the shared-faction list changes.
+  const entriesInfiniteQuery = useInfiniteQuery({
+    queryKey: ["oi", "my-entries", profile?.id, filters, sharedFactionEntryIds],
+    enabled: !!profile?.id && sharedFactionQuery.isSuccess,
+    initialPageParam: 0 as number,
+    getNextPageParam: (lastPage: PaginatedEntriesResult, _allPages: PaginatedEntriesResult[], lastPageParam: number): number | undefined =>
+      lastPage.hasMore ? lastPageParam + 1 : undefined,
+    queryFn: async ({ pageParam }: { pageParam: number }): Promise<PaginatedEntriesResult> => {
+      return listMyEntriesPage(
+        profile!.id,
+        pageParam,
+        PAGE_SIZE,
+        filters,
+        sharedFactionEntryIds,
+      );
+    },
+  });
+
+  // Flatten all loaded pages into a single list
+  const allLoadedEntries: OpenIntelligenceRow[] = useMemo(() => {
+    return (entriesInfiniteQuery.data?.pages ?? []).flatMap((p) => p.entries);
+  }, [entriesInfiniteQuery.data]);
 
   const expandedEntries: ExpandedEntry[] = useMemo(() => {
-    const paginated = paginate(filteredEntries, 0, visibleCount - 1);
-    return paginated.map((entry) => ({
+    return allLoadedEntries.map((entry) => ({
       entry,
       sharedFactionIds: sharedFactionMap.get(entry.id) ?? [],
     }));
-  }, [filteredEntries, visibleCount, sharedFactionMap]);
+  }, [allLoadedEntries, sharedFactionMap]);
 
-  const hasMore = filteredEntries.length > visibleCount;
+  const hasMore = entriesInfiniteQuery.hasNextPage;
 
-  // Category options derived from the user's entries
+  // Category options derived from the user's loaded entries
   const categoryOptions = useMemo(() => {
     const set = new Set<string>();
-    for (const e of entriesQuery.data ?? []) {
+    for (const e of allLoadedEntries) {
       const cat = e.selected_category ?? e.tag;
       if (cat) set.add(cat);
     }
     return Array.from(set).sort();
-  }, [entriesQuery.data]);
+  }, [allLoadedEntries]);
 
   const updateFilter = useCallback(<K extends keyof MyIntelligenceFilters>(key: K, value: MyIntelligenceFilters[K]): void => {
     h.selection();
@@ -853,26 +864,27 @@ export default function MyIntelligenceScreen(): JSX.Element {
 
   const handleSavePreset = useCallback(async (): Promise<void> => {
     const name = savePresetName.trim();
-    if (!name) return;
+    if (!name || !profile?.id) return;
     h.light();
-    const updated = await saveFilterPreset(name, filters);
+    const updated = await saveFilterPreset(profile.id, name, filters);
     setSavedPresets(updated);
     setSavePresetName("");
     setShowSavePresetInput(false);
-  }, [savePresetName, filters, h]);
+  }, [savePresetName, filters, h, profile?.id]);
 
   const handleDeletePreset = useCallback(async (presetId: string): Promise<void> => {
+    if (!profile?.id) return;
     h.light();
-    const updated = await deleteFilterPreset(presetId);
+    const updated = await deleteFilterPreset(profile.id, presetId);
     setSavedPresets(updated);
-  }, [h]);
+  }, [h, profile?.id]);
 
   const loadMore = useCallback((): void => {
     if (hasMore) {
       h.light();
-      setVisibleCount((prev) => prev + PAGE_SIZE);
+      entriesInfiniteQuery.fetchNextPage();
     }
-  }, [hasMore, h]);
+  }, [hasMore, h, entriesInfiniteQuery]);
 
   const activeFilterCount = useMemo(() => {
     let count = 0;
@@ -886,9 +898,9 @@ export default function MyIntelligenceScreen(): JSX.Element {
   }, [filters]);
 
   const refreshAll = useCallback((): void => {
-    queryClient.invalidateQueries({ queryKey: ["oi", "my-entries"] });
+    entriesInfiniteQuery.refetch();
     queryClient.invalidateQueries({ queryKey: ["oi", "my-shared-factions"] });
-  }, [queryClient]);
+  }, [queryClient, entriesInfiniteQuery]);
 
   const handleEdit = useCallback((entry: OpenIntelligenceRow): void => {
     setEditingEntry(entry);
@@ -1005,18 +1017,18 @@ export default function MyIntelligenceScreen(): JSX.Element {
         {/* Summary */}
         <View style={mgmtStyles.summaryRow}>
           <View style={mgmtStyles.summaryItem}>
-            <Text style={mgmtStyles.summaryValue}>{filteredEntries.length}</Text>
-            <Text style={mgmtStyles.summaryLabel}>Total Entries</Text>
+            <Text style={mgmtStyles.summaryValue}>{expandedEntries.length}</Text>
+            <Text style={mgmtStyles.summaryLabel}>Loaded Entries</Text>
           </View>
           <View style={mgmtStyles.summaryItem}>
             <Text style={[mgmtStyles.summaryValue, { color: palette.cyan }]}>
-              {filteredEntries.filter((e) => (e.exchange_share_enabled ?? false)).length}
+              {expandedEntries.filter((e) => (e.entry.exchange_share_enabled ?? false)).length}
             </Text>
             <Text style={mgmtStyles.summaryLabel}>Exchange Shared</Text>
           </View>
           <View style={mgmtStyles.summaryItem}>
             <Text style={[mgmtStyles.summaryValue, { color: palette.violet }]}>
-              {filteredEntries.filter((e) => (sharedFactionMap.get(e.id)?.length ?? 0) > 0).length}
+              {expandedEntries.filter((e) => e.sharedFactionIds.length > 0).length}
             </Text>
             <Text style={mgmtStyles.summaryLabel}>Faction Shared</Text>
           </View>
@@ -1261,30 +1273,34 @@ export default function MyIntelligenceScreen(): JSX.Element {
         ) : null}
 
         {/* Entries list */}
-        {entriesQuery.isLoading ? (
+        {entriesInfiniteQuery.isLoading ? (
           <ActivityIndicator color={palette.cyan} size="large" style={{ paddingVertical: 40 }} />
-        ) : (entriesQuery.data ?? []).length === 0 ? (
-          <View style={mgmtStyles.emptyState}>
-            <Activity color={palette.muted} size={32} />
-            <Text style={mgmtStyles.emptyTitle}>No Intelligence Entries</Text>
-            <Text style={mgmtStyles.emptyDesc}>
-              Submit observations from the Open Intelligence screen to see them here.
-            </Text>
-          </View>
         ) : expandedEntries.length === 0 ? (
           <View style={mgmtStyles.emptyState}>
-            <Search color={palette.muted} size={32} />
-            <Text style={mgmtStyles.emptyTitle}>No Intelligence Matches Your Search</Text>
-            <Text style={mgmtStyles.emptyDesc}>
-              {filters.category !== "all"
-                ? "No entries in this category with the current filters."
-                : filters.sharing !== "all"
-                  ? "No entries match the selected sharing filter."
-                  : "Try adjusting your search or filters."}
-            </Text>
-            <Pressable onPress={resetFilters} style={mgmtStyles.emptyResetBtn}>
-              <Text style={mgmtStyles.emptyResetText}>Clear Filters</Text>
-            </Pressable>
+            {filters.search.trim() || filters.category !== "all" || filters.validationStatus !== "all" || filters.confidence !== "all" || filters.sharing !== "all" ? (
+              <>
+                <Search color={palette.muted} size={32} />
+                <Text style={mgmtStyles.emptyTitle}>No Intelligence Matches Your Search</Text>
+                <Text style={mgmtStyles.emptyDesc}>
+                  {filters.category !== "all"
+                    ? "No entries in this category with the current filters."
+                    : filters.sharing !== "all"
+                      ? "No entries match the selected sharing filter."
+                      : "Try adjusting your search or filters."}
+                </Text>
+                <Pressable onPress={resetFilters} style={mgmtStyles.emptyResetBtn}>
+                  <Text style={mgmtStyles.emptyResetText}>Clear Filters</Text>
+                </Pressable>
+              </>
+            ) : (
+              <>
+                <Activity color={palette.muted} size={32} />
+                <Text style={mgmtStyles.emptyTitle}>No Intelligence Entries</Text>
+                <Text style={mgmtStyles.emptyDesc}>
+                  Submit observations from the Open Intelligence screen to see them here.
+                </Text>
+              </>
+            )}
           </View>
         ) : (
           <View style={mgmtStyles.entriesList}>
@@ -1305,11 +1321,14 @@ export default function MyIntelligenceScreen(): JSX.Element {
             {hasMore ? (
               <Pressable
                 onPress={loadMore}
+                disabled={entriesInfiniteQuery.isFetchingNextPage}
                 style={({ pressed }) => [mgmtStyles.loadMoreBtn, pressed && mgmtStyles.pressed]}
               >
-                <Text style={mgmtStyles.loadMoreText}>
-                  Load More ({filteredEntries.length - visibleCount} remaining)
-                </Text>
+                {entriesInfiniteQuery.isFetchingNextPage ? (
+                  <ActivityIndicator color={palette.cyan} size="small" />
+                ) : (
+                  <Text style={mgmtStyles.loadMoreText}>Load More</Text>
+                )}
               </Pressable>
             ) : null}
           </View>

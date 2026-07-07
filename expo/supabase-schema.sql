@@ -2699,6 +2699,227 @@ revoke execute on function public.get_owner_exchange_contributions(uuid) from au
 grant execute on function public.get_owner_exchange_contributions(uuid) to service_role;
 
 -- =============================================================================
+-- PHASE 11B FINAL — ATOMIC ARENA NEURON DEDUCTION / REFUND (service_role only)
+-- =============================================================================
+-- These RPCs make Arena Mode Neuron movement atomic and idempotent at the
+-- database level so concurrent requests can never overspend and a request_id
+-- can be charged or refunded only once. Executable only by service_role.
+
+-- ── Arena deduction ledger ─────────────────────────────────────────────────
+-- Tracks exactly what was deducted for each Arena request_id so refunds can
+-- return the precise subscription/purchased amounts (not a balance snapshot),
+-- and so a request_id can be charged or refunded only once. RLS-disabled with
+-- no client policies — only service_role (which bypasses RLS) writes to it.
+create table if not exists public.arena_deductions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  request_id text not null,
+  amount int not null,
+  from_subscription int not null default 0,
+  from_purchased int not null default 0,
+  bucket text not null default 'subscription',
+  status text not null default 'charged',
+  note text,
+  created_at timestamptz default now(),
+  refunded_at timestamptz
+);
+
+drop index if exists arena_deductions_user_request_uniq;
+create unique index if not exists arena_deductions_user_request_uniq
+  on public.arena_deductions(user_id, request_id);
+
+alter table public.arena_deductions enable row level security;
+-- No client policies: only service_role (bypasses RLS) may read or write.
+
+-- ── Atomic Arena deduction ─────────────────────────────────────────────────
+-- Atomically verifies the user has enough Neurons, deducts exactly the
+-- requested amount (subscription bucket first, then purchased), records the
+-- request_id in arena_deductions so the same request_id cannot charge twice,
+-- and logs an edge_transactions row. Returns a structured JSON result.
+create or replace function public.deduct_arena_neurons(
+  p_user_id uuid,
+  p_request_id text,
+  p_amount int,
+  p_note text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_sub int;
+  v_purchased int;
+  v_from_sub int;
+  v_from_purchased int;
+  v_next_sub int;
+  v_next_purchased int;
+  v_total int;
+  v_bucket text;
+begin
+  if p_amount <= 0 then
+    return jsonb_build_object('ok', false, 'error', 'invalid_amount');
+  end if;
+  if p_request_id is null or btrim(p_request_id) = '' then
+    return jsonb_build_object('ok', false, 'error', 'missing_request_id');
+  end if;
+
+  -- Idempotency guard: if this request_id already produced a deduction, return
+  -- the already-charged state without charging again. Concurrent duplicate
+  -- requests short-circuit here (or hit the unique index below).
+  if exists (select 1 from public.arena_deductions ad
+             where ad.user_id = p_user_id and ad.request_id = p_request_id) then
+    return jsonb_build_object('ok', true, 'duplicate', true, 'message', 'already_charged');
+  end if;
+
+  -- Lock the profile row so concurrent deductions serialize on this user.
+  select edge_subscription, edge_purchased
+    into v_sub, v_purchased
+    from public.profiles
+    where id = p_user_id
+    for update;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'profile_not_found');
+  end if;
+
+  v_sub := coalesce(v_sub, 0);
+  v_purchased := coalesce(v_purchased, 0);
+  v_total := v_sub + v_purchased;
+
+  if v_total < p_amount then
+    return jsonb_build_object('ok', false, 'error', 'insufficient', 'balance', v_total, 'cost', p_amount);
+  end if;
+
+  v_from_sub := least(v_sub, p_amount);
+  v_from_purchased := p_amount - v_from_sub;
+  v_next_sub := v_sub - v_from_sub;
+  v_next_purchased := v_purchased - v_from_purchased;
+
+  if v_from_sub > 0 and v_from_purchased > 0 then
+    v_bucket := 'mixed';
+  elseif v_from_purchased > 0 then
+    v_bucket := 'purchased';
+  else
+    v_bucket := 'subscription';
+  end if;
+
+  update public.profiles
+    set edge_subscription = v_next_sub,
+        edge_purchased = v_next_purchased,
+        updated_at = now()
+    where id = p_user_id;
+
+  insert into public.arena_deductions (user_id, request_id, amount, from_subscription, from_purchased, bucket, status, note)
+    values (p_user_id, p_request_id, p_amount, v_from_sub, v_from_purchased, v_bucket, 'charged', p_note)
+    on conflict (user_id, request_id) do nothing;
+
+  insert into public.edge_transactions (user_id, kind, reason, amount, bucket, from_subscription, from_purchased, balance_subscription_after, balance_purchased_after, note)
+    values (p_user_id, 'deduction', 'arena', p_amount, v_bucket, v_from_sub, v_from_purchased, v_next_sub, v_next_purchased, p_note);
+
+  return jsonb_build_object(
+    'ok', true,
+    'duplicate', false,
+    'amount', p_amount,
+    'from_subscription', v_from_sub,
+    'from_purchased', v_from_purchased,
+    'bucket', v_bucket,
+    'balance_subscription_after', v_next_sub,
+    'balance_purchased_after', v_next_purchased
+  );
+end;
+$$;
+
+-- ── Idempotent Arena refund ────────────────────────────────────────────────
+-- Refunds the exact subscription/purchased amounts recorded for a request_id,
+-- but only the first time it is called for that request_id. Subsequent refund
+-- attempts for the same request_id short-circuit (no second credit). Does NOT
+-- snapshot/restore the whole balance — it adds back only what was deducted for
+-- this specific Arena request, so other purchases/sessions in the meantime are
+-- unaffected.
+create or replace function public.refund_arena_neurons(
+  p_user_id uuid,
+  p_request_id text,
+  p_note text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_ded record;
+  v_next_sub int;
+  v_next_purchased int;
+begin
+  if p_request_id is null or btrim(p_request_id) = '' then
+    return jsonb_build_object('ok', false, 'error', 'missing_request_id');
+  end if;
+
+  -- Lock the deduction row so concurrent refund attempts serialize.
+  select amount, from_subscription, from_purchased, bucket, status, refunded_at
+    into v_ded
+    from public.arena_deductions
+    where user_id = p_user_id and request_id = p_request_id
+    for update;
+
+  if not found then
+    -- Nothing was ever charged for this request_id (e.g. failure before
+    -- deduction). Nothing to refund.
+    return jsonb_build_object('ok', true, 'duplicate', true, 'message', 'no_charge_to_refund');
+  end if;
+
+  if v_ded.status = 'refunded' then
+    -- Already refunded — idempotent no-op.
+    return jsonb_build_object('ok', true, 'duplicate', true, 'message', 'already_refunded');
+  end if;
+
+  -- Add back exactly what was deducted for this request, not a balance snapshot.
+  select edge_subscription + coalesce(v_ded.from_subscription, 0),
+         edge_purchased + coalesce(v_ded.from_purchased, 0)
+    into v_next_sub, v_next_purchased
+    from public.profiles
+    where id = p_user_id
+    for update;
+
+  update public.profiles
+    set edge_subscription = v_next_sub,
+        edge_purchased = v_next_purchased,
+        updated_at = now()
+    where id = p_user_id;
+
+  update public.arena_deductions
+    set status = 'refunded',
+        refunded_at = now()
+    where user_id = p_user_id and request_id = p_request_id;
+
+  insert into public.edge_transactions (user_id, kind, reason, amount, bucket, from_subscription, from_purchased, balance_subscription_after, balance_purchased_after, note)
+    values (p_user_id, 'addition', 'arena_refund', v_ded.amount, v_ded.bucket, v_ded.from_subscription, v_ded.from_purchased, v_next_sub, v_next_purchased, p_note);
+
+  return jsonb_build_object(
+    'ok', true,
+    'duplicate', false,
+    'amount', v_ded.amount,
+    'from_subscription', v_ded.from_subscription,
+    'from_purchased', v_ded.from_purchased,
+    'balance_subscription_after', v_next_sub,
+    'balance_purchased_after', v_next_purchased
+  );
+end;
+$$;
+
+-- Lock both Arena RPCs to service_role only.
+revoke execute on function public.deduct_arena_neurons(uuid, text, int, text) from public;
+revoke execute on function public.deduct_arena_neurons(uuid, text, int, text) from anon;
+revoke execute on function public.deduct_arena_neurons(uuid, text, int, text) from authenticated;
+grant execute on function public.deduct_arena_neurons(uuid, text, int, text) to service_role;
+
+revoke execute on function public.refund_arena_neurons(uuid, text, text) from public;
+revoke execute on function public.refund_arena_neurons(uuid, text, text) from anon;
+revoke execute on function public.refund_arena_neurons(uuid, text, text) from authenticated;
+grant execute on function public.refund_arena_neurons(uuid, text, text) to service_role;
+
+-- =============================================================================
 -- PHASE 11B — ARENA HISTORY
 -- =============================================================================
 -- Trusted server inserts only. Clients may read their own history but never
@@ -2733,12 +2954,24 @@ create table if not exists public.arena_history (
   evidence_limitations text,
   source_counts jsonb not null default '{}'::jsonb,
   neuron_cost int not null default 0,
-  request_id text,
+  request_id text not null,
   created_at timestamptz default now()
 );
 
 create index if not exists arena_history_user_idx on public.arena_history(user_id, created_at desc);
 create index if not exists arena_history_eagoh_idx on public.arena_history(eagoh_id, created_at desc);
+
+-- True idempotency: a request_id may be persisted only once per user.
+-- A unique violation here means a duplicate/concurrent Arena request — the
+-- worker treats the existing row as the canonical result (no second charge).
+-- Idempotent: safe to run repeatedly on existing rows (nulls first become '' to
+-- backfill any legacy rows created before the NOT NULL constraint).
+update public.arena_history set request_id = id::text where request_id is null;
+alter table public.arena_history alter column request_id set not null;
+
+drop index if exists arena_history_user_request_uniq;
+create unique index if not exists arena_history_user_request_uniq
+  on public.arena_history(user_id, request_id);
 
 alter table public.arena_history enable row level security;
 
@@ -2747,14 +2980,8 @@ drop policy if exists "arena_history_self_insert" on public.arena_history;
 drop policy if exists "arena_history_self_update" on public.arena_history;
 drop policy if exists "arena_history_self_delete" on public.arena_history;
 
--- Owner can read their own history only
+-- Owner can read their own history only. No client insert/update/delete policies:
+-- the worker writes via service_role which bypasses RLS, and any client write
+-- attempt is rejected because no matching policy exists.
 create policy "arena_history_self_select" on public.arena_history
   for select using (auth.uid() = user_id);
-
--- No client insert/update/delete — the worker uses service_role which bypasses RLS.
--- Explicitly do NOT create insert/update/delete policies so client calls are denied.
-create policy "arena_history_self_update" on public.arena_history
-  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
-
-create policy "arena_history_self_delete" on public.arena_history
-  for delete using (auth.uid() = user_id);

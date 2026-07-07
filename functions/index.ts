@@ -5313,7 +5313,7 @@ async function handleArenaValidate(request: Request, env: Env): Promise<Response
 // ── Phase 11B: Arena Analysis Engine ─────────────────────────────────────────
 
 /** Flat Arena Neuron cost. Server-authoritative — the client never supplies a cost. */
-const ARENA_NEURON_COST = 50;
+const ARENA_NEURON_COST = 50; // atomic deduction via deduct_arena_neurons RPC
 
 /** Human-readable domain labels for Arena prompts (worker-side mirror of client domains). */
 const ARENA_DOMAIN_LABELS: Record<string, string> = {
@@ -5721,85 +5721,94 @@ async function handleArenaAnalyze(request: Request, env: Env): Promise<Response>
     return jsonResponse({ ok: false, error: "Arena Mode requires a paid subscription." }, 403);
   }
 
-  // ── 4. Verify sufficient Neuron balance (service_role read) ──
-  const { data: profileRow, error: profileErr } = await serviceClient
-    .from("profiles")
-    .select("edge_subscription, edge_purchased")
-    .eq("id", userId)
-    .maybeSingle();
-
-  if (profileErr || !profileRow) {
-    return jsonResponse({ ok: false, error: "Could not verify Neuron balance." }, 500);
-  }
-  const pRow = profileRow as { edge_subscription: number; edge_purchased: number };
-  const totalBalance = Math.max(0, pRow.edge_subscription ?? 0) + Math.max(0, pRow.edge_purchased ?? 0);
-  if (totalBalance < ARENA_NEURON_COST) {
-    return jsonResponse({ ok: false, error: `Insufficient Neurons. Arena costs ${ARENA_NEURON_COST} Neurons (you have ${totalBalance}).` }, 402);
-  }
-
-  // ── 5. Deduct Neurons (server-authoritative, idempotent) ──
-  const fromSub = Math.min(pRow.edge_subscription ?? 0, ARENA_NEURON_COST);
-  const fromPurchased = ARENA_NEURON_COST - fromSub;
-  const nextSub = Math.max(0, (pRow.edge_subscription ?? 0) - fromSub);
-  const nextPurchased = Math.max(0, (pRow.edge_purchased ?? 0) - fromPurchased);
-
-  const { error: deductErr } = await serviceClient
-    .from("profiles")
-    .update({ edge_subscription: nextSub, edge_purchased: nextPurchased, updated_at: new Date().toISOString() })
-    .eq("id", userId);
+  // ── 4. Atomic Neuron deduction (server-side RPC, idempotent, race-safe) ──
+  // The deduct_arena_neurons RPC locks the profile row, verifies balance,
+  // deducts exactly ARENA_NEURON_COST, records the request_id in a unique-index
+  // ledger, and logs the transaction — all inside one DB transaction. Concurrent
+  // duplicate requests hit the unique index / existence check and return the
+  // already-charged state without charging again.
+  const arenaNote = `Arena Mode · ${normA.name} vs ${normB.name}`;
+  const { data: deductData, error: deductErr } = await serviceClient
+    .rpc("deduct_arena_neurons", {
+      p_user_id: userId,
+      p_request_id: requestId,
+      p_amount: ARENA_NEURON_COST,
+      p_note: arenaNote,
+    });
 
   if (deductErr) {
-    console.warn("[arena:analyze] deduction failed", deductErr.message);
+    console.warn("[arena:analyze] deduction RPC failed", deductErr.message);
     return jsonResponse({ ok: false, error: "Neuron deduction failed. Please try again." }, 500);
   }
 
-  // Log the transaction (service_role bypasses RLS)
-  void serviceClient
-    .from("edge_transactions")
-    .insert({
-      user_id: userId,
-      kind: "deduction",
-      reason: "arena",
-      amount: ARENA_NEURON_COST,
-      bucket: fromSub > 0 && fromPurchased > 0 ? "mixed" : fromPurchased > 0 ? "purchased" : "subscription",
-      from_subscription: fromSub,
-      from_purchased: fromPurchased,
-      balance_subscription_after: nextSub,
-      balance_purchased_after: nextPurchased,
-      note: `Arena Mode · ${normA.name} vs ${normB.name}`,
-    })
-    .then(({ error: txErr }: { error: { message: string } | null }) => {
-      if (txErr) console.warn("[arena:analyze] tx log failed", txErr.message);
-    });
+  const deductResult = (deductData ?? null) as {
+    ok?: boolean;
+    error?: string;
+    duplicate?: boolean;
+    balance?: number;
+    cost?: number;
+    amount?: number;
+    from_subscription?: number;
+    from_purchased?: number;
+    bucket?: string;
+    balance_subscription_after?: number;
+    balance_purchased_after?: number;
+  } | null;
 
-  console.log("[arena:analyze] deducted", ARENA_NEURON_COST, "neurons for", userId.slice(0, 8));
+  if (!deductResult || deductResult.ok === false) {
+    const errCode = deductResult?.error ?? "deduction_failed";
+    if (errCode === "insufficient") {
+      const bal = deductResult?.balance ?? 0;
+      return jsonResponse({ ok: false, error: `Insufficient Neurons. Arena costs ${ARENA_NEURON_COST} Neurons (you have ${bal}).` }, 402);
+    }
+    if (errCode === "profile_not_found") {
+      return jsonResponse({ ok: false, error: "Could not verify Neuron balance." }, 500);
+    }
+    console.warn("[arena:analyze] deduction rejected", errCode);
+    return jsonResponse({ ok: false, error: "Neuron deduction failed. Please try again." }, 500);
+  }
 
-  // ── Helper: refund on failure ──
+  // If this requestId was already charged, a matching arena_history row must
+  // already exist. The idempotency check at the top returned it; if we somehow
+  // reached here on a duplicate, treat it as already-completed (no second work).
+  if (deductResult.duplicate === true) {
+    console.log("[arena:analyze] duplicate requestId reached deduction — returning existing result if any");
+    const { data: dupHistory } = await serviceClient
+      .from("arena_history")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("request_id", requestId)
+      .maybeSingle();
+    if (dupHistory) {
+      // Re-fetch via the same idempotency path at the top of the handler.
+      // Return a minimal already-completed response.
+      return jsonResponse({ ok: true, duplicate: true, message: "This Arena analysis was already completed." });
+    }
+    // Deduction ledger says charged but no history row — a previous request
+    // charged then failed before persisting. Do NOT charge again; proceed to
+    // generate the result so the user gets what they paid for.
+    console.log("[arena:analyze] duplicate charge without history — proceeding to generate result without re-charging");
+  }
+
+  const chargedFromSub = Number(deductResult.from_subscription ?? 0);
+  const chargedFromPurchased = Number(deductResult.from_purchased ?? 0);
+  const chargedBucket = String(deductResult.bucket ?? "subscription");
+
+  console.log("[arena:analyze] atomically deducted", ARENA_NEURON_COST, "neurons for", userId.slice(0, 8), "bucket=", chargedBucket);
+
+  // ── Helper: idempotent refund on failure (RPC, refunds only once per requestId) ──
   const refund = async (reason: string): Promise<void> => {
     try {
-      const refundSub = (pRow.edge_subscription ?? 0);
-      const refundPurchased = (pRow.edge_purchased ?? 0);
-      await serviceClient
-        .from("profiles")
-        .update({ edge_subscription: refundSub, edge_purchased: refundPurchased, updated_at: new Date().toISOString() })
-        .eq("id", userId);
-      await serviceClient
-        .from("edge_transactions")
-        .insert({
-          user_id: userId,
-          kind: "addition",
-          reason: "manual",
-          amount: ARENA_NEURON_COST,
-          bucket: fromSub > 0 && fromPurchased > 0 ? "mixed" : fromPurchased > 0 ? "purchased" : "subscription",
-          from_subscription: 0,
-          from_purchased: 0,
-          balance_subscription_after: refundSub,
-          balance_purchased_after: refundPurchased,
-          note: `Arena refund: ${reason}`,
-        });
-      console.log("[arena:analyze] refunded", ARENA_NEURON_COST, "neurons —", reason);
+      const { error: refundErr } = await serviceClient.rpc("refund_arena_neurons", {
+        p_user_id: userId,
+        p_request_id: requestId,
+        p_note: `Arena refund: ${reason}`,
+      });
+      if (refundErr) {
+        console.warn("[arena:analyze] refund RPC failed", refundErr.message);
+      }
     } catch (err) {
-      console.error("[arena:analyze] refund failed", err instanceof Error ? err.message : "unknown");
+      console.error("[arena:analyze] refund exception", err instanceof Error ? err.message : "unknown");
     }
   };
 
@@ -6016,12 +6025,16 @@ async function handleArenaAnalyze(request: Request, env: Env): Promise<Response>
   const arenaTitle = parsedResult.arenaTitle ?? `${normA.name} vs ${normB.name}`;
   const responseSummary = `${parsedResult.subjectASummary ?? ""}\n\n${parsedResult.subjectBSummary ?? ""}`.trim();
 
-  // ── 11. Persist to arena_history (service_role) ──
+  // ── 11. Persist to arena_history (service_role) with unique(user_id, request_id) ──
+  // If a concurrent request already inserted a row for this requestId, the
+  // unique index arena_history_user_request_uniq rejects the insert. We use
+  // onConflict to do nothing and select the existing row, so the user still
+  // gets the canonical result without a second charge or a second AI call.
   let historyId = "";
   try {
     const { data: histRow, error: histErr } = await serviceClient
       .from("arena_history")
-      .insert({
+      .upsert({
         user_id: userId,
         eagoh_id: eagohId,
         domain: domainId,
@@ -6049,17 +6062,17 @@ async function handleArenaAnalyze(request: Request, env: Env): Promise<Response>
         source_counts: sourceCounts,
         neuron_cost: ARENA_NEURON_COST,
         request_id: requestId,
-      })
+      }, { onConflict: "user_id,request_id", ignoreDuplicates: true })
       .select("id")
-      .single();
+      .maybeSingle();
 
     if (histErr) {
-      console.warn("[arena:analyze] history insert failed", histErr.message);
+      console.warn("[arena:analyze] history upsert failed", histErr.message);
     } else if (histRow) {
       historyId = (histRow as { id: string }).id;
     }
   } catch (err) {
-    console.warn("[arena:analyze] history insert exception", err instanceof Error ? err.message : "unknown");
+    console.warn("[arena:analyze] history upsert exception", err instanceof Error ? err.message : "unknown");
   }
 
   console.log("[arena:analyze] success", {

@@ -2670,18 +2670,30 @@ begin
 end;
 $$;
 
--- Revoke default grants on the new RPCs — only the secure worker (service_role)
--- and authenticated users (via the worker's verified calls) may access them.
--- Direct client calls are blocked because the RPCs are security definer and
--- the worker verifies auth before invoking; RLS still applies to underlying
--- tables for any direct anon access attempts.
-revoke all on function public.get_owner_intelligence_summary(uuid) from anon;
-grant execute on function public.get_owner_intelligence_summary(uuid) to authenticated;
-revoke all on function public.get_owner_entry_performance(uuid, int) from anon;
-grant execute on function public.get_owner_entry_performance(uuid, int) to authenticated;
-revoke all on function public.get_owner_weekly_trend(uuid, int) from anon;
-grant execute on function public.get_owner_weekly_trend(uuid, int) to authenticated;
-revoke all on function public.get_owner_faction_contributions(uuid) from anon;
-grant execute on function public.get_owner_faction_contributions(uuid) to authenticated;
-revoke all on function public.get_owner_exchange_contributions(uuid) from anon;
-grant execute on function public.get_owner_exchange_contributions(uuid) to authenticated;
+-- Restrict execution of the analytics RPCs to the service_role only.
+-- The secure worker verifies auth and invokes these with the service role key;
+-- direct client (anon/authenticated/public) calls are blocked entirely.
+revoke execute on function public.get_owner_intelligence_summary(uuid) from public;
+revoke execute on function public.get_owner_intelligence_summary(uuid) from anon;
+revoke execute on function public.get_owner_intelligence_summary(uuid) from authenticated;
+grant execute on function public.get_owner_intelligence_summary(uuid) to service_role;
+
+revoke execute on function public.get_owner_entry_performance(uuid, int) from public;
+revoke execute on function public.get_owner_entry_performance(uuid, int) from anon;
+revoke execute on function public.get_owner_entry_performance(uuid, int) from authenticated;
+grant execute on function public.get_owner_entry_performance(uuid, int) to service_role;
+
+revoke execute on function public.get_owner_weekly_trend(uuid, int) from public;
+revoke execute on function public.get_owner_weekly_trend(uuid, int) from anon;
+revoke execute on function public.get_owner_weekly_trend(uuid, int) from authenticated;
+grant execute on function public.get_owner_weekly_trend(uuid, int) to service_role;
+
+revoke execute on function public.get_owner_faction_contributions(uuid) from public;
+revoke execute on function public.get_owner_faction_contributions(uuid) from anon;
+revoke execute on function public.get_owner_faction_contributions(uuid) from authenticated;
+grant execute on function public.get_owner_faction_contributions(uuid) to service_role;
+
+revoke execute on function public.get_owner_exchange_contributions(uuid) from public;
+revoke execute on function public.get_owner_exchange_contributions(uuid) from anon;
+revoke execute on function public.get_owner_exchange_contributions(uuid) from authenticated;
+grant execute on function public.get_owner_exchange_contributions(uuid) to service_role;

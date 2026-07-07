@@ -1,5 +1,5 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker (Phase 9A — security audit + analytics route fix)
+ * EAGOH Analyst Chat — Cloudflare Worker (Phase 10A — secure account deletion endpoint)
  * Phase 6C — notifications & audit history)
  * Phase 6B: entry management, moderation, is_admin access.
  * Phase 6C: intelligence notifications, moderation audit trail, notification center.
@@ -4803,6 +4803,125 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
   return jsonResponse(lastError!, lastError!.status);
 }
 
+// ── Phase 10A: Account Deletion (secure, service-role only) ─────────────────
+
+/**
+ * POST /account/delete
+ *
+ * Securely deletes the authenticated user's account using the service-role
+ * client. The mobile app must never call supabase.auth.admin.deleteUser()
+ * directly — that requires the service-role key which is server-only.
+ *
+ * Flow:
+ *   1. Verify JWT and resolve the authenticated user id (never client-supplied).
+ *   2. Clean up user-owned Storage objects (profile media, EAGOH renders)
+ *      because Supabase may block auth deletion while objects remain.
+ *   3. Call auth.admin.deleteUser(userId) — cascading FKs remove row data.
+ *   4. Return a simple success/safe-error response.
+ *
+ * No service-role keys, raw SQL, or private user ids are exposed to clients.
+ */
+async function handleDeleteAccount(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return jsonResponse({ ok: false, error: "Method not allowed." }, 405);
+  }
+
+  // Authenticate via JWT — never trust a client-supplied userId.
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+  }
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) {
+    return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+  }
+
+  // ── Storage cleanup ──────────────────────────────────────────────────────
+  // Supabase may block auth.admin.deleteUser when the user still owns Storage
+  // objects. Remove the user's own objects first. Only the authenticated
+  // user's files are touched — never another user's files.
+  const USER_BUCKETS = ["user-profile-media", "eagoh-renders"] as const;
+
+  for (const bucket of USER_BUCKETS) {
+    try {
+      // List objects owned by this user in the bucket. Storage list returns at
+      // most 100 per call — page through until exhausted.
+      let after: string | undefined = undefined;
+      let guard = 0;
+      while (guard < 50) {
+        const listParams: { limit: number; prefix?: string; search?: string } = { limit: 100 };
+        if (after) listParams.search = after;
+        const { data: objects, error: listErr } = await serviceClient
+          .storage
+          .from(bucket)
+          .list(undefined, listParams);
+
+        if (listErr) {
+          console.warn(`[account-delete] list ${bucket} failed`, listErr.message);
+          break;
+        }
+        if (!objects || objects.length === 0) break;
+
+        // Storage list does not expose `owner` directly for filtering. The
+        // convention in this app is that user-owned objects are stored under a
+        // per-user prefix: `${userId}/...`. Only delete paths matching that.
+        const ownedPaths = objects
+          .filter((o) => o.name && (o.name.startsWith(`${userId}/`) || o.name === userId))
+          .map((o) => o.name);
+
+        if (ownedPaths.length > 0) {
+          const { error: delErr } = await serviceClient
+            .storage
+            .from(bucket)
+            .remove(ownedPaths);
+          if (delErr) {
+            console.warn(`[account-delete] remove ${bucket} failed`, delErr.message);
+          }
+        }
+
+        if (objects.length < 100) break;
+        after = objects[objects.length - 1]?.name;
+        guard += 1;
+      }
+    } catch (err) {
+      // Storage cleanup is best-effort; do not abort deletion on storage errors.
+      console.warn(`[account-delete] storage cleanup ${bucket} exception`, err instanceof Error ? err.message : "unknown");
+    }
+  }
+
+  // ── Auth user deletion ───────────────────────────────────────────────────
+  // auth.admin.deleteUser cascades via FK ON DELETE CASCADE / SET NULL set up
+  // in the schema (profiles, eagohs, open_intelligence, edge_transactions,
+  // feedback, disputes, versions, reputation, notifications, etc.).
+  try {
+    const { error: deleteErr } = await serviceClient.auth.admin.deleteUser(userId);
+    if (deleteErr) {
+      console.warn("[account-delete] admin.deleteUser failed", deleteErr.message);
+      return jsonResponse(
+        { ok: false, error: "Your account could not be deleted. Please try again or contact support." },
+        500,
+      );
+    }
+    return jsonResponse({ ok: true, deleted: true });
+  } catch (err) {
+    console.warn("[account-delete] exception", err instanceof Error ? err.message : "unknown");
+    return jsonResponse(
+      { ok: false, error: "Your account could not be deleted. Please try again or contact support." },
+      500,
+    );
+  }
+}
+
 // ── Export ───────────────────────────────────────────────────────────────────
 
 export default {
@@ -4899,6 +5018,11 @@ export default {
     // Phase 8A: Intelligence analytics (owner-scoped, secure)
     if (url.pathname === "/intelligence/analytics" && request.method === "GET") {
       return handleGetIntelligenceAnalytics(request, env);
+    }
+
+    // Phase 10A: Secure account deletion (service-role only)
+    if (url.pathname === "/account/delete" && request.method === "POST") {
+      return handleDeleteAccount(request, env);
     }
 
     return jsonResponse({ ok: false, error: "Not found" }, 404);

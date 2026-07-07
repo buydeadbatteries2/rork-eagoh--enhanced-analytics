@@ -1108,37 +1108,68 @@ export default function SettingsScreen(): JSX.Element {
             if (!user?.id) return;
             setIsDeletingAccount(true);
             try {
-              // Sign out of RevenueCat first (non-blocking)
+              // Resolve the current access token to authorize the secure worker call.
+              const { data: sessionData } = await supabase.auth.getSession();
+              const accessToken = sessionData?.session?.access_token;
+              if (!accessToken) {
+                Alert.alert(
+                  "Deletion Failed",
+                  "Your account could not be deleted. Please try again or contact support.",
+                );
+                return;
+              }
+
+              const functionsUrl = process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL;
+              if (!functionsUrl) {
+                Alert.alert(
+                  "Deletion Failed",
+                  "Your account could not be deleted. Please try again or contact support.",
+                );
+                return;
+              }
+
+              // Call the secure worker endpoint — never the admin API from the client.
+              const res = await fetch(`${functionsUrl}/account/delete`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${accessToken}`,
+                },
+              });
+              const data = (await res.json()) as { ok?: boolean; error?: string };
+
+              if (!res.ok || !data.ok) {
+                Alert.alert(
+                  "Deletion Failed",
+                  data.error ??
+                    "Your account could not be deleted. Please try again or contact support.",
+                );
+                return;
+              }
+
+              // Clear all local React Query / cached data before signing out.
+              queryClient.clear();
+
+              // Sign out of RevenueCat first (non-blocking), then Supabase.
               try {
                 const { logOutRevenueCat } = await import("@/services/revenuecat");
                 await logOutRevenueCat();
               } catch {
-                // Non-critical
+                // Non-critical — account is already deleted server-side.
               }
 
-              // Delete the Supabase auth user — cascading FKs remove all user data
-              // (profiles, eagohs, open_intelligence, edge_transactions, etc.)
-              const { error } = await supabase.auth.admin.deleteUser(user.id);
-              if (error) {
-                // admin API may not be available from the client; fall back to sign-out + support
-                console.warn("[settings] direct delete failed, signing out:", error.message);
-                await signOutUser();
-                Alert.alert(
-                  "Account Deletion Initiated",
-                  "You have been signed out. To complete permanent deletion of your account data, contact eagohsupport@ndstriistudios.com with your user ID.",
-                );
-              } else {
-                await signOutUser();
-                Alert.alert(
-                  "Account Deleted",
-                  "Your account has been permanently deleted. We're sorry to see you go.",
-                );
-              }
+              await signOutUser();
+
+              Alert.alert(
+                "Account Deleted",
+                "Your account has been permanently deleted. We're sorry to see you go.",
+              );
             } catch (err: unknown) {
               const msg = err instanceof Error ? err.message : "Unknown error";
+              if (__DEV__) console.warn("[settings] account delete failed:", msg);
               Alert.alert(
                 "Deletion Failed",
-                `Account deletion could not be completed automatically. Please contact eagohsupport@ndstriistudios.com to delete your account.\n\nError: ${msg}`,
+                "Your account could not be deleted. Please try again or contact support.",
               );
             } finally {
               setIsDeletingAccount(false);
@@ -1147,7 +1178,7 @@ export default function SettingsScreen(): JSX.Element {
         },
       ],
     );
-  }, [user?.id]);
+  }, [user?.id, queryClient]);
 
   const handleManageSubscription = useCallback((): void => {
     h.selection();

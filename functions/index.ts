@@ -4848,50 +4848,80 @@ async function handleDeleteAccount(request: Request, env: Env): Promise<Response
 
   // ── Storage cleanup ──────────────────────────────────────────────────────
   // Supabase may block auth.admin.deleteUser when the user still owns Storage
-  // objects. Remove the user's own objects first. Only the authenticated
-  // user's files are touched — never another user's files.
+  // objects, and Storage `.remove()` is NOT recursive — only exact object paths
+  // are deleted. So we list every file under the user's prefix recursively
+  // (paginated, nested-folder aware) and remove each full path. Only the
+  // authenticated user's prefix is touched — never another user's files.
   const USER_BUCKETS = ["user-profile-media", "eagoh-renders"] as const;
+  const userPrefix: string = `${userId}/`;
 
-  for (const bucket of USER_BUCKETS) {
-    try {
-      // List objects owned by this user in the bucket. Storage list returns at
-      // most 100 per call — page through until exhausted.
+  /**
+   * Recursively collect every object path under `prefix` in `bucket`,
+   * paginating past the 100-item list limit and descending into subfolders.
+   * Supabase Storage list entries are folders when `metadata` is null.
+   */
+  const collectAllPaths = async (bucket: string, prefix: string): Promise<string[]> => {
+    const collected: string[] = [];
+    const stack: string[] = [prefix];
+    let guard = 0;
+
+    while (stack.length > 0 && guard < 500) {
+      const current = stack.pop()!;
       let after: string | undefined = undefined;
-      let guard = 0;
-      while (guard < 50) {
-        const listParams: { limit: number; prefix?: string; search?: string } = { limit: 100 };
-        if (after) listParams.search = after;
-        const { data: objects, error: listErr } = await serviceClient
+      let pageGuard = 0;
+
+      while (pageGuard < 100) {
+        const listParams: { limit: number; offset?: number } = { limit: 100 };
+        if (after) listParams.offset = after as unknown as number;
+        const { data: entries, error: listErr } = await serviceClient
           .storage
           .from(bucket)
-          .list(undefined, listParams);
+          .list(current, listParams);
 
         if (listErr) {
-          console.warn(`[account-delete] list ${bucket} failed`, listErr.message);
+          console.warn(`[account-delete] list ${bucket} prefix=${current} failed`, listErr.message);
+          pageGuard = 100; // break inner loop
           break;
         }
-        if (!objects || objects.length === 0) break;
+        if (!entries || entries.length === 0) break;
 
-        // Storage list does not expose `owner` directly for filtering. The
-        // convention in this app is that user-owned objects are stored under a
-        // per-user prefix: `${userId}/...`. Only delete paths matching that.
-        const ownedPaths = objects
-          .filter((o) => o.name && (o.name.startsWith(`${userId}/`) || o.name === userId))
-          .map((o) => o.name);
-
-        if (ownedPaths.length > 0) {
-          const { error: delErr } = await serviceClient
-            .storage
-            .from(bucket)
-            .remove(ownedPaths);
-          if (delErr) {
-            console.warn(`[account-delete] remove ${bucket} failed`, delErr.message);
+        for (const entry of entries) {
+          if (!entry.name) continue;
+          const fullPath = `${current}${entry.name}`;
+          // Folder entries have null metadata; files have non-null metadata.
+          const isFolder = entry.metadata == null;
+          if (isFolder) {
+            stack.push(`${fullPath}/`);
+          } else {
+            collected.push(fullPath);
           }
         }
 
-        if (objects.length < 100) break;
-        after = objects[objects.length - 1]?.name;
-        guard += 1;
+        if (entries.length < 100) break;
+        // Supabase Storage paginates via `offset` (number) — track count.
+        after = String((after ? Number(after) : 0) + entries.length);
+        pageGuard += 1;
+      }
+      guard += 1;
+    }
+    return collected;
+  };
+
+  for (const bucket of USER_BUCKETS) {
+    try {
+      const paths = await collectAllPaths(bucket, userPrefix);
+      if (paths.length === 0) continue;
+
+      // Remove in batches of 100 (Supabase Storage remove accepts arrays).
+      for (let i = 0; i < paths.length; i += 100) {
+        const batch = paths.slice(i, i + 100);
+        const { error: delErr } = await serviceClient
+          .storage
+          .from(bucket)
+          .remove(batch);
+        if (delErr) {
+          console.warn(`[account-delete] remove ${bucket} batch ${i} failed`, delErr.message);
+        }
       }
     } catch (err) {
       // Storage cleanup is best-effort; do not abort deletion on storage errors.

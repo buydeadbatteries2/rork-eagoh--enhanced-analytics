@@ -202,6 +202,19 @@ const styles = StyleSheet.create({
   },
   restoreBtnText: { color: palette.muted, fontSize: 13, fontWeight: "700" as const },
 
+  // Auto-renewal disclosure
+  disclosureCard: {
+    padding: 14,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(10,18,32,0.50)",
+    gap: 8,
+  },
+  disclosureTitle: { color: palette.muted, fontSize: 11, fontWeight: "900" as const, letterSpacing: 0.5, textTransform: "uppercase" as const },
+  disclosureBody: { color: palette.muted, fontSize: 11, fontWeight: "500" as const, lineHeight: 17 },
+  disclosureLink: { color: palette.cyan, fontSize: 11, fontWeight: "700" as const },
+
   // Status states
   statusCenter: { flex: 1, alignItems: "center" as const, justifyContent: "center" as const, padding: 40, gap: 14 },
   statusTitle: { color: palette.text, fontSize: 17, fontWeight: "900" as const, textAlign: "center" as const },
@@ -842,6 +855,23 @@ export default function SubscriptionScreen(): JSX.Element {
             {isRestoring ? "Restoring…" : "Restore Purchases"}
           </Text>
         </Pressable>
+
+        {/* Auto-renewal disclosure — required by App Store Guideline 3.1.2 */}
+        <View style={styles.disclosureCard}>
+          <Text style={styles.disclosureTitle}>Subscription Terms</Text>
+          <Text style={styles.disclosureBody}>
+            Payment is charged to your Apple ID account at confirmation of purchase. Subscriptions automatically renew unless auto-renew is turned off at least 24 hours before the end of the current billing period.
+          </Text>
+          <Text style={styles.disclosureBody}>
+            Your account is charged for renewal within 24 hours prior to the end of the current period. You can manage and cancel your subscriptions anytime in your Apple ID Settings under Subscriptions.
+          </Text>
+          <Pressable onPress={() => router.push("/legal/terms" as never)}>
+            <Text style={styles.disclosureLink}>View Terms of Service ›</Text>
+          </Pressable>
+          <Pressable onPress={() => router.push("/legal/privacy" as never)}>
+            <Text style={styles.disclosureLink}>View Privacy Policy ›</Text>
+          </Pressable>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );

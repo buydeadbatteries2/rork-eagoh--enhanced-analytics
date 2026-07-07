@@ -1015,6 +1015,28 @@ export default function SettingsScreen(): JSX.Element {
       });
   }, [user?.email, resetPassword]);
 
+  const [isRestoringPurchases, setIsRestoringPurchases] = useState(false);
+
+  const handleRestorePurchases = useCallback(async (): Promise<void> => {
+    h.selection();
+    setIsRestoringPurchases(true);
+    try {
+      const { restorePurchases } = await import("@/services/revenuecat");
+      const customerInfo = await restorePurchases();
+      const activeCount = customerInfo?.activeSubscriptions?.length ?? 0;
+      if (activeCount > 0) {
+        Alert.alert("Purchases Restored", "Your subscription has been restored successfully.");
+      } else {
+        Alert.alert("No Purchases Found", "No previous purchases were found to restore.");
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Restore failed";
+      Alert.alert("Restore Failed", msg);
+    } finally {
+      setIsRestoringPurchases(false);
+    }
+  }, [h]);
+
   const handleLogout = useCallback((): void => {
     Alert.alert("Sign Out", "Are you sure you want to sign out?", [
       { text: "Cancel", style: "cancel" },
@@ -1071,6 +1093,8 @@ export default function SettingsScreen(): JSX.Element {
     Alert.alert("Data Export", "Data export coming soon.");
   }, []);
 
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+
   const handleDeleteAccount = useCallback((): void => {
     Alert.alert(
       "Delete Account",
@@ -1080,16 +1104,50 @@ export default function SettingsScreen(): JSX.Element {
         {
           text: "Delete Account",
           style: "destructive",
-          onPress: () => {
-            Alert.alert(
-              "Account Deletion",
-              "Account deletion is coming soon. Please contact eagohsupport@ndstriistudios.com to delete your account.",
-            );
+          onPress: async () => {
+            if (!user?.id) return;
+            setIsDeletingAccount(true);
+            try {
+              // Sign out of RevenueCat first (non-blocking)
+              try {
+                const { logOutRevenueCat } = await import("@/services/revenuecat");
+                await logOutRevenueCat();
+              } catch {
+                // Non-critical
+              }
+
+              // Delete the Supabase auth user — cascading FKs remove all user data
+              // (profiles, eagohs, open_intelligence, edge_transactions, etc.)
+              const { error } = await supabase.auth.admin.deleteUser(user.id);
+              if (error) {
+                // admin API may not be available from the client; fall back to sign-out + support
+                console.warn("[settings] direct delete failed, signing out:", error.message);
+                await signOutUser();
+                Alert.alert(
+                  "Account Deletion Initiated",
+                  "You have been signed out. To complete permanent deletion of your account data, contact eagohsupport@ndstriistudios.com with your user ID.",
+                );
+              } else {
+                await signOutUser();
+                Alert.alert(
+                  "Account Deleted",
+                  "Your account has been permanently deleted. We're sorry to see you go.",
+                );
+              }
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : "Unknown error";
+              Alert.alert(
+                "Deletion Failed",
+                `Account deletion could not be completed automatically. Please contact eagohsupport@ndstriistudios.com to delete your account.\n\nError: ${msg}`,
+              );
+            } finally {
+              setIsDeletingAccount(false);
+            }
           },
         },
       ],
     );
-  }, []);
+  }, [user?.id]);
 
   const handleManageSubscription = useCallback((): void => {
     h.selection();
@@ -1325,6 +1383,14 @@ export default function SettingsScreen(): JSX.Element {
           },
           {
             kind: "button",
+            label: "Restore Purchases",
+            variant: "primary",
+            icon: <RefreshCcw color={pal.cyan} size={18} />,
+            onPress: handleRestorePurchases,
+            loading: isRestoringPurchases,
+          },
+          {
+            kind: "button",
             label: "Sign Out",
             variant: "danger",
             icon: <LogOut color={pal.ember} size={18} />,
@@ -1503,6 +1569,7 @@ export default function SettingsScreen(): JSX.Element {
             variant: "danger",
             icon: <Trash2 color={pal.ember} size={18} />,
             onPress: handleDeleteAccount,
+            loading: isDeletingAccount,
           },
         ],
       },

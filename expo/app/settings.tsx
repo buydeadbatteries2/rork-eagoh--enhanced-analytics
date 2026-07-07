@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   BadgeCheck,
+  Bell,
   Camera,
   ChevronRight,
   Coins,
@@ -66,6 +67,8 @@ import {
 import * as ImagePicker from "expo-image-picker";
 import { File as ExpoFile } from "expo-file-system";
 import { supabase } from "@/lib/supabase";
+import { useQuery } from "@tanstack/react-query";
+import { fetchNotifications } from "@/services/openIntelligence";
 
 type P = typeof palette;
 
@@ -1276,6 +1279,17 @@ export default function SettingsScreen(): JSX.Element {
     void uploadProfileMedia("banner", setUploadingBanner);
   }, [uploadProfileMedia]);
 
+  // Phase 6C: unread notification count for the settings badge
+  const notificationsCountQuery = useQuery<number>({
+    queryKey: ["notifications", "unread-count"],
+    queryFn: async () => {
+      const result = await fetchNotifications();
+      return result.ok ? result.unreadCount : 0;
+    },
+    staleTime: 30_000,
+  });
+  const unreadCount = notificationsCountQuery.data ?? 0;
+
   // ── Sections ────────────────────────────────────────────────────────────
 
   const sections: SettingsSection[] = useMemo<SettingsSection[]>(() => {
@@ -1316,6 +1330,48 @@ export default function SettingsScreen(): JSX.Element {
             icon: <LogOut color={pal.ember} size={18} />,
             onPress: handleLogout,
             loading: signOutState.isPending,
+          },
+        ],
+      },
+      {
+        id: "notifications",
+        title: "Intelligence Notifications",
+        titleIcon: <Bell color={pal.gold} size={15} />,
+        rows: [
+          {
+            kind: "custom" as const,
+            render: () => (
+              <Pressable
+                onPress={() => { h.selection(); router.push("/notifications" as never); }}
+                style={({ pressed }) => [s.row, pressed && { opacity: 0.7 }]}
+              >
+                <View style={s.rowIcon}>
+                  <Bell color={pal.gold} size={18} />
+                </View>
+                <View style={s.rowContent}>
+                  <Text style={s.rowLabel}>Notification Center</Text>
+                  <Text style={s.rowHint}>
+                    {unreadCount > 0
+                      ? `${unreadCount} unread notification${unreadCount > 1 ? "s" : ""}`
+                      : "View intelligence alerts"}
+                  </Text>
+                </View>
+                {unreadCount > 0 ? (
+                  <View style={{
+                    minWidth: 20, height: 20, borderRadius: 10,
+                    backgroundColor: pal.ember,
+                    alignItems: "center", justifyContent: "center",
+                    paddingHorizontal: 6,
+                  }}>
+                    <Text style={{ color: pal.void, fontSize: 10, fontWeight: "900" as const }}>
+                      {unreadCount}
+                    </Text>
+                  </View>
+                ) : (
+                  <ChevronRight color={pal.muted} size={18} />
+                )}
+              </Pressable>
+            ),
           },
         ],
       },
@@ -1552,6 +1608,7 @@ export default function SettingsScreen(): JSX.Element {
     handleDeleteAccount,
     navigateTo,
     pal,
+    unreadCount,
   ]);
 
   // ── Render ──────────────────────────────────────────────────────────────

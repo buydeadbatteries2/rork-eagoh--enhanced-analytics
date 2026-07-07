@@ -30,9 +30,11 @@ import {
   fetchModerationQueue,
   performModerationAction,
   hasModerationAccess,
+  fetchModerationAudit,
+  MODERATION_ACTION_LABELS,
   type ModerationQueueItem,
   type ModerationAction,
-  MODERATION_ACTION_LABELS,
+  type ModerationAuditEntry,
 } from "@/services/openIntelligence";
 import {
   AlertTriangle,
@@ -41,6 +43,7 @@ import {
   ExternalLink,
   Eye,
   Gavel,
+  History,
   RefreshCw,
   ShieldAlert,
   Star,
@@ -263,7 +266,19 @@ export default function ModerationScreen(): JSX.Element {
 
   const handleRefresh = useCallback((): void => {
     queryClient.invalidateQueries({ queryKey: ["moderation", "queue"] });
+    queryClient.invalidateQueries({ queryKey: ["moderation", "audit"] });
   }, [queryClient]);
+
+  // Phase 6C: Audit history (admin only, moderator identity never exposed)
+  const auditQuery = useQuery<ModerationAuditEntry[]>({
+    queryKey: ["moderation", "audit"],
+    enabled: isAdmin,
+    queryFn: async () => {
+      const result = await fetchModerationAudit();
+      if (result.ok) return result.audit;
+      throw new Error(result.error);
+    },
+  });
 
   if (!isAdmin) {
     return (
@@ -364,6 +379,51 @@ export default function ModerationScreen(): JSX.Element {
             ))}
           </View>
         )}
+
+        {/* Phase 6C: Audit History */}
+        <View style={modStyles.auditSection}>
+          <View style={modStyles.auditHeader}>
+            <History color={palette.gold} size={14} />
+            <Text style={modStyles.auditTitle}>AUDIT HISTORY</Text>
+          </View>
+          {auditQuery.isLoading ? (
+            <ActivityIndicator color={palette.muted} size="small" style={{ paddingVertical: 12 }} />
+          ) : auditQuery.error ? (
+            <Text style={modStyles.auditError}>Failed to load audit history.</Text>
+          ) : (auditQuery.data?.length ?? 0) === 0 ? (
+            <Text style={modStyles.auditEmpty}>No moderation actions recorded yet.</Text>
+          ) : (
+            <View style={modStyles.auditList}>
+              {auditQuery.data!.slice(0, 20).map((a) => {
+                const dateLabel = new Date(a.createdAt).toLocaleDateString(undefined, {
+                  month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+                });
+                const actionLabel = MODERATION_ACTION_LABELS[a.action as ModerationAction] ?? a.action;
+                return (
+                  <View key={a.id} style={modStyles.auditItem}>
+                    <View style={modStyles.auditItemLeft}>
+                      <Text style={modStyles.auditAction}>{actionLabel}</Text>
+                      <Text style={modStyles.auditDate}>{dateLabel}</Text>
+                    </View>
+                    <View style={modStyles.auditStatusRow}>
+                      {a.previousStatus ? (
+                        <Text style={modStyles.auditPrevStatus}>
+                          {VALIDATION_STATUS_LABELS[a.previousStatus as keyof typeof VALIDATION_STATUS_LABELS] ?? a.previousStatus}
+                        </Text>
+                      ) : null}
+                      {a.previousStatus ? <Text style={modStyles.auditArrow}>→</Text> : null}
+                      {a.newStatus ? (
+                        <Text style={[modStyles.auditNewStatus, { color: validationStatusColor(a.newStatus) }]}>
+                          {VALIDATION_STATUS_LABELS[a.newStatus as keyof typeof VALIDATION_STATUS_LABELS] ?? a.newStatus}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -484,4 +544,26 @@ const modStyles = StyleSheet.create({
   errorText: { color: palette.ember, fontSize: 12, fontWeight: "800", textAlign: "center" },
 
   pressed: { transform: [{ scale: 0.985 }], opacity: 0.88 },
+
+  // Phase 6C: Audit History
+  auditSection: {
+    marginTop: 10, padding: 12, borderRadius: 6, borderWidth: 1, borderColor: palette.line,
+    backgroundColor: "rgba(10,20,38,0.45)", gap: 8,
+  },
+  auditHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
+  auditTitle: { color: palette.gold, fontSize: 9, fontWeight: "900", letterSpacing: 1.2 },
+  auditList: { gap: 5 },
+  auditItem: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.04)",
+  },
+  auditItemLeft: { flex: 1, gap: 1 },
+  auditAction: { fontSize: 11, fontWeight: "800", color: palette.text },
+  auditDate: { fontSize: 9, fontWeight: "700", color: palette.muted },
+  auditStatusRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+  auditPrevStatus: { fontSize: 9, fontWeight: "700", color: palette.muted },
+  auditArrow: { fontSize: 10, fontWeight: "900", color: palette.muted },
+  auditNewStatus: { fontSize: 9, fontWeight: "800" },
+  auditEmpty: { color: palette.muted, fontSize: 11, fontWeight: "700", fontStyle: "italic", paddingVertical: 4 },
+  auditError: { color: palette.ember, fontSize: 11, fontWeight: "800", paddingVertical: 4 },
 });

@@ -974,5 +974,146 @@ export function hasModerationAccess(profile: { is_admin: boolean | null; admin_t
   return true;
 }
 
+// ── Phase 6C: Intelligence Notifications & Audit ─────────────────────────
+
+export type IntelligenceNotification = {
+  id: string;
+  entryId: string | null;
+  notificationType: string;
+  title: string;
+  message: string;
+  isRead: boolean;
+  createdAt: string;
+};
+
+export type NotificationsResult =
+  | { ok: true; notifications: IntelligenceNotification[]; unreadCount: number }
+  | { ok: false; error: string };
+
+/** Fetch the authenticated user's own notifications. */
+export async function fetchNotifications(): Promise<NotificationsResult> {
+  if (!FUNCTIONS_BASE_URL) return { ok: false, error: "Backend not configured." };
+  const token = await getWorkerAuth();
+  if (!token) return { ok: false, error: "Not authenticated." };
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE_URL}/notifications`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = (await res.json()) as {
+      ok: boolean;
+      error?: string;
+      notifications?: IntelligenceNotification[];
+      unreadCount?: number;
+    };
+    if (data.ok && data.notifications) {
+      return { ok: true, notifications: data.notifications, unreadCount: data.unreadCount ?? 0 };
+    }
+    return { ok: false, error: data.error ?? "Failed." };
+  } catch {
+    return { ok: false, error: "Network error. Try again." };
+  }
+}
+
+/** Mark a single notification as read. */
+export async function markNotificationRead(
+  notificationId: string,
+): Promise<EntryActionResult> {
+  if (!FUNCTIONS_BASE_URL) return { ok: false, error: "Backend not configured." };
+  const token = await getWorkerAuth();
+  if (!token) return { ok: false, error: "Not authenticated." };
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE_URL}/notifications/mark-read`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ notificationId }),
+    });
+    const data = (await res.json()) as { ok: boolean; error?: string };
+    return data.ok ? { ok: true } : { ok: false, error: data.error ?? "Failed." };
+  } catch {
+    return { ok: false, error: "Network error. Try again." };
+  }
+}
+
+/** Mark all of the user's notifications as read. */
+export async function markAllNotificationsRead(): Promise<EntryActionResult> {
+  if (!FUNCTIONS_BASE_URL) return { ok: false, error: "Backend not configured." };
+  const token = await getWorkerAuth();
+  if (!token) return { ok: false, error: "Not authenticated." };
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE_URL}/notifications/mark-all-read`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = (await res.json()) as { ok: boolean; error?: string };
+    return data.ok ? { ok: true } : { ok: false, error: data.error ?? "Failed." };
+  } catch {
+    return { ok: false, error: "Network error. Try again." };
+  }
+}
+
+// ── Phase 6C: Moderation Audit History (admin only) ──────────────────────
+
+export type ModerationAuditEntry = {
+  id: string;
+  entryId: string;
+  action: string;
+  previousStatus: string | null;
+  newStatus: string | null;
+  disputeId: string | null;
+  note: string | null;
+  createdAt: string;
+};
+
+export type ModerationAuditResult =
+  | { ok: true; audit: ModerationAuditEntry[] }
+  | { ok: false; error: string };
+
+/** Fetch moderation audit history (admin only). Moderator identity is never exposed. */
+export async function fetchModerationAudit(
+  entryId?: string,
+): Promise<ModerationAuditResult> {
+  if (!FUNCTIONS_BASE_URL) return { ok: false, error: "Backend not configured." };
+  const token = await getWorkerAuth();
+  if (!token) return { ok: false, error: "Not authenticated." };
+  try {
+    const url = new URL(`${FUNCTIONS_BASE_URL}/moderation/audit`);
+    if (entryId) url.searchParams.set("entryId", entryId);
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = (await res.json()) as {
+      ok: boolean;
+      error?: string;
+      audit?: ModerationAuditEntry[];
+    };
+    if (data.ok && data.audit) {
+      return { ok: true, audit: data.audit };
+    }
+    return { ok: false, error: data.error ?? "Failed." };
+  } catch {
+    return { ok: false, error: "Network error. Try again." };
+  }
+}
+
+/** Status explanation shown beneath the status badge on My Intelligence.
+ *  Does not expose internal moderation notes. */
+export function statusExplanation(status: string, isOutdated: boolean): string | null {
+  if (isOutdated) {
+    return "This entry may be outdated and could receive reduced influence in analyst context.";
+  }
+  switch (status) {
+    case "community_supported":
+      return "This entry has received community support and is trusted in analyst context.";
+    case "externally_supported":
+      return "This entry was supported by external evidence and carries higher trust.";
+    case "disputed":
+      return "This entry has been marked disputed and may receive reduced influence.";
+    case "rejected":
+      return "This entry was rejected and is excluded from analyst, Faction, and Exchange use.";
+    default:
+      return null;
+  }
+}
+
 /** Re-export helpers */
 export { influenceLabel };

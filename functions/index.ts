@@ -1,6 +1,8 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker (Phase 6B — entry management, moderation, is_admin access)
- * Phase 6B UI: is_admin flag replaces subscription-tier-based moderation access.
+ * EAGOH Analyst Chat — Cloudflare Worker (Phase 6C — notifications & audit history)
+ * Phase 6B: entry management, moderation, is_admin access.
+ * Phase 6C: intelligence notifications, moderation audit trail, notification center.
+ * Phase 6C-deploy: worker bundling fix.
  *
  * Secure server-side intelligence grounding system.
  * Column names synchronized with live Supabase schema.
@@ -3253,6 +3255,10 @@ async function handleWithdrawOIEntry(request: Request, env: Env): Promise<Respon
     console.warn("[oi-withdraw] reputation recalc failed", e instanceof Error ? e.message : "unknown");
   }
 
+  // Phase 6C: notify owner about sharing removal due to withdrawal
+  await createIntelligenceNotification(serviceClient, userId, payload.entryId, "exchange_sharing_disabled");
+  await createIntelligenceNotification(serviceClient, userId, payload.entryId, "faction_sharing_removed");
+
   return jsonResponse({ ok: true });
 }
 
@@ -3482,6 +3488,111 @@ async function handleGetVersionHistory(request: Request, env: Env): Promise<Resp
   }
 
   return jsonResponse({ ok: true, versions: versions ?? [] });
+}
+
+// ── Phase 6C: Intelligence Notifications & Audit ───────────────────────────
+
+/** Notification type → title and message template. Reporter identity is never included. */
+const NOTIFICATION_TEMPLATES: Record<
+  string,
+  { title: string; message: string }
+> = {
+  community_supported: {
+    title: "Community Supported",
+    message: "Your intelligence entry received community support.",
+  },
+  externally_supported: {
+    title: "Externally Supported",
+    message: "Your intelligence entry was supported by external evidence.",
+  },
+  disputed: {
+    title: "Entry Disputed",
+    message:
+      "Your intelligence entry has been marked disputed and may receive reduced influence.",
+  },
+  rejected: {
+    title: "Entry Rejected",
+    message:
+      "Your intelligence entry was rejected and removed from analyst, Faction, and Exchange use.",
+  },
+  dispute_dismissed: {
+    title: "Dispute Dismissed",
+    message: "A dispute involving your intelligence entry was dismissed.",
+  },
+  outdated: {
+    title: "Entry Outdated",
+    message: "Your intelligence entry has been automatically marked outdated.",
+  },
+  exchange_sharing_disabled: {
+    title: "Exchange Sharing Disabled",
+    message:
+      "Exchange sharing was disabled because of your entry's status.",
+  },
+  faction_sharing_removed: {
+    title: "Faction Sharing Removed",
+    message:
+      "Faction sharing was removed because of your entry's status.",
+  },
+};
+
+/** Create a notification for the entry owner. Reporter identity is never included.
+ *  Notification failures are logged but do NOT undo a successful moderation action. */
+async function createIntelligenceNotification(
+  serviceClient: SupabaseClient,
+  userId: string,
+  entryId: string,
+  notificationType: string,
+): Promise<void> {
+  const template = NOTIFICATION_TEMPLATES[notificationType];
+  if (!template) {
+    console.warn(`[notifications] unknown type: ${notificationType}`);
+    return;
+  }
+  try {
+    await serviceClient.from("intelligence_notifications").insert({
+      user_id: userId,
+      entry_id: entryId,
+      notification_type: notificationType,
+      title: template.title,
+      message: template.message,
+      is_read: false,
+    });
+  } catch (e) {
+    // Log but do not throw — notification failure must not undo moderation
+    console.warn(
+      `[notifications] insert failed for ${notificationType}:`,
+      e instanceof Error ? e.message : "unknown",
+    );
+  }
+}
+
+/** Save a moderation audit record. Only called by verified admins via the secure worker. */
+async function createModerationAuditRecord(
+  serviceClient: SupabaseClient,
+  entryId: string,
+  moderatorUserId: string,
+  action: string,
+  previousStatus: string,
+  newStatus: string,
+  disputeId?: string,
+  note?: string,
+): Promise<void> {
+  try {
+    await serviceClient.from("intelligence_moderation_audit").insert({
+      entry_id: entryId,
+      moderator_user_id: moderatorUserId,
+      action,
+      previous_status: previousStatus,
+      new_status: newStatus,
+      dispute_id: disputeId ?? null,
+      optional_note: note ?? null,
+    });
+  } catch (e) {
+    console.warn(
+      `[audit] insert failed for ${action}:`,
+      e instanceof Error ? e.message : "unknown",
+    );
+  }
 }
 
 // ── Phase 6B: Moderation Queue (admin only) ─────────────────────────────────
@@ -3766,6 +3877,14 @@ async function handleModerationAction(request: Request, env: Env): Promise<Respo
       } catch (e) {
         console.warn("[moderation] reputation recalc failed", e instanceof Error ? e.message : "unknown");
       }
+      // Phase 6C: audit record + owner notification
+      await createModerationAuditRecord(
+        serviceClient, payload.entryId, userId, "reject_entry",
+        entryRow.validation_status, "rejected", payload.disputeId,
+      );
+      await createIntelligenceNotification(
+        serviceClient, entryRow.user_id, payload.entryId, "rejected",
+      );
       return jsonResponse({ ok: true });
   }
 
@@ -3787,7 +3906,226 @@ async function handleModerationAction(request: Request, env: Env): Promise<Respo
     console.warn("[moderation] reputation recalc failed", e instanceof Error ? e.message : "unknown");
   }
 
+  // Phase 6C: audit record + owner notification for non-reject actions
+  await createModerationAuditRecord(
+    serviceClient, payload.entryId, userId, payload.action,
+    entryRow.validation_status, newStatus, payload.disputeId,
+  );
+  // Map action → notification type
+  const notifType: Record<string, string> = {
+    dismiss_dispute: "dispute_dismissed",
+    mark_community_supported: "community_supported",
+    mark_externally_supported: "externally_supported",
+    mark_disputed: "disputed",
+  };
+  const nType = notifType[payload.action];
+  if (nType) {
+    await createIntelligenceNotification(
+      serviceClient, entryRow.user_id, payload.entryId, nType,
+    );
+  }
+
   return jsonResponse({ ok: true });
+}
+
+// ── Phase 6C: Notification endpoints (user's own notifications) ───────────
+
+type NotificationRow = {
+  id: string;
+  user_id: string;
+  entry_id: string | null;
+  notification_type: string;
+  title: string;
+  message: string;
+  is_read: boolean;
+  created_at: string;
+};
+
+async function handleGetNotifications(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  // Fetch the user's own notifications via anon client (RLS enforces self-only)
+  const { data, error } = await supabase
+    .from("intelligence_notifications")
+    .select("id, user_id, entry_id, notification_type, title, message, is_read, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  if (error) {
+    return jsonResponse({ ok: false, error: "Failed to fetch notifications." }, 500);
+  }
+
+  const notifications = (data ?? []) as NotificationRow[];
+  const unreadCount = notifications.filter((n) => !n.is_read).length;
+
+  return jsonResponse({
+    ok: true,
+    notifications: notifications.map((n) => ({
+      id: n.id,
+      entryId: n.entry_id,
+      notificationType: n.notification_type,
+      title: n.title,
+      message: n.message,
+      isRead: n.is_read,
+      createdAt: n.created_at,
+    })),
+    unreadCount,
+  });
+}
+
+async function handleMarkNotificationRead(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  let payload: { notificationId: string };
+  try {
+    payload = (await request.json()) as { notificationId: string };
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request." }, 400);
+  }
+  if (!payload.notificationId) {
+    return jsonResponse({ ok: false, error: "Notification ID required." }, 400);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  // RLS ensures users can only update their own notifications
+  const { error } = await supabase
+    .from("intelligence_notifications")
+    .update({ is_read: true })
+    .eq("id", payload.notificationId)
+    .eq("user_id", userId);
+
+  if (error) {
+    return jsonResponse({ ok: false, error: "Failed to mark notification as read." }, 500);
+  }
+
+  return jsonResponse({ ok: true });
+}
+
+async function handleMarkAllNotificationsRead(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  // RLS ensures users can only update their own notifications
+  const { error } = await supabase
+    .from("intelligence_notifications")
+    .update({ is_read: true })
+    .eq("user_id", userId)
+    .eq("is_read", false);
+
+  if (error) {
+    return jsonResponse({ ok: false, error: "Failed to mark notifications as read." }, 500);
+  }
+
+  return jsonResponse({ ok: true });
+}
+
+// ── Phase 6C: Moderation audit endpoint (admin only) ────────────────────────
+
+type AuditRow = {
+  id: string;
+  entry_id: string;
+  action: string;
+  previous_status: string | null;
+  new_status: string | null;
+  dispute_id: string | null;
+  optional_note: string | null;
+  created_at: string;
+};
+
+async function handleGetModerationAudit(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+
+  const admin = await isAdmin(serviceClient, userId);
+  if (!admin) {
+    return jsonResponse({ ok: false, error: "Moderation access required." }, 403);
+  }
+
+  // Fetch recent audit records via service_role (no moderator identity exposed)
+  const url = new URL(request.url);
+  const entryId = url.searchParams.get("entryId");
+
+  let query = serviceClient
+    .from("intelligence_moderation_audit")
+    .select("id, entry_id, action, previous_status, new_status, dispute_id, optional_note, created_at")
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (entryId) {
+    query = query.eq("entry_id", entryId);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    return jsonResponse({ ok: false, error: "Failed to fetch audit records." }, 500);
+  }
+
+  const rows = (data ?? []) as AuditRow[];
+
+  // Return safe public fields — moderator_user_id is never exposed
+  return jsonResponse({
+    ok: true,
+    audit: rows.map((r) => ({
+      id: r.id,
+      entryId: r.entry_id,
+      action: r.action,
+      previousStatus: r.previous_status,
+      newStatus: r.new_status,
+      disputeId: r.dispute_id,
+      note: r.optional_note,
+      createdAt: r.created_at,
+    })),
+  });
 }
 
 // ── Main Handler ─────────────────────────────────────────────────────────────
@@ -4378,6 +4716,26 @@ export default {
     // Phase 6B: Moderation action (admin only)
     if (url.pathname === "/moderation/action" && request.method === "POST") {
       return handleModerationAction(request, env);
+    }
+
+    // Phase 6C: Intelligence notifications (user's own)
+    if (url.pathname === "/notifications" && request.method === "GET") {
+      return handleGetNotifications(request, env);
+    }
+
+    // Phase 6C: Mark a single notification as read
+    if (url.pathname === "/notifications/mark-read" && request.method === "POST") {
+      return handleMarkNotificationRead(request, env);
+    }
+
+    // Phase 6C: Mark all notifications as read
+    if (url.pathname === "/notifications/mark-all-read" && request.method === "POST") {
+      return handleMarkAllNotificationsRead(request, env);
+    }
+
+    // Phase 6C: Moderation audit history (admin only)
+    if (url.pathname === "/moderation/audit" && request.method === "GET") {
+      return handleGetModerationAudit(request, env);
     }
 
     return jsonResponse({ ok: false, error: "Not found" }, 404);

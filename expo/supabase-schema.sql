@@ -2283,3 +2283,111 @@ begin
     where validation_status = 'flagged';
 exception when others then null;
 end $$;
+
+-- ── 6C-1: INTELLIGENCE NOTIFICATIONS ──────────────────────────────────────
+-- Secure notification system for Open Intelligence events.
+-- Only the secure worker (service_role) creates notifications.
+-- Users can read only their own and mark only their own as read.
+create table if not exists public.intelligence_notifications (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  entry_id uuid references public.open_intelligence(id) on delete set null,
+  notification_type text not null check (notification_type in (
+    'community_supported',
+    'externally_supported',
+    'disputed',
+    'rejected',
+    'dispute_dismissed',
+    'outdated',
+    'exchange_sharing_disabled',
+    'faction_sharing_removed'
+  )),
+  title text not null,
+  message text not null,
+  is_read boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists in_user_unread_idx
+  on public.intelligence_notifications(user_id, is_read, created_at desc);
+create index if not exists in_user_created_idx
+  on public.intelligence_notifications(user_id, created_at desc);
+
+alter table public.intelligence_notifications enable row level security;
+
+drop policy if exists "in_self_select" on public.intelligence_notifications;
+drop policy if exists "in_self_update_read" on public.intelligence_notifications;
+drop policy if exists "in_self_insert" on public.intelligence_notifications;
+
+-- Users can read only their own notifications
+create policy "in_self_select" on public.intelligence_notifications
+  for select using (auth.uid() = user_id);
+
+-- Users can mark only their own notifications as read (update is_read only)
+create policy "in_self_update_read" on public.intelligence_notifications
+  for update using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+-- NO client INSERT policy — only service_role (secure worker) creates notifications.
+-- This prevents users from creating fake notifications.
+
+-- ── 6C-2: INTELLIGENCE MODERATION AUDIT ────────────────────────────────────
+-- Secure audit trail for all moderation actions.
+-- Normal users cannot insert, update, or delete audit records.
+-- Only verified admins via the secure worker (service_role) create audit records.
+create table if not exists public.intelligence_moderation_audit (
+  id uuid primary key default gen_random_uuid(),
+  entry_id uuid not null references public.open_intelligence(id) on delete cascade,
+  moderator_user_id uuid not null references auth.users(id) on delete cascade,
+  action text not null check (action in (
+    'dismiss_dispute',
+    'mark_community_supported',
+    'mark_externally_supported',
+    'mark_disputed',
+    'reject_entry'
+  )),
+  previous_status text,
+  new_status text,
+  dispute_id uuid,
+  optional_note text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists ima_entry_idx
+  on public.intelligence_moderation_audit(entry_id, created_at desc);
+create index if not exists ima_moderator_idx
+  on public.intelligence_moderation_audit(moderator_user_id, created_at desc);
+
+alter table public.intelligence_moderation_audit enable row level security;
+
+drop policy if exists "ima_admin_select" on public.intelligence_moderation_audit;
+drop policy if exists "ima_self_select" on public.intelligence_moderation_audit;
+drop policy if exists "ima_admin_insert" on public.intelligence_moderation_audit;
+
+-- Admins can read audit records (verified server-side via is_admin).
+-- For client RLS, we allow self-referencing select: moderators can see audit
+-- records they performed. Full queue access is via the secure worker.
+create policy "ima_self_select" on public.intelligence_moderation_audit
+  for select using (auth.uid() = moderator_user_id);
+
+-- NO client INSERT/UPDATE/DELETE — audit records are created exclusively
+-- by the secure worker (service_role) after verifying is_admin = true.
+-- This prevents users from creating fake audit records.
+
+-- ── 6C-3: PUBLIC MODERATION AUDIT VIEW (safe, no moderator identity) ──────
+-- Exposes audit history without revealing moderator identity.
+-- Admins access full details via the secure worker; this view provides
+-- a safe summary for the moderation screen's audit history section.
+create or replace view public.intelligence_moderation_audit_public as
+select
+  id,
+  entry_id,
+  action,
+  previous_status,
+  new_status,
+  dispute_id,
+  optional_note,
+  created_at
+from public.intelligence_moderation_audit;
+
+grant select on public.intelligence_moderation_audit_public to anon, authenticated;

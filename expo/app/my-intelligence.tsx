@@ -26,6 +26,7 @@ import {
   VALIDATION_STATUS_LABELS,
   validationStatusColor,
   CHANGE_TYPE_LABELS,
+  statusExplanation,
   listAllEntries,
   updateEntry,
   withdrawEntry,
@@ -178,6 +179,14 @@ function MyEntryCard({
           </View>
         ) : null}
       </View>
+
+      {/* Status explanation (Phase 6C) */}
+      {(() => {
+        const explanation = statusExplanation(status, isOutdated);
+        return explanation ? (
+          <Text style={mgmtStyles.statusExplanation}>{explanation}</Text>
+        ) : null;
+      })()}
 
       {/* Content preview */}
       <Text style={mgmtStyles.entryContent} numberOfLines={expanded ? undefined : 3}>
@@ -1103,6 +1112,10 @@ const mgmtStyles = StyleSheet.create({
     gap: 8,
   },
   entryTopRow: { flexDirection: "row", alignItems: "center", gap: 5, flexWrap: "wrap" },
+  statusExplanation: {
+    fontSize: 10, fontWeight: "700", color: palette.muted,
+    lineHeight: 14, fontStyle: "italic",
+  },
   entryContent: { color: palette.text, fontSize: 12, fontWeight: "700", lineHeight: 18 },
   expandBtn: { alignSelf: "flex-start", paddingVertical: 2 },
   expandText: { color: palette.cyan, fontSize: 10, fontWeight: "800" },

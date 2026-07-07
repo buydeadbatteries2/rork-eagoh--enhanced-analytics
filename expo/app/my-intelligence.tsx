@@ -59,6 +59,7 @@ import { supabase } from "@/lib/supabase";
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
   Bookmark,
   Check,
   ChevronLeft,
@@ -997,16 +998,22 @@ export default function MyIntelligenceScreen(): JSX.Element {
           <Text style={mgmtStyles.kicker}>MY INTELLIGENCE</Text>
           <Text style={mgmtStyles.title}>Entry Management</Text>
         </View>
-        {isAdmin ? (
+        <View style={mgmtStyles.headerActions}>
           <Pressable
-            onPress={() => { h.selection(); router.push("/moderation" as never); }}
-            style={mgmtStyles.adminBtn}
+            onPress={() => { h.selection(); router.push("/intelligence-analytics" as never); }}
+            style={mgmtStyles.analyticsBtn}
           >
-            <ShieldAlert color={palette.gold} size={18} />
+            <BarChart3 color={palette.cyan} size={18} />
           </Pressable>
-        ) : (
-          <View style={{ width: 40 }} />
-        )}
+          {isAdmin ? (
+            <Pressable
+              onPress={() => { h.selection(); router.push("/moderation" as never); }}
+              style={mgmtStyles.adminBtn}
+            >
+              <ShieldAlert color={palette.gold} size={18} />
+            </Pressable>
+          ) : null}
+        </View>
       </View>
 
       <ScrollView
@@ -1452,6 +1459,13 @@ const mgmtStyles = StyleSheet.create({
   headerCenter: { flex: 1, alignItems: "center" },
   kicker: { color: palette.cyan, fontSize: 9, fontWeight: "900", letterSpacing: 2 },
   title: { color: palette.text, fontSize: 18, fontWeight: "900", marginTop: 1 },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 6 },
+  analyticsBtn: {
+    width: 40, height: 40, borderRadius: 5,
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: `${palette.cyan}33`,
+    backgroundColor: `${palette.cyan}0A`,
+  },
   adminBtn: {
     width: 40, height: 40, borderRadius: 5,
     alignItems: "center", justifyContent: "center",

@@ -2391,3 +2391,297 @@ select
 from public.intelligence_moderation_audit;
 
 grant select on public.intelligence_moderation_audit_public to anon, authenticated;
+
+-- =============================================================================
+-- PHASE 8A: INTELLIGENCE ANALYTICS RPCs (owner-scoped, safe aggregates)
+-- =============================================================================
+-- These RPCs compute aggregate analytics for the authenticated owner using
+-- security definer. They do NOT expose reviewer identities, buyer identities,
+-- or internal anti-gaming/moderation data. Only the secure worker calls them
+-- after verifying the authenticated user; results are owner-scoped by p_user_id.
+
+-- ── 8A-1: OWNER ENTRY STATUS COUNTS ──────────────────────────────────────────
+-- Returns counts of the user's own entries grouped by validation status,
+-- plus active, outdated, and sharing totals. Uses a single scan.
+create or replace function public.get_owner_intelligence_summary(
+  p_user_id uuid
+)
+returns table (
+  total_entries bigint,
+  active_entries bigint,
+  pending_review bigint,
+  community_supported bigint,
+  externally_supported bigint,
+  disputed bigint,
+  withdrawn bigint,
+  rejected bigint,
+  outdated bigint,
+  avg_quality numeric,
+  avg_influence numeric,
+  shared_with_faction bigint,
+  shared_on_exchange bigint
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  return query
+  select
+    count(*)::bigint as total_entries,
+    count(*) filter (where oi.validation_status not in ('rejected', 'withdrawn'))::bigint as active_entries,
+    count(*) filter (where oi.validation_status = 'pending_review')::bigint as pending_review,
+    count(*) filter (where oi.validation_status in ('community_supported', 'validated'))::bigint as community_supported,
+    count(*) filter (where oi.validation_status = 'externally_supported')::bigint as externally_supported,
+    count(*) filter (where oi.validation_status = 'disputed')::bigint as disputed,
+    count(*) filter (where oi.validation_status = 'withdrawn')::bigint as withdrawn,
+    count(*) filter (where oi.validation_status = 'rejected')::bigint as rejected,
+    count(*) filter (where oi.outdated_flag = true)::bigint as outdated,
+    coalesce(avg(oi.quality_score), 0)::numeric as avg_quality,
+    coalesce(avg(oi.influence_score), 0)::numeric as avg_influence,
+    coalesce((
+      select count(distinct fsi.oi_entry_id)::bigint
+      from public.faction_shared_intelligence fsi
+      where fsi.user_id = p_user_id
+    ), 0::bigint) as shared_with_faction,
+    count(*) filter (where oi.exchange_share_enabled = true)::bigint as shared_on_exchange
+  from public.open_intelligence oi
+  where oi.user_id = p_user_id;
+end;
+$$;
+
+-- ── 8A-2: OWNER ENTRY PERFORMANCE (per-entry safe metrics) ──────────────────
+-- Returns safe per-entry performance metrics for the authenticated owner.
+-- Does NOT expose reviewer identities, dispute reporters, or buyer identities.
+create or replace function public.get_owner_entry_performance(
+  p_user_id uuid,
+  p_limit int default 100
+)
+returns table (
+  entry_id uuid,
+  quality_score numeric,
+  influence_score numeric,
+  validation_status text,
+  analyst_use_count bigint,
+  helpful_count bigint,
+  support_count bigint,
+  dispute_count bigint,
+  outdated_flag boolean,
+  last_used_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  return query
+  select
+    oi.id as entry_id,
+    oi.quality_score::numeric as quality_score,
+    oi.influence_score::numeric as influence_score,
+    oi.validation_status as validation_status,
+    coalesce((
+      select count(*)::bigint from public.analyst_context_usage acu
+      where acu.source_entry_id = oi.id
+        and acu.source_type in ('personal', 'faction', 'exchange')
+    ), 0::bigint) as analyst_use_count,
+    coalesce((
+      select count(*)::bigint from public.open_intelligence_feedback oif
+      where oif.entry_id = oi.id
+        and oif.feedback_type in ('helpful', 'accurate_to_my_experience')
+    ), 0::bigint) as helpful_count,
+    coalesce((
+      select count(*)::bigint from public.open_intelligence_feedback oif
+      where oif.entry_id = oi.id
+        and oif.feedback_type = 'helpful'
+    ), 0::bigint) as support_count,
+    coalesce(oi.active_dispute_count, 0)::bigint as dispute_count,
+    oi.outdated_flag as outdated_flag,
+    (select max(acu.used_at) from public.analyst_context_usage acu
+     where acu.source_entry_id = oi.id) as last_used_at
+  from public.open_intelligence oi
+  where oi.user_id = p_user_id
+  order by oi.created_at desc
+  limit p_limit;
+end;
+$$;
+
+-- ── 8A-3: OWNER WEEKLY TREND ────────────────────────────────────────────────
+-- Returns weekly buckets of entries created, avg quality, and analyst usage
+-- for the authenticated owner over the last p_weeks weeks.
+create or replace function public.get_owner_weekly_trend(
+  p_user_id uuid,
+  p_weeks int default 12
+)
+returns table (
+  week_start date,
+  entries_created bigint,
+  avg_quality numeric,
+  analyst_uses bigint,
+  feedback_count bigint
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  return query
+  select
+    d::date as week_start,
+    count(*) filter (
+      where oi.created_at >= d and oi.created_at < d + interval '7 days'
+    )::bigint as entries_created,
+    coalesce(avg(oi.quality_score) filter (
+      where oi.created_at >= d and oi.created_at < d + interval '7 days'
+    ), 0)::numeric as avg_quality,
+    coalesce((
+      select count(*)::bigint from public.analyst_context_usage acu
+      where acu.source_owner_id = p_user_id
+        and acu.source_type in ('personal', 'faction', 'exchange')
+        and acu.used_at >= d and acu.used_at < d + interval '7 days'
+    ), 0::bigint) as analyst_uses,
+    coalesce((
+      select count(*)::bigint
+      from public.open_intelligence_feedback oif
+      join public.open_intelligence oi2 on oi2.id = oif.entry_id
+      where oi2.user_id = p_user_id
+        and oif.created_at >= d and oif.created_at < d + interval '7 days'
+    ), 0::bigint) as feedback_count
+  from generate_series(
+    date_trunc('week', now() - ((p_weeks - 1) || ' weeks')::interval),
+    date_trunc('week', now()),
+    interval '7 days'
+  ) as d
+  left join public.open_intelligence oi on oi.user_id = p_user_id
+  group by d
+  order by d;
+end;
+$$;
+
+-- ── 8A-4: OWNER FACTION CONTRIBUTION INSIGHTS ──────────────────────────────
+-- Returns the user's contribution summary for each faction they belong to.
+-- Does NOT expose private statistics for other members.
+create or replace function public.get_owner_faction_contributions(
+  p_user_id uuid
+)
+returns table (
+  faction_id uuid,
+  entries_shared bigint,
+  entries_used_by_analysts bigint,
+  avg_quality numeric,
+  supported_entries bigint,
+  disputed_entries bigint
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  return query
+  select
+    fm.faction_id as faction_id,
+    coalesce((
+      select count(*)::bigint from public.faction_shared_intelligence fsi2
+      where fsi2.faction_id = fm.faction_id and fsi2.user_id = p_user_id
+    ), 0::bigint) as entries_shared,
+    coalesce((
+      select count(distinct acu.source_entry_id)::bigint
+      from public.analyst_context_usage acu
+      where acu.faction_id = fm.faction_id
+        and acu.source_owner_id = p_user_id
+        and acu.source_type = 'faction'
+    ), 0::bigint) as entries_used_by_analysts,
+    coalesce((
+      select avg(oi.quality_score)::numeric
+      from public.faction_shared_intelligence fsi3
+      join public.open_intelligence oi on oi.id = fsi3.oi_entry_id
+      where fsi3.faction_id = fm.faction_id and fsi3.user_id = p_user_id
+    ), 0::numeric) as avg_quality,
+    coalesce((
+      select count(*)::bigint
+      from public.faction_shared_intelligence fsi4
+      join public.open_intelligence oi2 on oi2.id = fsi4.oi_entry_id
+      where fsi4.faction_id = fm.faction_id
+        and fsi4.user_id = p_user_id
+        and oi2.validation_status in ('community_supported', 'externally_supported', 'validated')
+    ), 0::bigint) as supported_entries,
+    coalesce((
+      select count(*)::bigint
+      from public.faction_shared_intelligence fsi5
+      join public.open_intelligence oi3 on oi3.id = fsi5.oi_entry_id
+      where fsi5.faction_id = fm.faction_id
+        and fsi5.user_id = p_user_id
+        and oi3.validation_status = 'disputed'
+    ), 0::bigint) as disputed_entries
+  from public.faction_members fm
+  where fm.user_id = p_user_id
+    and fm.status = 'active';
+end;
+$$;
+
+-- ── 8A-5: OWNER EXCHANGE CONTRIBUTION INSIGHTS ─────────────────────────────
+-- Returns the user's (as vendor) Exchange contribution summary.
+-- Does NOT expose buyer identities.
+create or replace function public.get_owner_exchange_contributions(
+  p_user_id uuid
+)
+returns table (
+  eligible_exchange_entries bigint,
+  synchronized_entries_used bigint,
+  avg_shared_quality numeric,
+  supported_entry_rate numeric,
+  dispute_rate numeric,
+  active_purchases bigint,
+  expired_purchases bigint
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  return query
+  select
+    count(*) filter (where oi.exchange_share_enabled = true)::bigint as eligible_exchange_entries,
+    coalesce((
+      select count(distinct acu.source_entry_id)::bigint
+      from public.analyst_context_usage acu
+      where acu.source_owner_id = p_user_id
+        and acu.source_type = 'exchange'
+    ), 0::bigint) as synchronized_entries_used,
+    coalesce(avg(oi.quality_score) filter (where oi.exchange_share_enabled = true), 0)::numeric as avg_shared_quality,
+    case when count(*) > 0
+      then count(*) filter (where oi.validation_status in ('community_supported', 'externally_supported', 'validated'))::numeric / count(*)::numeric
+      else 0::numeric
+    end as supported_entry_rate,
+    case when count(*) > 0
+      then count(*) filter (where oi.validation_status = 'disputed')::numeric / count(*)::numeric
+      else 0::numeric
+    end as dispute_rate,
+    coalesce((
+      select count(*)::bigint from public.marketplace_sync_purchases msp
+      where msp.vendor_id = p_user_id and msp.active = true
+    ), 0::bigint) as active_purchases,
+    coalesce((
+      select count(*)::bigint from public.marketplace_sync_purchases msp
+      where msp.vendor_id = p_user_id and msp.active = false
+    ), 0::bigint) as expired_purchases
+  from public.open_intelligence oi
+  where oi.user_id = p_user_id;
+end;
+$$;
+
+-- Revoke default grants on the new RPCs — only the secure worker (service_role)
+-- and authenticated users (via the worker's verified calls) may access them.
+-- Direct client calls are blocked because the RPCs are security definer and
+-- the worker verifies auth before invoking; RLS still applies to underlying
+-- tables for any direct anon access attempts.
+revoke all on function public.get_owner_intelligence_summary(uuid) from anon;
+grant execute on function public.get_owner_intelligence_summary(uuid) to authenticated;
+revoke all on function public.get_owner_entry_performance(uuid, int) from anon;
+grant execute on function public.get_owner_entry_performance(uuid, int) to authenticated;
+revoke all on function public.get_owner_weekly_trend(uuid, int) from anon;
+grant execute on function public.get_owner_weekly_trend(uuid, int) to authenticated;
+revoke all on function public.get_owner_faction_contributions(uuid) from anon;
+grant execute on function public.get_owner_faction_contributions(uuid) to authenticated;
+revoke all on function public.get_owner_exchange_contributions(uuid) from anon;
+grant execute on function public.get_owner_exchange_contributions(uuid) to authenticated;

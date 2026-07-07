@@ -3,6 +3,7 @@
  * Phase 6B: entry management, moderation, is_admin access.
  * Phase 6C: intelligence notifications, moderation audit trail, notification center.
  * Phase 6C-deploy: worker bundling fix.
+ * Phase 8A: secure owner-scoped intelligence analytics endpoint (deploy).
  *
  * Secure server-side intelligence grounding system.
  * Column names synchronized with live Supabase schema.
@@ -4125,6 +4126,151 @@ async function handleGetModerationAudit(request: Request, env: Env): Promise<Res
       note: r.optional_note,
       createdAt: r.created_at,
     })),
+  });
+}
+
+// ── Phase 8A: Intelligence Analytics Handler ──────────────────────────────────
+
+async function handleGetIntelligenceAnalytics(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  // Use service_role to call the owner-scoped analytics RPCs.
+  // The RPCs are security_definer and scope by p_user_id = userId; we pass
+  // the verified-auth userId, never a client-supplied value.
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+
+  // ── 1. Owner intelligence summary (entry counts, averages, sharing) ────────
+  const { data: summaryRaw, error: summaryErr } = await serviceClient
+    .rpc("get_owner_intelligence_summary", { p_user_id: userId });
+  if (summaryErr) {
+    console.warn("[analytics] summary failed", summaryErr.message);
+    return jsonResponse({ ok: false, error: "Failed to fetch analytics." }, 500);
+  }
+  const summary = (summaryRaw as any[])?.[0] ?? null;
+
+  // ── 2. Owner reputation (safe self fields) ─────────────────────────────────
+  const { data: repRaw } = await serviceClient
+    .from("intelligence_contributor_reputation")
+    .select("overall_score, quality_component, usefulness_component, validation_component, reliability_component, calculated_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+  const reputation = repRaw ?? {
+    overall_score: 50,
+    quality_component: 50,
+    usefulness_component: 50,
+    validation_component: 50,
+    reliability_component: 50,
+    calculated_at: null,
+  };
+
+  // ── 3. Owner entry performance (safe per-entry metrics) ───────────────────
+  const { data: performanceRaw, error: perfErr } = await serviceClient
+    .rpc("get_owner_entry_performance", { p_user_id: userId, p_limit: 100 });
+  if (perfErr) console.warn("[analytics] performance failed", perfErr.message);
+  const performance = (performanceRaw as any[]) ?? [];
+
+  // ── 4. Owner weekly trend ─────────────────────────────────────────────────
+  const { data: trendRaw, error: trendErr } = await serviceClient
+    .rpc("get_owner_weekly_trend", { p_user_id: userId, p_weeks: 12 });
+  if (trendErr) console.warn("[analytics] trend failed", trendErr.message);
+  const trend = (trendRaw as any[]) ?? [];
+
+  // ── 5. Owner faction contributions ─────────────────────────────────────────
+  const { data: factionRaw, error: factionErr } = await serviceClient
+    .rpc("get_owner_faction_contributions", { p_user_id: userId });
+  if (factionErr) console.warn("[analytics] faction failed", factionErr.message);
+  const factionContributions = (factionRaw as any[]) ?? [];
+
+  // ── 6. Owner exchange contributions ───────────────────────────────────────
+  const { data: exchangeRaw, error: exchangeErr } = await serviceClient
+    .rpc("get_owner_exchange_contributions", { p_user_id: userId });
+  if (exchangeErr) console.warn("[analytics] exchange failed", exchangeErr.message);
+  const exchangeContributions = (exchangeRaw as any[])?.[0] ?? {
+    eligible_exchange_entries: 0,
+    synchronized_entries_used: 0,
+    avg_shared_quality: 0,
+    supported_entry_rate: 0,
+    dispute_rate: 0,
+    active_purchases: 0,
+    expired_purchases: 0,
+  };
+
+  return jsonResponse({
+    ok: true,
+    analytics: {
+      summary: summary ? {
+        totalEntries: Number(summary.total_entries ?? 0),
+        activeEntries: Number(summary.active_entries ?? 0),
+        pendingReview: Number(summary.pending_review ?? 0),
+        communitySupported: Number(summary.community_supported ?? 0),
+        externallySupported: Number(summary.externally_supported ?? 0),
+        disputed: Number(summary.disputed ?? 0),
+        withdrawn: Number(summary.withdrawn ?? 0),
+        rejected: Number(summary.rejected ?? 0),
+        outdated: Number(summary.outdated ?? 0),
+        avgQuality: Number(summary.avg_quality ?? 0),
+        avgInfluence: Number(summary.avg_influence ?? 0),
+        sharedWithFaction: Number(summary.shared_with_faction ?? 0),
+        sharedOnExchange: Number(summary.shared_on_exchange ?? 0),
+      } : null,
+      reputation: {
+        overallScore: Number(reputation.overall_score ?? 50),
+        qualityComponent: Number(reputation.quality_component ?? 50),
+        usefulnessComponent: Number(reputation.usefulness_component ?? 50),
+        validationComponent: Number(reputation.validation_component ?? 50),
+        reliabilityComponent: Number(reputation.reliability_component ?? 50),
+        calculatedAt: reputation.calculated_at ?? null,
+      },
+      entryPerformance: performance.map((p: any) => ({
+        entryId: p.entry_id,
+        qualityScore: Number(p.quality_score ?? 0),
+        influenceScore: Number(p.influence_score ?? 0),
+        validationStatus: p.validation_status,
+        analystUseCount: Number(p.analyst_use_count ?? 0),
+        helpfulCount: Number(p.helpful_count ?? 0),
+        supportCount: Number(p.support_count ?? 0),
+        disputeCount: Number(p.dispute_count ?? 0),
+        outdatedFlag: Boolean(p.outdated_flag),
+        lastUsedAt: p.last_used_at ?? null,
+      })),
+      weeklyTrend: trend.map((t: any) => ({
+        weekStart: t.week_start,
+        entriesCreated: Number(t.entries_created ?? 0),
+        avgQuality: Number(t.avg_quality ?? 0),
+        analystUses: Number(t.analyst_uses ?? 0),
+        feedbackCount: Number(t.feedback_count ?? 0),
+      })),
+      factionContributions: factionContributions.map((f: any) => ({
+        factionId: f.faction_id,
+        entriesShared: Number(f.entries_shared ?? 0),
+        entriesUsedByAnalysts: Number(f.entries_used_by_analysts ?? 0),
+        avgQuality: Number(f.avg_quality ?? 0),
+        supportedEntries: Number(f.supported_entries ?? 0),
+        disputedEntries: Number(f.disputed_entries ?? 0),
+      })),
+      exchangeContributions: {
+        eligibleExchangeEntries: Number(exchangeContributions.eligible_exchange_entries ?? 0),
+        synchronizedEntriesUsed: Number(exchangeContributions.synchronized_entries_used ?? 0),
+        avgSharedQuality: Number(exchangeContributions.avg_shared_quality ?? 0),
+        supportedEntryRate: Number(exchangeContributions.supported_entry_rate ?? 0),
+        disputeRate: Number(exchangeContributions.dispute_rate ?? 0),
+        activePurchases: Number(exchangeContributions.active_purchases ?? 0),
+        expiredPurchases: Number(exchangeContributions.expired_purchases ?? 0),
+      },
+    },
   });
 }
 

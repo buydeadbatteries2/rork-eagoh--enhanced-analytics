@@ -1432,3 +1432,109 @@ export async function listMyEntriesPage(
 
 /** Re-export helpers */
 export { influenceLabel };
+
+// ── Phase 8A: Intelligence Analytics ───────────────────────────────────────
+
+/** Owner intelligence summary — entry counts, averages, sharing totals. */
+export type IntelligenceSummary = {
+  totalEntries: number;
+  activeEntries: number;
+  pendingReview: number;
+  communitySupported: number;
+  externallySupported: number;
+  disputed: number;
+  withdrawn: number;
+  rejected: number;
+  outdated: number;
+  avgQuality: number;
+  avgInfluence: number;
+  sharedWithFaction: number;
+  sharedOnExchange: number;
+};
+
+/** Safe contributor reputation summary (no anti-gaming or moderation data). */
+export type ReputationSummary = {
+  overallScore: number;
+  qualityComponent: number;
+  usefulnessComponent: number;
+  validationComponent: number;
+  reliabilityComponent: number;
+  calculatedAt: string | null;
+};
+
+/** Safe per-entry performance metrics (no reviewer identities). */
+export type EntryPerformance = {
+  entryId: string;
+  qualityScore: number;
+  influenceScore: number;
+  validationStatus: string;
+  analystUseCount: number;
+  helpfulCount: number;
+  supportCount: number;
+  disputeCount: number;
+  outdatedFlag: boolean;
+  lastUsedAt: string | null;
+};
+
+/** Weekly trend bucket. */
+export type WeeklyTrendPoint = {
+  weekStart: string;
+  entriesCreated: number;
+  avgQuality: number;
+  analystUses: number;
+  feedbackCount: number;
+};
+
+/** Owner's contribution summary for a single faction. */
+export type FactionContribution = {
+  factionId: string;
+  entriesShared: number;
+  entriesUsedByAnalysts: number;
+  avgQuality: number;
+  supportedEntries: number;
+  disputedEntries: number;
+};
+
+/** Owner's Exchange (vendor) contribution summary. Buyer identities are never exposed. */
+export type ExchangeContribution = {
+  eligibleExchangeEntries: number;
+  synchronizedEntriesUsed: number;
+  avgSharedQuality: number;
+  supportedEntryRate: number;
+  disputeRate: number;
+  activePurchases: number;
+  expiredPurchases: number;
+};
+
+/** Full analytics response from the secure worker. */
+export type IntelligenceAnalytics = {
+  summary: IntelligenceSummary | null;
+  reputation: ReputationSummary;
+  entryPerformance: EntryPerformance[];
+  weeklyTrend: WeeklyTrendPoint[];
+  factionContributions: FactionContribution[];
+  exchangeContributions: ExchangeContribution;
+};
+
+export type AnalyticsResult =
+  | { ok: true; analytics: IntelligenceAnalytics }
+  | { ok: false; error: string };
+
+/** Fetch the authenticated user's intelligence analytics via the secure worker. */
+export async function fetchIntelligenceAnalytics(): Promise<AnalyticsResult> {
+  if (!FUNCTIONS_BASE_URL) return { ok: false, error: "Backend not configured." };
+  const token = await getWorkerAuth();
+  if (!token) return { ok: false, error: "Not authenticated." };
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE_URL}/intelligence/analytics`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = (await res.json()) as { ok: boolean; error?: string; analytics?: IntelligenceAnalytics };
+    if (data.ok && data.analytics) {
+      return { ok: true, analytics: data.analytics };
+    }
+    return { ok: false, error: data.error ?? "Failed." };
+  } catch {
+    return { ok: false, error: "Network error. Try again." };
+  }
+}

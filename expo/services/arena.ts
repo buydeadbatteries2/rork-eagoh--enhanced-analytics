@@ -81,6 +81,123 @@ export type ArenaValidationRequest = {
   subjectB: ArenaSubject;
 };
 
+// ── Phase 11B: Arena analysis types ─────────────────────────────────────────
+
+/** A single category score in an Arena comparison. */
+export type ArenaCategoryScore = {
+  category: string;
+  label: string;
+  scoreA: number;
+  scoreB: number;
+  notes?: string;
+};
+
+/** Which subject a source type tended to support. */
+export type ArenaSourceLean = "a" | "b" | "neutral";
+
+/** Transparency record for one intelligence source type. */
+export type ArenaSourceInfluence = {
+  sourceType: "personal" | "faction" | "exchange" | "external_research";
+  label: string;
+  entryCount: number;
+  summary: string;
+  lean: ArenaSourceLean;
+};
+
+/** A single external citation returned by the Arena analysis. */
+export type ArenaCitation = {
+  title: string;
+  url: string;
+  publisher?: string;
+};
+
+/** Allowed Arena verdict strings. */
+export type ArenaVerdict =
+  | "Subject A Advantage"
+  | "Subject B Advantage"
+  | "Even Match"
+  | "Too Close to Call"
+  | "Insufficient Evidence";
+
+/** Request body sent to POST /arena/analyze. */
+export type ArenaAnalysisRequest = {
+  eagohId: string;
+  comparisonType: ArenaComparisonTypeId;
+  subjectA: ArenaSubject;
+  subjectB: ArenaSubject;
+  focus?: string;
+  customFocus?: string;
+  customQuestion?: string;
+  requestId: string;
+};
+
+/** Structured Arena analysis result returned by the worker. */
+export type ArenaAnalysisResult = {
+  ok: boolean;
+  arenaTitle?: string;
+  subjectASummary?: string;
+  subjectBSummary?: string;
+  normalizedA?: ArenaSubject;
+  normalizedB?: ArenaSubject;
+  comparisonType?: ArenaComparisonTypeId;
+  categoryScores?: ArenaCategoryScore[];
+  subjectAAdvantages?: string[];
+  subjectBAdvantages?: string[];
+  similarities?: string[];
+  majorDifferences?: string[];
+  oiInfluence?: ArenaSourceInfluence[];
+  evidenceLimitations?: string;
+  confidence?: number;
+  verdict?: ArenaVerdict;
+  responseSummary?: string;
+  sourceCitations?: ArenaCitation[];
+  sourceCounts?: {
+    personal?: number;
+    faction?: number;
+    exchange?: number;
+    external?: number;
+  };
+  neuronCost?: number;
+  historyId?: string;
+  error?: string;
+};
+
+/** A row in the user's Arena history (from GET /arena/history). */
+export type ArenaHistoryEntry = {
+  id: string;
+  eagoh_id: string;
+  domain: string;
+  comparison_type: string;
+  subject_a_name: string;
+  subject_a_context?: string | null;
+  subject_a_year?: string | null;
+  subject_b_name: string;
+  subject_b_context?: string | null;
+  subject_b_year?: string | null;
+  focus?: string | null;
+  custom_focus?: string | null;
+  custom_question?: string | null;
+  verdict: string;
+  confidence: number;
+  category_scores: ArenaCategoryScore[];
+  subject_a_advantages: string[];
+  subject_b_advantages: string[];
+  similarities: string[];
+  major_differences: string[];
+  oi_influence: ArenaSourceInfluence[];
+  response_summary: string;
+  source_citations: ArenaCitation[];
+  evidence_limitations?: string | null;
+  source_counts: {
+    personal?: number;
+    faction?: number;
+    exchange?: number;
+    external?: number;
+  };
+  neuron_cost: number;
+  created_at: string;
+};
+
 /** Result returned by the secure validation endpoint. */
 export type ArenaValidationResult = {
   ok: boolean;
@@ -432,6 +549,85 @@ export function normalizeSubject(subject: ArenaSubject): ArenaSubject {
 
 /** Empty-state message shown when no analytics/contribution data exists. */
 export const ARENA_EMPTY_NO_EAGOH = "Create an EAGOH in the Forge before entering Arena Mode.";
+
+// ── Phase 11B: Arena Neuron cost ─────────────────────────────────────────────
+
+/** Flat Arena analysis cost in Neurons. */
+export const ARENA_NEURON_COST = 50;
+
+// ── Worker analysis + history calls ─────────────────────────────────────────
+
+/**
+ * Run an Arena analysis through the secure worker endpoint POST /arena/analyze.
+ * Deducts Neurons exactly once (idempotent via requestId). Returns a
+ * structured Arena result. Never exposes Open Intelligence content beyond
+ * what the authenticated user is authorized to access.
+ */
+export async function runArenaAnalysis(
+  request: ArenaAnalysisRequest,
+): Promise<ArenaAnalysisResult> {
+  if (!ARENA_FUNCTIONS_BASE_URL) {
+    return { ok: false, error: "Backend not configured." };
+  }
+  const token = await getArenaWorkerAuth();
+  if (!token) {
+    return { ok: false, error: "Not authenticated." };
+  }
+  try {
+    const res = await fetch(`${ARENA_FUNCTIONS_BASE_URL}/arena/analyze`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(request),
+    });
+    const data = (await res.json()) as ArenaAnalysisResult & { ok?: boolean };
+    if (data.ok === false || res.status >= 400) {
+      return {
+        ok: false,
+        error: data.error ?? "Arena analysis failed. Please try again.",
+      };
+    }
+    return data;
+  } catch {
+    return {
+      ok: false,
+      error: "Network error. Try again.",
+    };
+  }
+}
+
+/**
+ * Fetch the authenticated user's Arena history (paginated) through the secure
+ * worker endpoint GET /arena/history. Opening history never charges.
+ */
+export async function listArenaHistory(
+  page: number = 0,
+  pageSize: number = 20,
+): Promise<{ ok: boolean; entries?: ArenaHistoryEntry[]; error?: string }> {
+  if (!ARENA_FUNCTIONS_BASE_URL) {
+    return { ok: false, error: "Backend not configured." };
+  }
+  const token = await getArenaWorkerAuth();
+  if (!token) {
+    return { ok: false, error: "Not authenticated." };
+  }
+  try {
+    const url = `${ARENA_FUNCTIONS_BASE_URL}/arena/history?page=${page}&pageSize=${pageSize}`;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = (await res.json()) as { ok: boolean; entries?: ArenaHistoryEntry[]; error?: string };
+    if (data.ok === false || res.status >= 400) {
+      return { ok: false, error: data.error ?? "Could not load Arena history." };
+    }
+    return { ok: true, entries: data.entries ?? [] };
+  } catch {
+    return { ok: false, error: "Network error. Try again." };
+  }
+}
 
 // ── Worker validation call ─────────────────────────────────────────────────
 

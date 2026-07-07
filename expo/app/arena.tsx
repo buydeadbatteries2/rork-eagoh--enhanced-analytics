@@ -26,11 +26,16 @@ import { useEagohs } from "@/providers/EagohProvider";
 import { INTELLIGENCE_DOMAINS, getDomainColor } from "@/services/domains";
 import {
   ARENA_DOMAIN_RULES,
+  ARENA_NEURON_COST,
   getArenaDomainRule,
+  listArenaHistory,
   normalizeSubject,
+  runArenaAnalysis,
   validateArenaMatchup,
+  type ArenaAnalysisResult,
   type ArenaComparisonTypeId,
   type ArenaComparisonFocus,
+  type ArenaHistoryEntry,
   type ArenaSubject,
   type ArenaValidationResult,
 } from "@/services/arena";
@@ -41,13 +46,15 @@ import {
   ChevronDown,
   ChevronRight,
   CircleAlert,
+  History,
   Scale,
   Sparkles,
   Swords,
   Trophy,
   X,
+  Zap,
 } from "lucide-react-native";
-import React, { memo, useCallback, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -64,6 +71,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEdge } from "@/providers/EdgeProvider";
 
 // ── Eligibility ──────────────────────────────────────────────────────────────
 
@@ -276,6 +285,10 @@ export default function ArenaSetupScreen(): JSX.Element {
   const goBack = useSafeBack("/(tabs)/sessions");
   const router = useRouter();
   const { eagohs } = useEagohs();
+  const { balances, total } = useEdge();
+  const queryClient = useQueryClient();
+
+  const insufficientNeurons = total < ARENA_NEURON_COST;
 
   const eligibleEagohs = useMemo(() => eagohs.filter(isArenaEligible), [eagohs]);
   const [selectedEagohId, setSelectedEagohId] = useState<string>("");
@@ -307,6 +320,40 @@ export default function ArenaSetupScreen(): JSX.Element {
 
   const [validating, setValidating] = useState<boolean>(false);
   const [result, setResult] = useState<ArenaValidationResult | null>(null);
+  const [analyzing, setAnalyzing] = useState<boolean>(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState<boolean>(false);
+  const [requestId, setRequestId] = useState<string>("");
+
+  // Arena history (React Query cached)
+  const historyQuery = useQuery<ArenaHistoryEntry[]>({
+    queryKey: ["arena", "history", "all"] as const,
+    queryFn: async () => {
+      const res = await listArenaHistory(0, 30);
+      return res.ok ? (res.entries ?? []) : [];
+    },
+    staleTime: 30_000,
+  });
+
+  // Prefill for rematch from router params
+  useEffect(() => {
+    const params = (router as unknown as { params?: Record<string, string | undefined> }).params;
+    const rematch = params?.rematch === "1";
+    const rEagohId = params?.eagohId;
+    const rCmpType = params?.cmpType;
+    const rAName = params?.aName;
+    const rAContext = params?.aContext;
+    const rAYear = params?.aYear;
+    const rBName = params?.bName;
+    const rBContext = params?.bContext;
+    const rBYear = params?.bYear;
+    const rFocus = params?.focus;
+    if (rematch && rEagohId) setSelectedEagohId(rEagohId);
+    if (rematch && rCmpType) setComparisonType(rCmpType);
+    if (rematch && rAName) setSubjectA({ name: rAName, context: rAContext, year: rAYear });
+    if (rematch && rBName) setSubjectB({ name: rBName, context: rBContext, year: rBYear });
+    if (rematch && rFocus) setFocusId(rFocus);
+  }, []);
 
   const accent = palette.violet;
 
@@ -333,6 +380,7 @@ export default function ArenaSetupScreen(): JSX.Element {
     h.selection();
     setValidating(true);
     setResult(null);
+    setAnalyzeError(null);
     try {
       const res = await validateArenaMatchup({
         eagohId: selectedEagoh.id,
@@ -346,6 +394,56 @@ export default function ArenaSetupScreen(): JSX.Element {
       setValidating(false);
     }
   }, [selectedEagoh, comparisonType, subjectA, subjectB, h]);
+
+  const handleRunAnalysis = useCallback(async () => {
+    if (!selectedEagoh || !comparisonType) return;
+    if (insufficientNeurons) {
+      setAnalyzeError(`Insufficient Neurons. Arena costs ${ARENA_NEURON_COST} Neurons (you have ${total}).`);
+      return;
+    }
+    h.success();
+    setAnalyzing(true);
+    setAnalyzeError(null);
+    const rid = requestId || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    if (!requestId) setRequestId(rid);
+    try {
+      const res = await runArenaAnalysis({
+        eagohId: selectedEagoh.id,
+        comparisonType,
+        subjectA: normalizeSubject(subjectA),
+        subjectB: normalizeSubject(subjectB),
+        focus: focusId,
+        customFocus: focusId === "custom" ? customFocus : undefined,
+        customQuestion: customQuestion || undefined,
+        requestId: rid,
+      });
+      if (!res.ok) {
+        setAnalyzeError(res.error ?? "Arena analysis failed.");
+        h.error();
+        return;
+      }
+      // Invalidate history cache so it refreshes after a new analysis
+      void queryClient.invalidateQueries({ queryKey: ["arena", "history"] });
+      // Navigate to results screen with the result
+      router.replace({
+        pathname: "/arena-results",
+        params: { result: JSON.stringify(res), eagohName: selectedEagoh.name ?? "EAGOH", eagohDomain: selectedEagoh.domain ?? "" },
+      } as never);
+    } catch (err) {
+      setAnalyzeError("Arena analysis failed. Please try again.");
+      h.error();
+    } finally {
+      setAnalyzing(false);
+    }
+  }, [selectedEagoh, comparisonType, subjectA, subjectB, focusId, customFocus, customQuestion, requestId, insufficientNeurons, total, h, router, queryClient]);
+
+  const openHistoryEntry = useCallback((entry: ArenaHistoryEntry) => {
+    h.selection();
+    router.push({
+      pathname: "/arena-results",
+      params: { historyId: entry.id, history: JSON.stringify(entry), eagohName: "EAGOH", eagohDomain: entry.domain },
+    } as never);
+  }, [h, router]);
 
   // ── No eligible EAGOH empty state ──
   if (eligibleEagohs.length === 0) {
@@ -417,9 +515,24 @@ export default function ArenaSetupScreen(): JSX.Element {
             />
             <Sparkles color={palette.violet} size={14} />
             <Text style={arStyles.phaseNoticeText}>
-              Phase 11A — Setup & validation. Full Arena analysis arrives in the next phase.
+              Arena Mode — Compare two subjects using AI research and Open Intelligence.
             </Text>
           </View>
+
+          {/* Cost & balance row */}
+          {domainRule ? (
+            <View style={arStyles.costRow}>
+              <View style={[arStyles.costChip, { borderColor: "rgba(255,181,71,0.35)" }]}>
+                <Zap color={palette.gold} size={12} />
+                <Text style={[arStyles.costChipText, { color: palette.gold }]}>{ARENA_NEURON_COST} Neurons</Text>
+              </View>
+              <View style={[arStyles.costChip, insufficientNeurons ? { borderColor: "rgba(255,77,109,0.45)" } : { borderColor: "rgba(0,255,178,0.32)" }]}>
+                <Text style={[arStyles.costChipText, insufficientNeurons ? { color: palette.ember } : { color: palette.success }]}>
+                  Balance: {total}
+                </Text>
+              </View>
+            </View>
+          ) : null}
 
           {/* Selected EAGOH card */}
           <Pressable
@@ -628,36 +741,140 @@ export default function ArenaSetupScreen(): JSX.Element {
                 <View style={arStyles.confirmedBanner}>
                   <Trophy color={palette.violet} size={14} />
                   <Text style={arStyles.confirmedText}>
-                    Matchup confirmed. Arena analysis will be enabled in the next phase.
+                    Matchup confirmed. Press “Run Arena Analysis” to generate the full comparison.
                   </Text>
                 </View>
               ) : null}
             </View>
           ) : null}
+
+          {/* Analyze error */}
+          {analyzeError ? (
+            <View style={[arStyles.resultCard, { borderColor: "rgba(255,77,109,0.40)" }]}>
+              <LinearGradient
+                colors={["rgba(255,77,109,0.08)", "rgba(8,15,26,0.7)"]}
+                style={StyleSheet.absoluteFill}
+              />
+              <View style={arStyles.resultHeader}>
+                <CircleAlert color={palette.ember} size={18} />
+                <Text style={[arStyles.resultTitle, { color: palette.ember }]}>Analysis Error</Text>
+              </View>
+              <Text style={arStyles.resultExplanation}>{analyzeError}</Text>
+            </View>
+          ) : null}
+
+          {/* Arena history */}
+          {domainRule ? (
+            <View style={arStyles.section}>
+              <Pressable
+                onPress={() => { h.selection(); setShowHistory((v) => !v); }}
+                style={({ pressed }) => [arStyles.historyToggle, pressed && { opacity: 0.85 }]}
+              >
+                <History color={palette.cyan} size={14} />
+                <Text style={arStyles.historyToggleText}>Arena History</Text>
+                {historyQuery.data && historyQuery.data.length > 0 ? (
+                  <View style={arStyles.historyCountBadge}>
+                    <Text style={arStyles.historyCountText}>{historyQuery.data.length}</Text>
+                  </View>
+                ) : null}
+                <View style={{ flex: 1 }} />
+                <ChevronRight
+                  color={palette.muted}
+                  size={16}
+                  style={{ transform: [{ rotate: showHistory ? "90deg" : "0deg" }] }}
+                />
+              </Pressable>
+
+              {showHistory ? (
+                historyQuery.isLoading ? (
+                  <ActivityIndicator color={palette.violet} size="small" style={{ marginTop: 12 }} />
+                ) : historyQuery.data && historyQuery.data.length > 0 ? (
+                  <View style={{ marginTop: 8, gap: 8 }}>
+                    {historyQuery.data.map((entry) => (
+                      <Pressable
+                        key={entry.id}
+                        onPress={() => openHistoryEntry(entry)}
+                        style={({ pressed }) => [arStyles.historyItem, pressed && { opacity: 0.85 }]}
+                      >
+                        <LinearGradient
+                          colors={["rgba(108,230,255,0.06)", "rgba(8,15,26,0.7)"]}
+                          style={StyleSheet.absoluteFill}
+                        />
+                        <View style={arStyles.historyIcon}>
+                          <Swords color={palette.cyan} size={13} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={arStyles.historyTitle} numberOfLines={1}>
+                            {entry.subject_a_name} vs {entry.subject_b_name}
+                          </Text>
+                          <Text style={arStyles.historyMeta} numberOfLines={1}>
+                            {entry.verdict} · {entry.confidence}% confidence
+                          </Text>
+                        </View>
+                        <ChevronRight color={palette.muted} size={14} />
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : (
+                  <Text style={arStyles.historyEmpty}>No Arena history yet. Run your first comparison to see it here.</Text>
+                )
+              ) : null}
+            </View>
+          ) : null}
         </ScrollView>
 
-        {/* Sticky Enter Arena button */}
+        {/* Sticky action bar — validate then run analysis */}
         <View style={arStyles.stickyBar}>
+          {/* Validate button (no charge) */}
           <Pressable
             onPress={handleEnterArena}
-            disabled={!canSubmit || validating}
+            disabled={!canSubmit || validating || analyzing}
             style={({ pressed }) => [
-              arStyles.enterBtn,
-              (!canSubmit || validating) && arStyles.enterBtnDisabled,
+              arStyles.validateBtn,
+              (!canSubmit || validating || analyzing) && arStyles.enterBtnDisabled,
+              pressed && { opacity: 0.9 },
+            ]}
+          >
+            {validating ? (
+              <ActivityIndicator color={palette.cyan} size="small" />
+            ) : (
+              <>
+                <Scale color={canSubmit ? palette.cyan : palette.muted} size={15} />
+                <Text style={[arStyles.validateBtnText, !canSubmit && { color: palette.muted }]}>
+                  Validate
+                </Text>
+              </>
+            )}
+          </Pressable>
+
+          {/* Run Arena analysis button (charges Neurons) */}
+          <Pressable
+            onPress={handleRunAnalysis}
+            disabled={!canSubmit || validating || analyzing || insufficientNeurons || !result?.valid}
+            style={({ pressed }) => [
+              arStyles.runBtn,
+              (!canSubmit || validating || analyzing || insufficientNeurons || !result?.valid) && arStyles.enterBtnDisabled,
               pressed && { opacity: 0.9 },
             ]}
           >
             <LinearGradient
-              colors={canSubmit ? [palette.violet, "rgba(138,92,255,0.7)"] : ["rgba(60,70,90,0.5)", "rgba(40,50,70,0.5)"]}
+              colors={
+                canSubmit && result?.valid && !insufficientNeurons
+                  ? [palette.violet, "rgba(138,92,255,0.7)"]
+                  : ["rgba(60,70,90,0.5)", "rgba(40,50,70,0.5)"]
+              }
               style={StyleSheet.absoluteFill}
             />
-            {validating ? (
-              <ActivityIndicator color={palette.void} size="small" />
+            {analyzing ? (
+              <View style={arStyles.analyzingRow}>
+                <ActivityIndicator color={palette.void} size="small" />
+                <Text style={arStyles.analyzingText}>Analyzing…</Text>
+              </View>
             ) : (
               <>
-                <Swords color={canSubmit ? palette.void : palette.muted} size={17} />
-                <Text style={[arStyles.enterBtnText, !canSubmit && { color: palette.muted }]}>
-                  Enter Arena
+                <Swords color={canSubmit && result?.valid && !insufficientNeurons ? palette.void : palette.muted} size={17} />
+                <Text style={[arStyles.enterBtnText, (!canSubmit || !result?.valid || insufficientNeurons) && { color: palette.muted }]}>
+                  Run Arena · {ARENA_NEURON_COST}
                 </Text>
               </>
             )}
@@ -960,6 +1177,8 @@ const arStyles = StyleSheet.create({
 
   // Sticky bar
   stickyBar: {
+    flexDirection: "row",
+    gap: 8,
     paddingHorizontal: 14,
     paddingVertical: 10,
     paddingBottom: 18,
@@ -967,7 +1186,21 @@ const arStyles = StyleSheet.create({
     borderTopColor: palette.line,
     backgroundColor: palette.void,
   },
-  enterBtn: {
+  validateBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    paddingVertical: 15,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "rgba(108,230,255,0.35)",
+    backgroundColor: "rgba(108,230,255,0.08)",
+  },
+  validateBtnText: { color: palette.cyan, fontSize: 14, fontWeight: "900", letterSpacing: 0.3 },
+  runBtn: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -976,6 +1209,8 @@ const arStyles = StyleSheet.create({
     borderRadius: 8,
     overflow: "hidden",
   },
+  analyzingRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  analyzingText: { color: palette.void, fontSize: 13, fontWeight: "900" },
   enterBtnDisabled: { opacity: 0.7 },
   enterBtnText: { color: palette.void, fontSize: 15, fontWeight: "900", letterSpacing: 0.3 },
 
@@ -1040,4 +1275,63 @@ const arStyles = StyleSheet.create({
     overflow: "hidden",
   },
   forgeCtaText: { color: palette.void, fontSize: 14, fontWeight: "900", letterSpacing: 0.3 },
+
+  // Cost & balance row
+  costRow: { flexDirection: "row", gap: 8, marginBottom: 14 },
+  costChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    backgroundColor: "rgba(10,20,40,0.5)",
+  },
+  costChipText: { fontSize: 11, fontWeight: "900", letterSpacing: 0.4 },
+
+  // History section
+  historyToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "rgba(108,230,255,0.22)",
+    backgroundColor: "rgba(10,20,40,0.4)",
+  },
+  historyToggleText: { color: palette.cyan, fontSize: 13, fontWeight: "900" },
+  historyCountBadge: {
+    backgroundColor: "rgba(108,230,255,0.18)",
+    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  historyCountText: { color: palette.cyan, fontSize: 10, fontWeight: "900" },
+  historyItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "rgba(108,230,255,0.18)",
+    overflow: "hidden",
+  },
+  historyIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "rgba(108,230,255,0.30)",
+    backgroundColor: "rgba(108,230,255,0.10)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  historyTitle: { color: palette.text, fontSize: 13, fontWeight: "900" },
+  historyMeta: { color: palette.muted, fontSize: 10, fontWeight: "700", marginTop: 1 },
+  historyEmpty: { color: palette.muted, fontSize: 12, fontWeight: "700", marginTop: 10, fontStyle: "italic" },
 });

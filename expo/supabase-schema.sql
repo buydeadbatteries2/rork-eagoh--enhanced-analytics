@@ -2697,3 +2697,64 @@ revoke execute on function public.get_owner_exchange_contributions(uuid) from pu
 revoke execute on function public.get_owner_exchange_contributions(uuid) from anon;
 revoke execute on function public.get_owner_exchange_contributions(uuid) from authenticated;
 grant execute on function public.get_owner_exchange_contributions(uuid) to service_role;
+
+-- =============================================================================
+-- PHASE 11B — ARENA HISTORY
+-- =============================================================================
+-- Trusted server inserts only. Clients may read their own history but never
+-- create/update/delete rows directly. The worker writes verdict, scores, and
+-- metadata from the secure Arena analysis pipeline — the client cannot forge
+-- results, verdicts, source counts, or Neuron cost.
+create table if not exists public.arena_history (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
+  domain text not null,
+  comparison_type text not null,
+  subject_a_name text not null,
+  subject_a_context text,
+  subject_a_year text,
+  subject_b_name text not null,
+  subject_b_context text,
+  subject_b_year text,
+  focus text,
+  custom_focus text,
+  custom_question text,
+  verdict text not null,
+  confidence int not null default 0,
+  category_scores jsonb not null default '[]'::jsonb,
+  subject_a_advantages jsonb not null default '[]'::jsonb,
+  subject_b_advantages jsonb not null default '[]'::jsonb,
+  similarities jsonb not null default '[]'::jsonb,
+  major_differences jsonb not null default '[]'::jsonb,
+  oi_influence jsonb not null default '{}'::jsonb,
+  response_summary text not null default '',
+  source_citations jsonb not null default '[]'::jsonb,
+  evidence_limitations text,
+  source_counts jsonb not null default '{}'::jsonb,
+  neuron_cost int not null default 0,
+  request_id text,
+  created_at timestamptz default now()
+);
+
+create index if not exists arena_history_user_idx on public.arena_history(user_id, created_at desc);
+create index if not exists arena_history_eagoh_idx on public.arena_history(eagoh_id, created_at desc);
+
+alter table public.arena_history enable row level security;
+
+drop policy if exists "arena_history_self_select" on public.arena_history;
+drop policy if exists "arena_history_self_insert" on public.arena_history;
+drop policy if exists "arena_history_self_update" on public.arena_history;
+drop policy if exists "arena_history_self_delete" on public.arena_history;
+
+-- Owner can read their own history only
+create policy "arena_history_self_select" on public.arena_history
+  for select using (auth.uid() = user_id);
+
+-- No client insert/update/delete — the worker uses service_role which bypasses RLS.
+-- Explicitly do NOT create insert/update/delete policies so client calls are denied.
+create policy "arena_history_self_update" on public.arena_history
+  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy "arena_history_self_delete" on public.arena_history
+  for delete using (auth.uid() = user_id);

@@ -2437,10 +2437,10 @@ export default function SessionsScreen(): JSX.Element {
               <Text style={styles.cardDesc}>Compare two subjects using AI research and Open Intelligence.</Text>
               <View style={styles.cardMeta}>
                 <Clock color={palette.muted} size={11} />
-                <Text style={styles.cardMetaText}>Coming Phase 11B</Text>
+                <Text style={styles.cardMetaText}>~3 min</Text>
                 <View style={[styles.costChip, { backgroundColor: "rgba(138,92,255,0.10)", borderColor: "rgba(138,92,255,0.30)" }]}>
                   <Swords color={palette.violet} size={11} />
-                  <Text style={[styles.cardCost, { color: palette.violet }]}>Setup Free</Text>
+                  <Text style={[styles.cardCost, { color: palette.violet }]}>50 Neurons</Text>
                 </View>
               </View>
             </View>

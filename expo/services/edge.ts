@@ -26,6 +26,7 @@ export type EdgeReason =
   | "standard_analysis"
   | "oracle_dive"
   | "premium_event"
+  | "arena"
   | "observation"
   | "marketplace"
   | "customization"

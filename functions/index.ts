@@ -1,5 +1,5 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker (Phase 10A — secure account deletion endpoint)
+ * EAGOH Analyst Chat — Cloudflare Worker (Phase 11B — Arena analysis engine)
  * Phase 6C — notifications & audit history)
  * Phase 6B: entry management, moderation, is_admin access.
  * Phase 6C: intelligence notifications, moderation audit trail, notification center.
@@ -5310,6 +5310,837 @@ async function handleArenaValidate(request: Request, env: Env): Promise<Response
   });
 }
 
+// ── Phase 11B: Arena Analysis Engine ─────────────────────────────────────────
+
+/** Flat Arena Neuron cost. Server-authoritative — the client never supplies a cost. */
+const ARENA_NEURON_COST = 50;
+
+/** Human-readable domain labels for Arena prompts (worker-side mirror of client domains). */
+const ARENA_DOMAIN_LABELS: Record<string, string> = {
+  sports: "Sports",
+  music: "Music",
+  "film-tv": "Film & Television",
+  fashion: "Fashion",
+  education: "Education",
+  gaming: "Gaming",
+  business: "Business",
+  finance: "Finance",
+  technology: "Technology",
+  "health-fitness": "Health & Fitness",
+};
+
+/** Maximum Arena analysis tokens for the final answer model. */
+const ARENA_MAX_TOKENS = 1400;
+
+/** Allowed Arena verdict strings. */
+const ARENA_VERDICTS = [
+  "Subject A Advantage",
+  "Subject B Advantage",
+  "Even Match",
+  "Too Close to Call",
+  "Insufficient Evidence",
+] as const;
+
+/** Domain-appropriate comparison category sets. */
+const ARENA_CATEGORY_SETS: Record<string, Array<{ id: string; label: string }>> = {
+  sports: [
+    { id: "performance", label: "Performance" },
+    { id: "statistics", label: "Statistics" },
+    { id: "consistency", label: "Consistency" },
+    { id: "peak_ability", label: "Peak Ability" },
+    { id: "longevity", label: "Longevity" },
+    { id: "accomplishments", label: "Accomplishments" },
+    { id: "competition_level", label: "Competition Level" },
+    { id: "historical_impact", label: "Historical Impact" },
+  ],
+  music: [
+    { id: "technical_ability", label: "Technical Ability" },
+    { id: "commercial_performance", label: "Commercial Performance" },
+    { id: "cultural_impact", label: "Cultural Impact" },
+    { id: "consistency", label: "Consistency" },
+    { id: "catalog", label: "Catalog / Body of Work" },
+    { id: "influence", label: "Influence" },
+  ],
+  "film-tv": [
+    { id: "performance", label: "Performance" },
+    { id: "critical_reception", label: "Critical Reception" },
+    { id: "commercial_success", label: "Commercial Success" },
+    { id: "versatility", label: "Versatility" },
+    { id: "career_consistency", label: "Career Consistency" },
+    { id: "cultural_impact", label: "Cultural Impact" },
+  ],
+  fashion: [
+    { id: "design_impact", label: "Design Impact" },
+    { id: "commercial_performance", label: "Commercial Performance" },
+    { id: "cultural_influence", label: "Cultural Influence" },
+    { id: "consistency", label: "Consistency" },
+    { id: "innovation", label: "Innovation" },
+  ],
+  education: [
+    { id: "academic_reputation", label: "Academic Reputation" },
+    { id: "outcomes", label: "Outcomes" },
+    { id: "accessibility", label: "Accessibility" },
+    { id: "innovation", label: "Innovation" },
+    { id: "consistency", label: "Consistency" },
+  ],
+  gaming: [
+    { id: "gameplay_quality", label: "Gameplay Quality" },
+    { id: "commercial_performance", label: "Commercial Performance" },
+    { id: "cultural_impact", label: "Cultural Impact" },
+    { id: "innovation", label: "Innovation" },
+    { id: "consistency", label: "Consistency" },
+    { id: "influence", label: "Influence" },
+  ],
+  business: [
+    { id: "market_position", label: "Market Position" },
+    { id: "financial_performance", label: "Financial Performance" },
+    { id: "innovation", label: "Innovation" },
+    { id: "leadership", label: "Leadership" },
+    { id: "cultural_impact", label: "Cultural Impact" },
+  ],
+  finance: [
+    { id: "performance", label: "Performance" },
+    { id: "risk_profile", label: "Risk Profile" },
+    { id: "consistency", label: "Consistency" },
+    { id: "liquidity", label: "Liquidity" },
+    { id: "historical_track_record", label: "Historical Track Record" },
+  ],
+  technology: [
+    { id: "performance", label: "Performance" },
+    { id: "ecosystem", label: "Ecosystem" },
+    { id: "innovation", label: "Innovation" },
+    { id: "market_adoption", label: "Market Adoption" },
+    { id: "support_longevity", label: "Support & Longevity" },
+  ],
+  "health-fitness": [
+    { id: "effectiveness", label: "Effectiveness" },
+    { id: "sustainability", label: "Sustainability" },
+    { id: "accessibility", label: "Accessibility" },
+    { id: "evidence_base", label: "Evidence Base" },
+    { id: "consistency", label: "Consistency" },
+  ],
+};
+
+/** Generic fallback categories for any domain without a specific set. */
+const ARENA_GENERIC_CATEGORIES = [
+  { id: "overall", label: "Overall" },
+  { id: "consistency", label: "Consistency" },
+  { id: "impact", label: "Impact" },
+  { id: "innovation", label: "Innovation" },
+  { id: "historical_significance", label: "Historical Significance" },
+];
+
+function getArenaCategories(domainId: string): Array<{ id: string; label: string }> {
+  return ARENA_CATEGORY_SETS[domainId] ?? ARENA_GENERIC_CATEGORIES;
+}
+
+/** Build the Arena analysis system prompt. Instructs fair, structured comparison. */
+function buildArenaSystemPrompt(params: {
+  domainId: string;
+  domainLabel: string;
+  comparisonTypeLabel: string;
+  focusLabel: string;
+  categoryLabels: string[];
+  subjectAName: string;
+  subjectBName: string;
+  hasOI: boolean;
+  hasFactionOI: boolean;
+  hasExchangeOI: boolean;
+  hasExternalResearch: boolean;
+}): string {
+  const sections: string[] = [];
+  sections.push(
+    "You are the EAGOH Arena — a structured, fair comparison engine.",
+    "You compare two subjects using research, Open Intelligence, and measured evidence.",
+    "Arena results are ANALYTICAL ESTIMATES, not objective facts. Never frame them as betting advice, guaranteed outcomes, wagering recommendations, financial guarantees, or medical diagnosis.",
+    "For future or live events, clearly state uncertainty.",
+    "Do not invent statistics, sources, or citations. Only use the information provided.",
+  );
+  sections.push(
+    `DOMAIN: ${params.domainLabel}`,
+    `COMPARISON TYPE: ${params.comparisonTypeLabel}`,
+    `FOCUS: ${params.focusLabel}`,
+    `SUBJECT A: ${params.subjectAName}`,
+    `SUBJECT B: ${params.subjectBName}`,
+  );
+  sections.push(
+    "Return your answer as STRICT JSON only (no markdown fences, no prose outside the JSON).",
+    "The JSON object MUST have exactly these fields:",
+    '{\n  "arenaTitle": string,\n  "subjectASummary": string (2-4 sentences),\n  "subjectBSummary": string (2-4 sentences),\n  "categoryScores": array of { "category": string, "label": string, "scoreA": number 0-100, "scoreB": number 0-100, "notes": string },\n  "subjectAAdvantages": array of string (short bullets),\n  "subjectBAdvantages": array of string (short bullets),\n  "similarities": array of string,\n  "majorDifferences": array of string,\n  "evidenceLimitations": string,\n  "confidence": number 0-100,\n  "verdict": one of "Subject A Advantage" | "Subject B Advantage" | "Even Match" | "Too Close to Call" | "Insufficient Evidence"\n}',
+    `Use these comparison categories: ${params.categoryLabels.join(", ")}.`,
+    "Score each subject 0-100 per category. State that scores are analytical estimates.",
+    "Do not force a winner when evidence is insufficient.",
+  );
+  const sourceLines: string[] = ["INTELLIGENCE SOURCES AVAILABLE:"];
+  if (params.hasOI) sourceLines.push("- Personal Open Intelligence is provided below — private user knowledge, not automatically verified.");
+  if (params.hasFactionOI) sourceLines.push("- Faction Intelligence is provided below — shared by authorized faction members, not automatically verified.");
+  if (params.hasExchangeOI) sourceLines.push("- Exchange Intelligence is provided below — licensed via Exchange sync, not automatically verified.");
+  if (params.hasExternalResearch) sourceLines.push("- Current External Research is provided below — web sources, may contain errors.");
+  if (!params.hasOI && !params.hasFactionOI && !params.hasExchangeOI && !params.hasExternalResearch) {
+    sourceLines.push("- No intelligence sources were available. Base the comparison on trained knowledge and clearly note the limitation.");
+  } else {
+    sourceLines.push(
+      "- When sources conflict, surface the conflict rather than silently choosing one side.",
+      "- Do not reveal private contributor identities. Do not reveal full licensed Exchange content beyond what is provided.",
+    );
+  }
+  sections.push(sourceLines.join("\n"));
+  return sections.join("\n\n");
+}
+
+/** Safely parse the Arena JSON response from the model. */
+function parseArenaResult(raw: string): {
+  arenaTitle?: string;
+  subjectASummary?: string;
+  subjectBSummary?: string;
+  categoryScores?: Array<{ category: string; label: string; scoreA: number; scoreB: number; notes?: string }>;
+  subjectAAdvantages?: string[];
+  subjectBAdvantages?: string[];
+  similarities?: string[];
+  majorDifferences?: string[];
+  evidenceLimitations?: string;
+  confidence?: number;
+  verdict?: string;
+} | null {
+  const cleaned = raw.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/i, "").trim();
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    return parsed;
+  } catch {
+    // Try to extract the first JSON object in the text
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) {
+      try {
+        return JSON.parse(match[0]);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+}
+
+/**
+ * POST /arena/analyze
+ *
+ * Secure Arena analysis. Verifies JWT, EAGOH ownership + active status,
+ * reruns compatibility validation server-side, checks subscription tier
+ * eligibility, verifies sufficient Neuron balance, deducts exactly once
+ * (idempotent via requestId), retrieves Personal/Faction/Exchange/External
+ * intelligence, calls OpenAI for a structured comparison, persists history
+ * via service_role, and returns the structured result.
+ *
+ * If failure occurs after deduction but before a usable result, the
+ * deduction is reversed (refunded) safely. No double crediting.
+ */
+async function handleArenaAnalyze(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return jsonResponse({ ok: false, error: "Method not allowed." }, 405);
+  }
+
+  if (!env.OPENAI_API_KEY) {
+    return jsonResponse({ ok: false, error: "Arena service is not configured." }, 503);
+  }
+
+  let payload: {
+    eagohId?: unknown;
+    comparisonType?: unknown;
+    subjectA?: unknown;
+    subjectB?: unknown;
+    focus?: unknown;
+    customFocus?: unknown;
+    customQuestion?: unknown;
+    requestId?: unknown;
+  } = {};
+  try {
+    payload = (await request.json()) as typeof payload;
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request body." }, 400);
+  }
+
+  // ── Authenticate ──
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) {
+    return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+  }
+
+  // ── Validate requestId (idempotency key) ──
+  const requestId = typeof payload.requestId === "string" ? payload.requestId.trim().slice(0, 120) : "";
+  if (!requestId) {
+    return jsonResponse({ ok: false, error: "A request ID is required for Arena analysis." }, 400);
+  }
+
+  // ── Idempotency: check for an existing arena_history row with this requestId ──
+  const { data: existingHistory } = await serviceClient
+    .from("arena_history")
+    .select("id, verdict, confidence, category_scores, subject_a_advantages, subject_b_advantages, similarities, major_differences, oi_influence, response_summary, source_citations, evidence_limitations, source_counts, neuron_cost, domain, comparison_type, subject_a_name, subject_a_context, subject_a_year, subject_b_name, subject_b_context, subject_b_year, focus, custom_focus, custom_question, eagoh_id, created_at")
+    .eq("user_id", userId)
+    .eq("request_id", requestId)
+    .maybeSingle();
+
+  if (existingHistory) {
+    // Return the cached result — no second deduction
+    const h = existingHistory as Record<string, unknown>;
+    return jsonResponse({
+      ok: true,
+      arenaTitle: `${String(h.subject_a_name ?? "")} vs ${String(h.subject_b_name ?? "")}`,
+      normalizedA: { name: String(h.subject_a_name ?? ""), context: (h.subject_a_context as string) ?? undefined, year: (h.subject_a_year as string) ?? undefined },
+      normalizedB: { name: String(h.subject_b_name ?? ""), context: (h.subject_b_context as string) ?? undefined, year: (h.subject_b_year as string) ?? undefined },
+      comparisonType: String(h.comparison_type ?? ""),
+      categoryScores: h.category_scores as Array<{ category: string; label: string; scoreA: number; scoreB: number; notes?: string }>,
+      subjectAAdvantages: h.subject_a_advantages as string[],
+      subjectBAdvantages: h.subject_b_advantages as string[],
+      similarities: h.similarities as string[],
+      majorDifferences: h.major_differences as string[],
+      oiInfluence: h.oi_influence as Array<{ sourceType: string; label: string; entryCount: number; summary: string; lean: string }>,
+      responseSummary: String(h.response_summary ?? ""),
+      sourceCitations: h.source_citations as Array<{ title: string; url: string; publisher?: string }>,
+      evidenceLimitations: (h.evidence_limitations as string) ?? undefined,
+      confidence: Number(h.confidence ?? 0),
+      verdict: String(h.verdict ?? ""),
+      sourceCounts: h.source_counts as { personal?: number; faction?: number; exchange?: number; external?: number },
+      neuronCost: Number(h.neuron_cost ?? 0),
+      historyId: String(h.id ?? ""),
+    });
+  }
+
+  // ── Validate eagohId ──
+  const eagohId = typeof payload.eagohId === "string" ? payload.eagohId.trim() : "";
+  if (!eagohId) {
+    return jsonResponse({ ok: false, error: "An EAGOH is required for Arena Mode." }, 400);
+  }
+
+  const comparisonType = typeof payload.comparisonType === "string" ? payload.comparisonType.trim() : "";
+  if (!comparisonType) {
+    return jsonResponse({ ok: false, error: "Select a comparison type." }, 400);
+  }
+
+  const subjectA = payload.subjectA;
+  const subjectB = payload.subjectB;
+  if (!subjectA || typeof subjectA !== "object" || !subjectB || typeof subjectB !== "object") {
+    return jsonResponse({ ok: false, error: "Both subjects are required." }, 400);
+  }
+  const a = subjectA as { name?: string; context?: string; year?: string; notes?: string };
+  const b = subjectB as { name?: string; context?: string; year?: string; notes?: string };
+
+  const fieldErr = arenaValidateSubjectFields(a) ?? arenaValidateSubjectFields(b);
+  if (fieldErr) {
+    return jsonResponse({ ok: false, error: fieldErr }, 400);
+  }
+
+  // ── 1. Verify EAGOH ownership + active status (service_role) ──
+  const { data: eagohRow, error: eagohErr } = await serviceClient
+    .from("eagohs")
+    .select("id, user_id, name, domain, status, is_default_shell, is_user_forged")
+    .eq("id", eagohId)
+    .maybeSingle();
+
+  if (eagohErr || !eagohRow) {
+    return jsonResponse({ ok: false, error: "EAGOH not found." }, 404);
+  }
+  const eagoh = eagohRow as {
+    id: string; user_id: string; name: string; domain: string | null;
+    status: string | null; is_default_shell: boolean; is_user_forged: boolean;
+  };
+
+  if (eagoh.user_id !== userId) {
+    return jsonResponse({ ok: false, error: "You can only use EAGOHs you own." }, 403);
+  }
+  if (eagoh.is_default_shell || !eagoh.is_user_forged) {
+    return jsonResponse({ ok: false, error: "Arena Mode requires a forged EAGOH." }, 400);
+  }
+  if (eagoh.status && eagoh.status !== "active") {
+    return jsonResponse({ ok: false, error: "This EAGOH is not active." }, 400);
+  }
+  if (!eagoh.domain) {
+    return jsonResponse({ ok: false, error: "This EAGOH has no domain specialization." }, 400);
+  }
+
+  const domainId = arenaNormalizeDomainId(eagoh.domain);
+  const rule = ARENA_DOMAIN_RULES[domainId];
+  if (!rule) {
+    return jsonResponse({ ok: false, error: "Arena Mode is not available for this EAGOH domain." }, 400);
+  }
+
+  const cmpType = rule.comparisonTypes.find((c) => c.id === comparisonType);
+  if (!cmpType) {
+    return jsonResponse({ ok: false, error: "This comparison type is not available for this domain." }, 400);
+  }
+
+  // ── 2. Rerun compatibility validation server-side ──
+  const normA = {
+    name: arenaClean(a.name),
+    context: arenaClean(a.context) || undefined,
+    year: arenaClean(a.year) || undefined,
+    notes: arenaClean(a.notes) || undefined,
+  };
+  const normB = {
+    name: arenaClean(b.name),
+    context: arenaClean(b.context) || undefined,
+    year: arenaClean(b.year) || undefined,
+    notes: arenaClean(b.notes) || undefined,
+  };
+
+  // Same-name check (except season-vs-season)
+  if (normA.name.toLowerCase() === normB.name.toLowerCase() && comparisonType !== "season-vs-season") {
+    return jsonResponse({ ok: false, error: "Enter two different subjects to run an Arena comparison." }, 400);
+  }
+
+  // Sports same-sport check
+  if (domainId === "sports") {
+    const knownSports = rule.knownSports ?? [];
+    const sportA = arenaDetectSport(normA.context ?? "", normA.name, knownSports);
+    const sportB = arenaDetectSport(normB.context ?? "", normB.name, knownSports);
+    if ((comparisonType === "player-vs-player" || comparisonType === "team-vs-team" || comparisonType === "coach-vs-coach")
+      && sportA && sportB && sportA !== sportB) {
+      return jsonResponse({ ok: false, error: "These subjects appear to compete in different sports. Both subjects must be from the same sport for this Arena type." }, 400);
+    }
+    if (comparisonType === "season-vs-season") {
+      const sameName = normA.name.toLowerCase() === normB.name.toLowerCase();
+      const sameContext = sportA && sportB && sportA === sportB;
+      if (!sameName && !sameContext) {
+        return jsonResponse({ ok: false, error: "Season vs Season comparisons must refer to the same player, team, league, or sport context." }, 400);
+      }
+    }
+  }
+
+  // ── 3. Verify subscription tier eligibility ──
+  const isPaid = await isPaidUser(supabase, userId);
+  if (!isPaid) {
+    return jsonResponse({ ok: false, error: "Arena Mode requires a paid subscription." }, 403);
+  }
+
+  // ── 4. Verify sufficient Neuron balance (service_role read) ──
+  const { data: profileRow, error: profileErr } = await serviceClient
+    .from("profiles")
+    .select("edge_subscription, edge_purchased")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (profileErr || !profileRow) {
+    return jsonResponse({ ok: false, error: "Could not verify Neuron balance." }, 500);
+  }
+  const pRow = profileRow as { edge_subscription: number; edge_purchased: number };
+  const totalBalance = Math.max(0, pRow.edge_subscription ?? 0) + Math.max(0, pRow.edge_purchased ?? 0);
+  if (totalBalance < ARENA_NEURON_COST) {
+    return jsonResponse({ ok: false, error: `Insufficient Neurons. Arena costs ${ARENA_NEURON_COST} Neurons (you have ${totalBalance}).` }, 402);
+  }
+
+  // ── 5. Deduct Neurons (server-authoritative, idempotent) ──
+  const fromSub = Math.min(pRow.edge_subscription ?? 0, ARENA_NEURON_COST);
+  const fromPurchased = ARENA_NEURON_COST - fromSub;
+  const nextSub = Math.max(0, (pRow.edge_subscription ?? 0) - fromSub);
+  const nextPurchased = Math.max(0, (pRow.edge_purchased ?? 0) - fromPurchased);
+
+  const { error: deductErr } = await serviceClient
+    .from("profiles")
+    .update({ edge_subscription: nextSub, edge_purchased: nextPurchased, updated_at: new Date().toISOString() })
+    .eq("id", userId);
+
+  if (deductErr) {
+    console.warn("[arena:analyze] deduction failed", deductErr.message);
+    return jsonResponse({ ok: false, error: "Neuron deduction failed. Please try again." }, 500);
+  }
+
+  // Log the transaction (service_role bypasses RLS)
+  void serviceClient
+    .from("edge_transactions")
+    .insert({
+      user_id: userId,
+      kind: "deduction",
+      reason: "arena",
+      amount: ARENA_NEURON_COST,
+      bucket: fromSub > 0 && fromPurchased > 0 ? "mixed" : fromPurchased > 0 ? "purchased" : "subscription",
+      from_subscription: fromSub,
+      from_purchased: fromPurchased,
+      balance_subscription_after: nextSub,
+      balance_purchased_after: nextPurchased,
+      note: `Arena Mode · ${normA.name} vs ${normB.name}`,
+    })
+    .then(({ error: txErr }: { error: { message: string } | null }) => {
+      if (txErr) console.warn("[arena:analyze] tx log failed", txErr.message);
+    });
+
+  console.log("[arena:analyze] deducted", ARENA_NEURON_COST, "neurons for", userId.slice(0, 8));
+
+  // ── Helper: refund on failure ──
+  const refund = async (reason: string): Promise<void> => {
+    try {
+      const refundSub = (pRow.edge_subscription ?? 0);
+      const refundPurchased = (pRow.edge_purchased ?? 0);
+      await serviceClient
+        .from("profiles")
+        .update({ edge_subscription: refundSub, edge_purchased: refundPurchased, updated_at: new Date().toISOString() })
+        .eq("id", userId);
+      await serviceClient
+        .from("edge_transactions")
+        .insert({
+          user_id: userId,
+          kind: "addition",
+          reason: "manual",
+          amount: ARENA_NEURON_COST,
+          bucket: fromSub > 0 && fromPurchased > 0 ? "mixed" : fromPurchased > 0 ? "purchased" : "subscription",
+          from_subscription: 0,
+          from_purchased: 0,
+          balance_subscription_after: refundSub,
+          balance_purchased_after: refundPurchased,
+          note: `Arena refund: ${reason}`,
+        });
+      console.log("[arena:analyze] refunded", ARENA_NEURON_COST, "neurons —", reason);
+    } catch (err) {
+      console.error("[arena:analyze] refund failed", err instanceof Error ? err.message : "unknown");
+    }
+  };
+
+  // ── 6. Retrieve intelligence grounding ──
+  const arenaQuery = `${normA.name} ${normA.context ?? ""} ${normA.year ?? ""} vs ${normB.name} ${normB.context ?? ""} ${normB.year ?? ""} ${comparisonType}`;
+
+  // Personal OI
+  let personalOIText = "";
+  let personalOICount = 0;
+  let rankedPersonal: OpenIntelligenceRow[] = [];
+  try {
+    const rawEntries = await retrievePersonalOpenIntelligence(supabase, userId, eagohId, 50);
+    if (rawEntries.length > 0) {
+      const personalRepMap = await fetchReputationsForUsers(supabase, [userId]);
+      rankedPersonal = rankEntries(rawEntries, arenaQuery, Math.min(10, rawEntries.length), personalRepMap);
+      const formatted = formatOIContext(rankedPersonal, 1200);
+      personalOIText = formatted.text;
+      personalOICount = formatted.count;
+    }
+  } catch (err) {
+    console.warn("[arena:analyze] personal OI retrieval failed safely", err instanceof Error ? err.message : "unknown");
+  }
+
+  // Faction OI
+  let factionOIText = "";
+  let factionOICount = 0;
+  let rankedFaction: FactionOIEntry[] = [];
+  try {
+    const factionResult = await retrieveFactionOpenIntelligence(supabase, userId, arenaQuery, "standard");
+    if (factionResult.entries.length > 0) {
+      const formatted = formatFactionOIContext(factionResult.entries, 1200);
+      factionOIText = formatted.text;
+      factionOICount = formatted.count;
+      rankedFaction = factionResult.entries;
+    }
+  } catch (err) {
+    console.warn("[arena:analyze] faction OI retrieval failed safely", err instanceof Error ? err.message : "unknown");
+  }
+
+  // Exchange OI
+  let exchangeOIText = "";
+  let exchangeOICount = 0;
+  let rankedExchange: OpenIntelligenceRow[] = [];
+  try {
+    const exchangeResult = await retrieveExchangeOpenIntelligence(serviceClient, userId, arenaQuery, "standard");
+    if (exchangeResult.used && exchangeResult.entries.length > 0) {
+      const formatted = formatExchangeOIContext(exchangeResult, 1200);
+      exchangeOIText = formatted.text;
+      exchangeOICount = formatted.count;
+      rankedExchange = exchangeResult.entries;
+    }
+  } catch (err) {
+    console.warn("[arena:analyze] exchange OI retrieval failed safely", err instanceof Error ? err.message : "unknown");
+  }
+
+  // ── 7. External web research (both subjects) ──
+  let externalResult: ExternalResearchResult = { used: false, summary: "", sources: [] };
+  try {
+    const searchQueryA = buildSearchQuery(`${normA.name} ${normA.context ?? ""} ${normA.year ?? ""}`, eagoh.domain);
+    const searchQueryB = buildSearchQuery(`${normB.name} ${normB.context ?? ""} ${normB.year ?? ""}`, eagoh.domain);
+    const [resA, resB] = await Promise.all([
+      performWebSearch(searchQueryA, env.OPENAI_API_KEY, "standard"),
+      performWebSearch(searchQueryB, env.OPENAI_API_KEY, "standard"),
+    ]);
+    // Merge both research results fairly
+    const mergedSummary = [resA.summary, resB.summary].filter(Boolean).join("\n\n--- Subject B research ---\n\n");
+    const mergedSources = [...resA.sources, ...resB.sources];
+    externalResult = {
+      used: resA.used || resB.used,
+      summary: mergedSummary,
+      sources: mergedSources,
+    };
+  } catch (err) {
+    console.warn("[arena:analyze] external research failed safely", err instanceof Error ? err.message : "unknown");
+  }
+
+  const externalContext = formatExternalResearchContext(externalResult);
+
+  // ── 8. Build the Arena prompt ──
+  const focusId = typeof payload.focus === "string" ? payload.focus.trim().slice(0, 60) : "overall";
+  const customFocus = typeof payload.customFocus === "string" ? payload.customFocus.trim().slice(0, 120) : "";
+  const customQuestion = typeof payload.customQuestion === "string" ? payload.customQuestion.trim().slice(0, 240) : "";
+
+  const domainLabel = ARENA_DOMAIN_LABELS[domainId] ?? domainId;
+  const focusLabel = customFocus || focusId;
+  const categories = getArenaCategories(domainId);
+  const categoryLabels = categories.map((c) => c.label);
+
+  const systemPrompt = buildArenaSystemPrompt({
+    domainId,
+    domainLabel,
+    comparisonTypeLabel: cmpType.label,
+    focusLabel,
+    categoryLabels,
+    subjectAName: normA.name,
+    subjectBName: normB.name,
+    hasOI: personalOICount > 0,
+    hasFactionOI: factionOICount > 0,
+    hasExchangeOI: exchangeOICount > 0,
+    hasExternalResearch: externalResult.used,
+  });
+
+  const systemParts = [systemPrompt];
+  if (personalOIText) systemParts.push(personalOIText);
+  if (factionOIText) systemParts.push(factionOIText);
+  if (exchangeOIText) systemParts.push(exchangeOIText);
+  if (externalContext) systemParts.push(externalContext);
+  const systemContent = systemParts.join("\n\n---\n\n");
+
+  const userParts: string[] = [
+    `Compare ${normA.name}${normA.context ? ` (${normA.context})` : ""}${normA.year ? ` — ${normA.year}` : ""} vs ${normB.name}${normB.context ? ` (${normB.context})` : ""}${normB.year ? ` — ${normB.year}` : ""}.`,
+    `Focus: ${focusLabel}.`,
+  ];
+  if (customQuestion) {
+    userParts.push(`Custom question: ${customQuestion}`);
+  }
+  userParts.push("Return only the JSON object described in the instructions.");
+
+  const messages = [
+    { role: "system" as const, content: systemContent },
+    { role: "user" as const, content: userParts.join("\n\n") },
+  ];
+
+  // ── 9. Call OpenAI for the structured comparison ──
+  let parsedResult: ReturnType<typeof parseArenaResult> = null;
+  let rawReply = "";
+  try {
+    const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages,
+        temperature: 0.6,
+        max_tokens: ARENA_MAX_TOKENS,
+      }),
+    });
+
+    if (!openaiRes.ok) {
+      console.warn("[arena:analyze] OpenAI non-ok", openaiRes.status);
+      await refund("openai_error");
+      return jsonResponse({ ok: false, error: "Arena analysis failed. Your Neurons have been refunded." }, 502);
+    }
+
+    const data = (await openaiRes.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    rawReply = data.choices?.[0]?.message?.content?.trim() ?? "";
+    if (!rawReply) {
+      await refund("empty_response");
+      return jsonResponse({ ok: false, error: "Arena returned an empty response. Your Neurons have been refunded." }, 502);
+    }
+
+    parsedResult = parseArenaResult(rawReply);
+    if (!parsedResult || !parsedResult.verdict || !ARENA_VERDICTS.includes(parsedResult.verdict as typeof ARENA_VERDICTS[number])) {
+      console.warn("[arena:analyze] invalid or missing verdict in result");
+      await refund("invalid_result_shape");
+      return jsonResponse({ ok: false, error: "Arena analysis could not be completed. Your Neurons have been refunded." }, 502);
+    }
+  } catch (err) {
+    console.error("[arena:analyze] OpenAI exception", err instanceof Error ? err.message : "unknown");
+    await refund("openai_exception");
+    return jsonResponse({ ok: false, error: "Arena analysis timed out. Your Neurons have been refunded." }, 502);
+  }
+
+  // ── 10. Build OI influence transparency records ──
+  const oiInfluence = [
+    {
+      sourceType: "personal" as const,
+      label: "Personal Intelligence",
+      entryCount: personalOICount,
+      summary: personalOICount > 0 ? `${personalOICount} personal intelligence entries influenced this analysis.` : "No personal intelligence entries were available.",
+      lean: "neutral" as const,
+    },
+    {
+      sourceType: "faction" as const,
+      label: "Faction Intelligence",
+      entryCount: factionOICount,
+      summary: factionOICount > 0 ? `${factionOICount} faction intelligence entries influenced this analysis.` : "No faction intelligence entries were available.",
+      lean: "neutral" as const,
+    },
+    {
+      sourceType: "exchange" as const,
+      label: "Exchange Intelligence",
+      entryCount: exchangeOICount,
+      summary: exchangeOICount > 0 ? `${exchangeOICount} licensed Exchange entries influenced this analysis.` : "No Exchange intelligence was available.",
+      lean: "neutral" as const,
+    },
+    {
+      sourceType: "external_research" as const,
+      label: "External Research",
+      entryCount: externalResult.sources.length,
+      summary: externalResult.used ? `${externalResult.sources.length} external sources were retrieved.` : "No external research was available.",
+      lean: "neutral" as const,
+    },
+  ];
+
+  const sourceCounts = {
+    personal: personalOICount,
+    faction: factionOICount,
+    exchange: exchangeOICount,
+    external: externalResult.sources.length,
+  };
+
+  const sourceCitations = externalResult.sources.map((s) => ({
+    title: s.title,
+    url: s.url,
+    publisher: s.publisher,
+  }));
+
+  const verdict = parsedResult.verdict as string;
+  const confidence = Math.max(0, Math.min(100, Math.round(Number(parsedResult.confidence ?? 70))));
+  const arenaTitle = parsedResult.arenaTitle ?? `${normA.name} vs ${normB.name}`;
+  const responseSummary = `${parsedResult.subjectASummary ?? ""}\n\n${parsedResult.subjectBSummary ?? ""}`.trim();
+
+  // ── 11. Persist to arena_history (service_role) ──
+  let historyId = "";
+  try {
+    const { data: histRow, error: histErr } = await serviceClient
+      .from("arena_history")
+      .insert({
+        user_id: userId,
+        eagoh_id: eagohId,
+        domain: domainId,
+        comparison_type: comparisonType,
+        subject_a_name: normA.name,
+        subject_a_context: normA.context ?? null,
+        subject_a_year: normA.year ?? null,
+        subject_b_name: normB.name,
+        subject_b_context: normB.context ?? null,
+        subject_b_year: normB.year ?? null,
+        focus: focusId,
+        custom_focus: customFocus || null,
+        custom_question: customQuestion || null,
+        verdict,
+        confidence,
+        category_scores: parsedResult.categoryScores ?? [],
+        subject_a_advantages: parsedResult.subjectAAdvantages ?? [],
+        subject_b_advantages: parsedResult.subjectBAdvantages ?? [],
+        similarities: parsedResult.similarities ?? [],
+        major_differences: parsedResult.majorDifferences ?? [],
+        oi_influence: oiInfluence,
+        response_summary: responseSummary,
+        source_citations: sourceCitations,
+        evidence_limitations: parsedResult.evidenceLimitations ?? null,
+        source_counts: sourceCounts,
+        neuron_cost: ARENA_NEURON_COST,
+        request_id: requestId,
+      })
+      .select("id")
+      .single();
+
+    if (histErr) {
+      console.warn("[arena:analyze] history insert failed", histErr.message);
+    } else if (histRow) {
+      historyId = (histRow as { id: string }).id;
+    }
+  } catch (err) {
+    console.warn("[arena:analyze] history insert exception", err instanceof Error ? err.message : "unknown");
+  }
+
+  console.log("[arena:analyze] success", {
+    userId: userId.slice(0, 8),
+    verdict,
+    confidence,
+    personalOICount,
+    factionOICount,
+    exchangeOICount,
+    externalSources: externalResult.sources.length,
+    historyId: historyId.slice(0, 8),
+  });
+
+  // ── 12. Return the structured result ──
+  return jsonResponse({
+    ok: true,
+    arenaTitle,
+    subjectASummary: parsedResult.subjectASummary,
+    subjectBSummary: parsedResult.subjectBSummary,
+    normalizedA: normA,
+    normalizedB: normB,
+    comparisonType,
+    categoryScores: parsedResult.categoryScores ?? [],
+    subjectAAdvantages: parsedResult.subjectAAdvantages ?? [],
+    subjectBAdvantages: parsedResult.subjectBAdvantages ?? [],
+    similarities: parsedResult.similarities ?? [],
+    majorDifferences: parsedResult.majorDifferences ?? [],
+    oiInfluence,
+    evidenceLimitations: parsedResult.evidenceLimitations,
+    confidence,
+    verdict,
+    responseSummary,
+    sourceCitations,
+    sourceCounts,
+    neuronCost: ARENA_NEURON_COST,
+    historyId,
+  });
+}
+
+/**
+ * GET /arena/history
+ *
+ * Returns paginated Arena history for the authenticated user. Opening
+ * history never charges. Users may read only their own history (RLS +
+ * server-side user_id filter).
+ */
+async function handleArenaHistory(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") {
+    return jsonResponse({ ok: false, error: "Method not allowed." }, 405);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const url = new URL(request.url);
+  const page = Math.max(0, Math.min(100, parseInt(url.searchParams.get("page") ?? "0", 10) || 0));
+  const pageSize = Math.max(1, Math.min(50, parseInt(url.searchParams.get("pageSize") ?? "20", 10) || 20));
+  const offset = page * pageSize;
+
+  const { data, error } = await supabase
+    .from("arena_history")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .range(offset, offset + pageSize - 1);
+
+  if (error) {
+    console.warn("[arena:history] query failed", error.message);
+    return jsonResponse({ ok: false, error: "Could not load Arena history." }, 500);
+  }
+
+  return jsonResponse({ ok: true, entries: data ?? [] });
+}
+
 // ── Export ───────────────────────────────────────────────────────────────────
 
 export default {
@@ -5416,6 +6247,16 @@ export default {
     // Phase 11A: Arena compatibility validation (no Neuron deduction, no OI content)
     if (url.pathname === "/arena/validate" && request.method === "POST") {
       return handleArenaValidate(request, env);
+    }
+
+    // Phase 11B: Arena analysis (paid, idempotent, grounded)
+    if (url.pathname === "/arena/analyze" && request.method === "POST") {
+      return handleArenaAnalyze(request, env);
+    }
+
+    // Phase 11B: Arena history (paginated, owner-scoped)
+    if (url.pathname === "/arena/history" && request.method === "GET") {
+      return handleArenaHistory(request, env);
     }
 
     return jsonResponse({ ok: false, error: "Not found" }, 404);

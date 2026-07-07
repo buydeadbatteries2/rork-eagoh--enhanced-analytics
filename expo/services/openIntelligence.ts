@@ -1115,5 +1115,206 @@ export function statusExplanation(status: string, isOutdated: boolean): string |
   }
 }
 
+// ── Phase 7A: Search & Filtering ──────────────────────────────────────────
+
+export type SortOption = "newest" | "oldest" | "highest_quality" | "lowest_quality" | "recently_updated";
+
+export type SharingFilter = "all" | "faction" | "exchange" | "private";
+
+export interface MyIntelligenceFilters {
+  search: string;
+  category: string; // "all" or a category id
+  validationStatus: string; // "all" or a status id
+  confidence: string; // "all" or a confidence level
+  sharing: SharingFilter;
+  sort: SortOption;
+}
+
+export const DEFAULT_FILTERS: MyIntelligenceFilters = {
+  search: "",
+  category: "all",
+  validationStatus: "all",
+  confidence: "all",
+  sharing: "all",
+  sort: "newest",
+};
+
+export const SORT_LABELS: Record<SortOption, string> = {
+  newest: "Newest",
+  oldest: "Oldest",
+  highest_quality: "Highest Quality",
+  lowest_quality: "Lowest Quality",
+  recently_updated: "Recently Updated",
+};
+
+export const SHARING_LABELS: Record<SharingFilter, string> = {
+  all: "All",
+  faction: "Shared with Faction",
+  exchange: "Shared on Exchange",
+  private: "Private",
+};
+
+export const VALIDATION_STATUS_FILTER_OPTIONS: { id: string; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "pending_review", label: "Pending Review" },
+  { id: "community_supported", label: "Community Supported" },
+  { id: "externally_supported", label: "Externally Supported" },
+  { id: "disputed", label: "Disputed" },
+  { id: "withdrawn", label: "Withdrawn" },
+  { id: "rejected", label: "Rejected" },
+];
+
+export const CONFIDENCE_FILTER_OPTIONS: { id: string; label: string }[] = [
+  { id: "all", label: "All" },
+  ...CONFIDENCE_LEVELS,
+];
+
+/** Statuses allowed in shared/public views (excludes withdrawn & rejected). */
+export const SHARED_VIEW_STATUSES: string[] = [
+  "pending_review",
+  "validated",
+  "community_supported",
+  "externally_supported",
+  "disputed",
+];
+
+/**
+ * Apply client-side filtering & sorting to a list of entries.
+ * Used for My Intelligence (all entries) and shared views.
+ * The DB query is already scoped to authorized entries (owner or shared).
+ */
+export function applyEntryFilters(
+  entries: OpenIntelligenceRow[],
+  filters: MyIntelligenceFilters,
+  sharedFactionMap?: Map<string, string[]>,
+): OpenIntelligenceRow[] {
+  const q = filters.search.trim().toLowerCase();
+  let result = entries;
+
+  if (q) {
+    result = result.filter((e) => {
+      const content = e.content.toLowerCase();
+      const category = (e.selected_category ?? e.tag ?? "").toLowerCase();
+      const subtags = (e.selected_subtags ?? []).join(" ").toLowerCase();
+      const custom = (e.custom_tags ?? []).join(" ").toLowerCase();
+      return (
+        content.includes(q) ||
+        category.includes(q) ||
+        subtags.includes(q) ||
+        custom.includes(q)
+      );
+    });
+  }
+
+  if (filters.category !== "all") {
+    result = result.filter(
+      (e) => (e.selected_category ?? e.tag ?? "") === filters.category,
+    );
+  }
+
+  if (filters.validationStatus !== "all") {
+    result = result.filter((e) => (e.validation_status ?? "pending_review") === filters.validationStatus);
+  }
+
+  if (filters.confidence !== "all") {
+    result = result.filter((e) => e.confidence_level === filters.confidence);
+  }
+
+  if (filters.sharing !== "all") {
+    if (filters.sharing === "exchange") {
+      result = result.filter((e) => e.exchange_share_enabled ?? false);
+    } else if (filters.sharing === "faction") {
+      result = result.filter(
+        (e) => (sharedFactionMap?.get(e.id)?.length ?? 0) > 0,
+      );
+    } else if (filters.sharing === "private") {
+      result = result.filter(
+        (e) =>
+          !(e.exchange_share_enabled ?? false) &&
+          (sharedFactionMap?.get(e.id)?.length ?? 0) === 0,
+      );
+    }
+  }
+
+  switch (filters.sort) {
+    case "newest":
+      result = [...result].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      break;
+    case "oldest":
+      result = [...result].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      break;
+    case "highest_quality":
+      result = [...result].sort((a, b) => (b.quality_score ?? 0) - (a.quality_score ?? 0));
+      break;
+    case "lowest_quality":
+      result = [...result].sort((a, b) => (a.quality_score ?? 0) - (b.quality_score ?? 0));
+      break;
+    case "recently_updated":
+      result = [...result].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+      break;
+  }
+
+  return result;
+}
+
+/** Paginate an array of entries for incremental loading. */
+export function paginate<T>(items: T[], page: number, pageSize: number): T[] {
+  const start = page * pageSize;
+  return items.slice(0, start + pageSize);
+}
+
+// ── Phase 7A: Saved Filter Presets ────────────────────────────────────────
+
+export type SavedFilterPreset = {
+  id: string;
+  name: string;
+  filters: MyIntelligenceFilters;
+  createdAt: string;
+};
+
+const SAVED_FILTERS_KEY = "eagoh_saved_filters";
+const MAX_SAVED_FILTERS = 5;
+
+/** Load the user's saved filter presets from AsyncStorage. */
+export async function loadSavedFilters(): Promise<SavedFilterPreset[]> {
+  try {
+    const stored = await AsyncStorage.getItem(SAVED_FILTERS_KEY);
+    const list: SavedFilterPreset[] = stored ? JSON.parse(stored) : [];
+    return list.slice(0, MAX_SAVED_FILTERS);
+  } catch {
+    return [];
+  }
+}
+
+/** Save a new filter preset. Enforces the 5-preset limit. */
+export async function saveFilterPreset(name: string, filters: MyIntelligenceFilters): Promise<SavedFilterPreset[]> {
+  try {
+    const existing = await loadSavedFilters();
+    const preset: SavedFilterPreset = {
+      id: `preset_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      name: name.trim().slice(0, 40),
+      filters,
+      createdAt: new Date().toISOString(),
+    };
+    const updated = [preset, ...existing].slice(0, MAX_SAVED_FILTERS);
+    await AsyncStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(updated));
+    return updated;
+  } catch {
+    return [];
+  }
+}
+
+/** Delete a saved filter preset by id. */
+export async function deleteFilterPreset(presetId: string): Promise<SavedFilterPreset[]> {
+  try {
+    const existing = await loadSavedFilters();
+    const updated = existing.filter((p) => p.id !== presetId);
+    await AsyncStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(updated));
+    return updated;
+  } catch {
+    return [];
+  }
+}
+
 /** Re-export helpers */
 export { influenceLabel };

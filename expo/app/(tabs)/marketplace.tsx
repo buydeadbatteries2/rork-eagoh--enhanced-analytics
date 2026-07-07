@@ -101,9 +101,15 @@ import {
   fetchBulkPublicReputations,
   trustLabel,
   trustLabelColor,
+  applyEntryFilters,
+  DEFAULT_FILTERS,
+  SORT_LABELS,
+  VALIDATION_STATUS_FILTER_OPTIONS,
   type VendorQualityMetrics,
   type PublicReputation,
   type OpenIntelligenceRow,
+  type MyIntelligenceFilters,
+  type SortOption,
 } from "@/services/openIntelligence";
 import {
   IntelligenceEntryCard,
@@ -1431,6 +1437,13 @@ const ActiveSyncCard = memo(function ActiveSyncCard({
   const [feedbackModalEntryId, setFeedbackModalEntryId] = useState<string | null>(null);
   const [disputeModalEntryId, setDisputeModalEntryId] = useState<string | null>(null);
 
+  // Phase 7A: Exchange search & filter
+  const [exchangeSearch, setExchangeSearch] = useState("");
+  const [exchangeFilterOpen, setExchangeFilterOpen] = useState(false);
+  const [exchangeSort, setExchangeSort] = useState<SortOption>("newest");
+  const [exchangeValidationFilter, setExchangeValidationFilter] = useState("all");
+  const [exchangeCategoryFilter, setExchangeCategoryFilter] = useState("all");
+
   const remaining = timeLeft(item.expires_at);
   const isExpiring = remaining.includes("h") && parseInt(remaining) < 4;
   const hasStarted = new Date(item.started_at).getTime() <= Date.now();
@@ -1492,6 +1505,29 @@ const ActiveSyncCard = memo(function ActiveSyncCard({
     [item.id, userId],
   );
 
+  // Phase 7A: Category options derived from vendor entries
+  const exchangeCategoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of vendorEntries) {
+      const cat = e.selected_category ?? e.tag;
+      if (cat) set.add(cat);
+    }
+    return Array.from(set).sort();
+  }, [vendorEntries]);
+
+  // Phase 7A: Filtered & sorted vendor entries
+  const filteredVendorEntries = useMemo(() => {
+    const exchangeFilters: MyIntelligenceFilters = {
+      search: exchangeSearch,
+      category: exchangeCategoryFilter,
+      validationStatus: exchangeValidationFilter,
+      confidence: "all",
+      sharing: "all",
+      sort: exchangeSort,
+    };
+    return applyEntryFilters(vendorEntries, exchangeFilters);
+  }, [vendorEntries, exchangeSearch, exchangeCategoryFilter, exchangeValidationFilter, exchangeSort]);
+
   const handleRateEntry = useCallback((entryId: string): void => {
     h.light();
     setFeedbackModalEntryId(entryId);
@@ -1501,6 +1537,8 @@ const ActiveSyncCard = memo(function ActiveSyncCard({
     h.light();
     setDisputeModalEntryId(entryId);
   }, [h]);
+
+  const hasExpiredForRender = new Date(item.expires_at).getTime() <= Date.now();
 
   return (
     <View>
@@ -1544,6 +1582,11 @@ const ActiveSyncCard = memo(function ActiveSyncCard({
                 <Text style={styles.exchangeExpandText}>{expanded ? "Hide" : "Rate"}</Text>
               </View>
             )}
+            {hasExpiredForRender && (
+              <View style={styles.exchangeExpiredBadge}>
+                <Text style={styles.exchangeExpiredText}>EXPIRED</Text>
+              </View>
+            )}
           </View>
         </View>
       </Pressable>
@@ -1551,14 +1594,128 @@ const ActiveSyncCard = memo(function ActiveSyncCard({
       {expanded && canAccessExchange && (
         <View style={styles.exchangeOISection}>
           <Text style={styles.exchangeOIHeader}>LICENSED INTELLIGENCE</Text>
+
+          {/* Phase 7A: Exchange search & filter */}
+          {vendorEntries.length > 0 ? (
+            <View style={styles.exchangeSearchRow}>
+              <View style={styles.exchangeSearchWrap}>
+                <Search color={palette.muted} size={14} />
+                <TextInput
+                  value={exchangeSearch}
+                  onChangeText={setExchangeSearch}
+                  placeholder="Search licensed intelligence..."
+                  placeholderTextColor={palette.muted}
+                  style={styles.exchangeSearchInput}
+                  returnKeyType="search"
+                />
+                {exchangeSearch.length > 0 ? (
+                  <Pressable onPress={() => setExchangeSearch("")} style={styles.exchangeSearchClear}>
+                    <X color={palette.muted} size={13} />
+                  </Pressable>
+                ) : null}
+              </View>
+              <Pressable
+                onPress={() => { h.selection(); setExchangeFilterOpen(!exchangeFilterOpen); }}
+                style={({ pressed }) => [
+                  styles.exchangeFilterToggle,
+                  (exchangeSort !== "newest" || exchangeValidationFilter !== "all" || exchangeCategoryFilter !== "all") && { borderColor: palette.cyan },
+                  pressed && { opacity: 0.85 },
+                ]}
+              >
+                <SlidersHorizontal color={palette.muted} size={14} />
+              </Pressable>
+            </View>
+          ) : null}
+
+          {exchangeFilterOpen && vendorEntries.length > 0 ? (
+            <View style={styles.exchangeFilterPanel}>
+              <Text style={styles.exchangeFilterLabel}>Sort</Text>
+              <View style={styles.exchangeFilterChips}>
+                {(["newest", "highest_quality"] as SortOption[]).map((opt) => (
+                  <Pressable
+                    key={opt}
+                    onPress={() => { h.selection(); setExchangeSort(opt); }}
+                    style={({ pressed }) => [
+                      styles.exchangeFilterChip,
+                      exchangeSort === opt && { borderColor: palette.cyan, backgroundColor: `${palette.cyan}12` },
+                      pressed && { opacity: 0.85 },
+                    ]}
+                  >
+                    <Text style={[styles.exchangeFilterChipText, exchangeSort === opt && { color: palette.cyan }]}>
+                      {SORT_LABELS[opt]}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <Text style={[styles.exchangeFilterLabel, { marginTop: 8 }]}>Validation</Text>
+              <View style={styles.exchangeFilterChips}>
+                {VALIDATION_STATUS_FILTER_OPTIONS.filter((o) => o.id !== "withdrawn" && o.id !== "rejected").map((opt) => (
+                  <Pressable
+                    key={opt.id}
+                    onPress={() => { h.selection(); setExchangeValidationFilter(opt.id); }}
+                    style={({ pressed }) => [
+                      styles.exchangeFilterChip,
+                      exchangeValidationFilter === opt.id && { borderColor: palette.cyan, backgroundColor: `${palette.cyan}12` },
+                      pressed && { opacity: 0.85 },
+                    ]}
+                  >
+                    <Text style={[styles.exchangeFilterChipText, exchangeValidationFilter === opt.id && { color: palette.cyan }]}>
+                      {opt.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              {exchangeCategoryOptions.length > 0 ? (
+                <>
+                  <Text style={[styles.exchangeFilterLabel, { marginTop: 8 }]}>Category</Text>
+                  <View style={styles.exchangeFilterChips}>
+                    <Pressable
+                      onPress={() => { h.selection(); setExchangeCategoryFilter("all"); }}
+                      style={({ pressed }) => [
+                        styles.exchangeFilterChip,
+                        exchangeCategoryFilter === "all" && { borderColor: palette.cyan, backgroundColor: `${palette.cyan}12` },
+                        pressed && { opacity: 0.85 },
+                      ]}
+                    >
+                      <Text style={[styles.exchangeFilterChipText, exchangeCategoryFilter === "all" && { color: palette.cyan }]}>All</Text>
+                    </Pressable>
+                    {exchangeCategoryOptions.map((cat) => (
+                      <Pressable
+                        key={cat}
+                        onPress={() => { h.selection(); setExchangeCategoryFilter(cat); }}
+                        style={({ pressed }) => [
+                          styles.exchangeFilterChip,
+                          exchangeCategoryFilter === cat && { borderColor: palette.cyan, backgroundColor: `${palette.cyan}12` },
+                          pressed && { opacity: 0.85 },
+                        ]}
+                      >
+                        <Text style={[styles.exchangeFilterChipText, exchangeCategoryFilter === cat && { color: palette.cyan }]} numberOfLines={1}>
+                          {cat.replace(/_/g, " ")}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </>
+              ) : null}
+            </View>
+          ) : null}
+
           {loadingEntries ? (
             <View style={styles.exchangeLoadingWrap}>
               <ActivityIndicator color={palette.cyan} size="small" />
             </View>
           ) : vendorEntries.length === 0 ? (
             <Text style={styles.exchangeEmptyText}>No shared intelligence available for this sync.</Text>
+          ) : filteredVendorEntries.length === 0 ? (
+            <View style={styles.exchangeFilterEmpty}>
+              <Search color={palette.muted} size={24} />
+              <Text style={styles.exchangeFilterEmptyTitle}>No Intelligence Matches Your Search</Text>
+              <Text style={styles.exchangeFilterEmptyDesc}>Try adjusting your search or filters.</Text>
+            </View>
           ) : (
-            vendorEntries.map((entry) => (
+            filteredVendorEntries.map((entry) => (
               <IntelligenceEntryCard
                 key={entry.id}
                 entry={entry}
@@ -2742,6 +2899,47 @@ const styles = StyleSheet.create({
   exchangeOIHeader: { color: palette.cyan, fontSize: 9, fontWeight: "900" as const, letterSpacing: 1.5, textTransform: "uppercase" as const },
   exchangeLoadingWrap: { alignItems: "center", paddingVertical: 20 },
   exchangeEmptyText: { color: palette.muted, fontSize: 12, fontWeight: "700" as const, textAlign: "center" as const, paddingVertical: 16 },
+
+  // Phase 7A: Exchange search & filter
+  exchangeSearchRow: { flexDirection: "row" as const, gap: 8, alignItems: "center" as const, marginTop: 6, marginBottom: 6 },
+  exchangeSearchWrap: {
+    flex: 1, flexDirection: "row" as const, alignItems: "center" as const, gap: 8,
+    paddingHorizontal: 12, borderRadius: 6, borderWidth: 1, borderColor: palette.line,
+    backgroundColor: "rgba(10,18,30,0.50)", minHeight: 38,
+  },
+  exchangeSearchInput: {
+    flex: 1, color: palette.text, fontSize: 12, fontWeight: "700" as const,
+    paddingVertical: 8,
+  },
+  exchangeSearchClear: { width: 22, height: 22, alignItems: "center" as const, justifyContent: "center" as const },
+  exchangeFilterToggle: {
+    width: 38, height: 38, borderRadius: 6, borderWidth: 1,
+    borderColor: palette.line, backgroundColor: "rgba(10,18,30,0.50)",
+    alignItems: "center" as const, justifyContent: "center" as const,
+  },
+  exchangeFilterPanel: {
+    borderRadius: 6, borderWidth: 1, borderColor: palette.line,
+    backgroundColor: "rgba(10,20,38,0.40)", padding: 10, gap: 4, marginBottom: 6,
+  },
+  exchangeFilterLabel: {
+    color: palette.cyan, fontSize: 9, fontWeight: "900" as const,
+    letterSpacing: 1.5, textTransform: "uppercase" as const,
+  },
+  exchangeFilterChips: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: 5, marginTop: 4 },
+  exchangeFilterChip: {
+    paddingHorizontal: 9, paddingVertical: 5, borderRadius: 4, borderWidth: 1,
+    borderColor: palette.line, backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  exchangeFilterChipText: { fontSize: 10, fontWeight: "800" as const, color: palette.muted },
+  exchangeFilterEmpty: { alignItems: "center" as const, paddingVertical: 24, gap: 6 },
+  exchangeFilterEmptyTitle: { color: palette.text, fontSize: 13, fontWeight: "900" as const },
+  exchangeFilterEmptyDesc: { color: palette.muted, fontSize: 11, fontWeight: "700" as const, textAlign: "center" as const },
+  exchangeExpiredBadge: {
+    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 3,
+    backgroundColor: `${palette.ember}18`, borderWidth: 1, borderColor: `${palette.ember}44`,
+    marginTop: 4,
+  },
+  exchangeExpiredText: { color: palette.ember, fontSize: 8, fontWeight: "900" as const, letterSpacing: 1 },
 
   // Empty
   emptyWrap: { alignItems: "center", paddingVertical: 40, gap: 10 },

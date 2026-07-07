@@ -36,9 +36,23 @@ import {
   fetchVersionHistory,
   hasModerationAccess,
   getTagsForDomain,
+  applyEntryFilters,
+  paginate,
+  loadSavedFilters,
+  saveFilterPreset,
+  deleteFilterPreset,
+  DEFAULT_FILTERS,
+  SORT_LABELS,
+  SHARING_LABELS,
+  VALIDATION_STATUS_FILTER_OPTIONS,
+  CONFIDENCE_FILTER_OPTIONS,
   type OpenIntelligenceRow,
   type VersionHistoryEntry,
   type ConfidenceLevel,
+  type MyIntelligenceFilters,
+  type SortOption,
+  type SharingFilter,
+  type SavedFilterPreset,
 } from "@/services/openIntelligence";
 import { normalizeDomainId } from "@/services/domains";
 import { listUserFactions, type FactionRow } from "@/services/factions";
@@ -46,6 +60,7 @@ import { supabase } from "@/lib/supabase";
 import {
   Activity,
   AlertTriangle,
+  Bookmark,
   Check,
   ChevronLeft,
   ChevronDown,
@@ -53,15 +68,18 @@ import {
   Clock,
   Edit3,
   FileClock,
+  Filter,
   Flag,
   GitBranch,
   Hash,
   Plus,
   RotateCcw,
   Save,
+  Search,
   Shield,
   ShieldAlert,
   Share2,
+  SlidersHorizontal,
   Trash2,
   X,
   Zap,
@@ -730,11 +748,30 @@ export default function MyIntelligenceScreen(): JSX.Element {
   const [restoreConfirmVisible, setRestoreConfirmVisible] = useState(false);
   const [restoreTargetId, setRestoreTargetId] = useState<string | null>(null);
 
-  // Fetch user's entries
+  // Phase 7A: Search, filter, sort, saved presets, pagination
+  const [filters, setFilters] = useState<MyIntelligenceFilters>(DEFAULT_FILTERS);
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+  const [savedPresets, setSavedPresets] = useState<SavedFilterPreset[]>([]);
+  const [savePresetName, setSavePresetName] = useState("");
+  const [showSavePresetInput, setShowSavePresetInput] = useState(false);
+  const [visibleCount, setVisibleCount] = useState<number>(10);
+  const PAGE_SIZE = 10;
+
+  // Load saved filter presets on mount
+  useEffect(() => {
+    loadSavedFilters().then(setSavedPresets).catch(() => undefined);
+  }, []);
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [filters]);
+
+  // Fetch user's entries (increased limit for search)
   const entriesQuery = useQuery<OpenIntelligenceRow[]>({
     queryKey: ["oi", "my-entries", profile?.id],
     enabled: !!profile?.id,
-    queryFn: () => listAllEntries(profile!.id, 100),
+    queryFn: () => listAllEntries(profile!.id, 200),
   });
 
   // Fetch user's factions for sharing toggles
@@ -762,17 +799,91 @@ export default function MyIntelligenceScreen(): JSX.Element {
 
   const factions = factionsQuery.data ?? [];
 
-  // Build expanded entries with faction sharing info
-  const expandedEntries: ExpandedEntry[] = useMemo(() => {
+  // Build a map of entryId -> shared faction IDs (for filtering)
+  const sharedFactionMap = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const s of sharedFactionQuery.data ?? []) {
+      const arr = map.get(s.oi_entry_id) ?? [];
+      arr.push(s.faction_id);
+      map.set(s.oi_entry_id, arr);
+    }
+    return map;
+  }, [sharedFactionQuery.data]);
+
+  // Build expanded entries with faction sharing info (filtered + sorted + paginated)
+  const filteredEntries = useMemo(() => {
     const entries = entriesQuery.data ?? [];
-    const sharedMap = sharedFactionQuery.data ?? [];
-    return entries.map((entry) => ({
+    return applyEntryFilters(entries, filters, sharedFactionMap);
+  }, [entriesQuery.data, filters, sharedFactionMap]);
+
+  const expandedEntries: ExpandedEntry[] = useMemo(() => {
+    const paginated = paginate(filteredEntries, 0, visibleCount - 1);
+    return paginated.map((entry) => ({
       entry,
-      sharedFactionIds: sharedMap
-        .filter((s) => s.oi_entry_id === entry.id)
-        .map((s) => s.faction_id),
+      sharedFactionIds: sharedFactionMap.get(entry.id) ?? [],
     }));
-  }, [entriesQuery.data, sharedFactionQuery.data]);
+  }, [filteredEntries, visibleCount, sharedFactionMap]);
+
+  const hasMore = filteredEntries.length > visibleCount;
+
+  // Category options derived from the user's entries
+  const categoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of entriesQuery.data ?? []) {
+      const cat = e.selected_category ?? e.tag;
+      if (cat) set.add(cat);
+    }
+    return Array.from(set).sort();
+  }, [entriesQuery.data]);
+
+  const updateFilter = useCallback(<K extends keyof MyIntelligenceFilters>(key: K, value: MyIntelligenceFilters[K]): void => {
+    h.selection();
+    setFilters((prev) => ({ ...prev, [key]: value }));
+  }, [h]);
+
+  const resetFilters = useCallback((): void => {
+    h.light();
+    setFilters(DEFAULT_FILTERS);
+  }, [h]);
+
+  const applyPreset = useCallback((preset: SavedFilterPreset): void => {
+    h.selection();
+    setFilters(preset.filters);
+  }, [h]);
+
+  const handleSavePreset = useCallback(async (): Promise<void> => {
+    const name = savePresetName.trim();
+    if (!name) return;
+    h.light();
+    const updated = await saveFilterPreset(name, filters);
+    setSavedPresets(updated);
+    setSavePresetName("");
+    setShowSavePresetInput(false);
+  }, [savePresetName, filters, h]);
+
+  const handleDeletePreset = useCallback(async (presetId: string): Promise<void> => {
+    h.light();
+    const updated = await deleteFilterPreset(presetId);
+    setSavedPresets(updated);
+  }, [h]);
+
+  const loadMore = useCallback((): void => {
+    if (hasMore) {
+      h.light();
+      setVisibleCount((prev) => prev + PAGE_SIZE);
+    }
+  }, [hasMore, h]);
+
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (filters.search.trim()) count++;
+    if (filters.category !== "all") count++;
+    if (filters.validationStatus !== "all") count++;
+    if (filters.confidence !== "all") count++;
+    if (filters.sharing !== "all") count++;
+    if (filters.sort !== "newest") count++;
+    return count;
+  }, [filters]);
 
   const refreshAll = useCallback((): void => {
     queryClient.invalidateQueries({ queryKey: ["oi", "my-entries"] });
@@ -894,18 +1005,18 @@ export default function MyIntelligenceScreen(): JSX.Element {
         {/* Summary */}
         <View style={mgmtStyles.summaryRow}>
           <View style={mgmtStyles.summaryItem}>
-            <Text style={mgmtStyles.summaryValue}>{expandedEntries.length}</Text>
+            <Text style={mgmtStyles.summaryValue}>{filteredEntries.length}</Text>
             <Text style={mgmtStyles.summaryLabel}>Total Entries</Text>
           </View>
           <View style={mgmtStyles.summaryItem}>
             <Text style={[mgmtStyles.summaryValue, { color: palette.cyan }]}>
-              {expandedEntries.filter((e) => (e.entry.exchange_share_enabled ?? false)).length}
+              {filteredEntries.filter((e) => (e.exchange_share_enabled ?? false)).length}
             </Text>
             <Text style={mgmtStyles.summaryLabel}>Exchange Shared</Text>
           </View>
           <View style={mgmtStyles.summaryItem}>
             <Text style={[mgmtStyles.summaryValue, { color: palette.violet }]}>
-              {expandedEntries.filter((e) => e.sharedFactionIds.length > 0).length}
+              {filteredEntries.filter((e) => (sharedFactionMap.get(e.id)?.length ?? 0) > 0).length}
             </Text>
             <Text style={mgmtStyles.summaryLabel}>Faction Shared</Text>
           </View>
@@ -920,16 +1031,260 @@ export default function MyIntelligenceScreen(): JSX.Element {
           </View>
         ) : null}
 
+        {/* ── Phase 7A: Search & Filter Bar ─────────────────────── */}
+        <View style={mgmtStyles.searchRow}>
+          <View style={mgmtStyles.searchInputWrap}>
+            <Search color={palette.muted} size={15} />
+            <TextInput
+              value={filters.search}
+              onChangeText={(t) => updateFilter("search", t)}
+              placeholder="Search content, tags, categories..."
+              placeholderTextColor={palette.muted}
+              style={mgmtStyles.searchInput}
+              returnKeyType="search"
+            />
+            {filters.search.length > 0 ? (
+              <Pressable onPress={() => updateFilter("search", "")} style={mgmtStyles.searchClearBtn}>
+                <X color={palette.muted} size={14} />
+              </Pressable>
+            ) : null}
+          </View>
+          <Pressable
+            onPress={() => { h.selection(); setFilterSheetOpen(!filterSheetOpen); }}
+            style={({ pressed }) => [
+              mgmtStyles.filterToggleBtn,
+              activeFilterCount > 0 && { borderColor: palette.cyan, backgroundColor: `${palette.cyan}0F` },
+              pressed && mgmtStyles.pressed,
+            ]}
+          >
+            <SlidersHorizontal color={activeFilterCount > 0 ? palette.cyan : palette.muted} size={15} />
+            {activeFilterCount > 0 ? (
+              <View style={mgmtStyles.filterBadge}>
+                <Text style={mgmtStyles.filterBadgeText}>{activeFilterCount}</Text>
+              </View>
+            ) : null}
+          </Pressable>
+        </View>
+
+        {/* Saved filter presets */}
+        {savedPresets.length > 0 ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={mgmtStyles.presetsScroll} contentContainerStyle={mgmtStyles.presetsRow}>
+            {savedPresets.map((preset) => (
+              <View key={preset.id} style={mgmtStyles.presetChip}>
+                <Pressable
+                  onPress={() => applyPreset(preset)}
+                  style={({ pressed }) => [mgmtStyles.presetPress, pressed && mgmtStyles.pressed]}
+                >
+                  <Bookmark color={palette.gold} size={11} />
+                  <Text style={mgmtStyles.presetName} numberOfLines={1}>{preset.name}</Text>
+                </Pressable>
+                <Pressable onPress={() => handleDeletePreset(preset.id)} style={mgmtStyles.presetDelete}>
+                  <X color={palette.muted} size={11} />
+                </Pressable>
+              </View>
+            ))}
+          </ScrollView>
+        ) : null}
+
+        {/* Filter panel (collapsible) */}
+        {filterSheetOpen ? (
+          <View style={mgmtStyles.filterPanel}>
+            {/* Sort */}
+            <Text style={mgmtStyles.filterLabel}>Sort</Text>
+            <View style={mgmtStyles.filterChipsRow}>
+              {(Object.keys(SORT_LABELS) as SortOption[]).map((opt) => {
+                const isActive = filters.sort === opt;
+                return (
+                  <Pressable
+                    key={opt}
+                    onPress={() => updateFilter("sort", opt)}
+                    style={({ pressed }) => [
+                      mgmtStyles.filterChip,
+                      isActive && { borderColor: palette.cyan, backgroundColor: `${palette.cyan}12` },
+                      pressed && mgmtStyles.pressed,
+                    ]}
+                  >
+                    <Text style={[mgmtStyles.filterChipText, isActive && { color: palette.cyan }]}>
+                      {SORT_LABELS[opt]}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* Validation status */}
+            <Text style={[mgmtStyles.filterLabel, { marginTop: 10 }]}>Validation Status</Text>
+            <View style={mgmtStyles.filterChipsRow}>
+              {VALIDATION_STATUS_FILTER_OPTIONS.map((opt) => {
+                const isActive = filters.validationStatus === opt.id;
+                return (
+                  <Pressable
+                    key={opt.id}
+                    onPress={() => updateFilter("validationStatus", opt.id)}
+                    style={({ pressed }) => [
+                      mgmtStyles.filterChip,
+                      isActive && { borderColor: palette.cyan, backgroundColor: `${palette.cyan}12` },
+                      pressed && mgmtStyles.pressed,
+                    ]}
+                  >
+                    <Text style={[mgmtStyles.filterChipText, isActive && { color: palette.cyan }]}>
+                      {opt.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* Category */}
+            <Text style={[mgmtStyles.filterLabel, { marginTop: 10 }]}>Category</Text>
+            <View style={mgmtStyles.filterChipsRow}>
+              <Pressable
+                onPress={() => updateFilter("category", "all")}
+                style={({ pressed }) => [
+                  mgmtStyles.filterChip,
+                  filters.category === "all" && { borderColor: palette.cyan, backgroundColor: `${palette.cyan}12` },
+                  pressed && mgmtStyles.pressed,
+                ]}
+              >
+                <Text style={[mgmtStyles.filterChipText, filters.category === "all" && { color: palette.cyan }]}>All</Text>
+              </Pressable>
+              {categoryOptions.map((cat) => {
+                const isActive = filters.category === cat;
+                return (
+                  <Pressable
+                    key={cat}
+                    onPress={() => updateFilter("category", cat)}
+                    style={({ pressed }) => [
+                      mgmtStyles.filterChip,
+                      isActive && { borderColor: palette.cyan, backgroundColor: `${palette.cyan}12` },
+                      pressed && mgmtStyles.pressed,
+                    ]}
+                  >
+                    <Text style={[mgmtStyles.filterChipText, isActive && { color: palette.cyan }]} numberOfLines={1}>
+                      {cat.replace(/_/g, " ")}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* Confidence */}
+            <Text style={[mgmtStyles.filterLabel, { marginTop: 10 }]}>Confidence</Text>
+            <View style={mgmtStyles.filterChipsRow}>
+              {CONFIDENCE_FILTER_OPTIONS.map((opt) => {
+                const isActive = filters.confidence === opt.id;
+                return (
+                  <Pressable
+                    key={opt.id}
+                    onPress={() => updateFilter("confidence", opt.id)}
+                    style={({ pressed }) => [
+                      mgmtStyles.filterChip,
+                      isActive && { borderColor: palette.cyan, backgroundColor: `${palette.cyan}12` },
+                      pressed && mgmtStyles.pressed,
+                    ]}
+                  >
+                    <Text style={[mgmtStyles.filterChipText, isActive && { color: palette.cyan }]}>
+                      {opt.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* Sharing */}
+            <Text style={[mgmtStyles.filterLabel, { marginTop: 10 }]}>Sharing</Text>
+            <View style={mgmtStyles.filterChipsRow}>
+              {(Object.keys(SHARING_LABELS) as SharingFilter[]).map((opt) => {
+                const isActive = filters.sharing === opt;
+                return (
+                  <Pressable
+                    key={opt}
+                    onPress={() => updateFilter("sharing", opt)}
+                    style={({ pressed }) => [
+                      mgmtStyles.filterChip,
+                      isActive && { borderColor: palette.cyan, backgroundColor: `${palette.cyan}12` },
+                      pressed && mgmtStyles.pressed,
+                    ]}
+                  >
+                    <Text style={[mgmtStyles.filterChipText, isActive && { color: palette.cyan }]}>
+                      {SHARING_LABELS[opt]}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* Save preset + Reset */}
+            <View style={mgmtStyles.filterActionsRow}>
+              {showSavePresetInput ? (
+                <View style={mgmtStyles.savePresetRow}>
+                  <TextInput
+                    value={savePresetName}
+                    onChangeText={setSavePresetName}
+                    placeholder="Preset name..."
+                    placeholderTextColor={palette.muted}
+                    style={mgmtStyles.savePresetInput}
+                    maxLength={40}
+                  />
+                  <Pressable
+                    onPress={handleSavePreset}
+                    disabled={!savePresetName.trim()}
+                    style={({ pressed }) => [mgmtStyles.savePresetBtn, !savePresetName.trim() && { opacity: 0.4 }, pressed && mgmtStyles.pressed]}
+                  >
+                    <Check color={palette.void} size={13} />
+                  </Pressable>
+                  <Pressable onPress={() => setShowSavePresetInput(false)} style={mgmtStyles.savePresetCancel}>
+                    <X color={palette.muted} size={13} />
+                  </Pressable>
+                </View>
+              ) : (
+                <Pressable
+                  onPress={() => { h.light(); setShowSavePresetInput(true); }}
+                  disabled={savedPresets.length >= 5}
+                  style={({ pressed }) => [mgmtStyles.filterActionBtn, savedPresets.length >= 5 && { opacity: 0.4 }, pressed && mgmtStyles.pressed]}
+                >
+                  <Bookmark color={palette.gold} size={13} />
+                  <Text style={[mgmtStyles.filterActionText, { color: palette.gold }]}>
+                    Save Preset{savedPresets.length >= 5 ? " (Max 5)" : ` (${savedPresets.length}/5)`}
+                  </Text>
+                </Pressable>
+              )}
+              <Pressable
+                onPress={resetFilters}
+                style={({ pressed }) => [mgmtStyles.filterActionBtn, pressed && mgmtStyles.pressed]}
+              >
+                <Filter color={palette.muted} size={13} />
+                <Text style={[mgmtStyles.filterActionText, { color: palette.muted }]}>Reset</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
         {/* Entries list */}
         {entriesQuery.isLoading ? (
           <ActivityIndicator color={palette.cyan} size="large" style={{ paddingVertical: 40 }} />
-        ) : expandedEntries.length === 0 ? (
+        ) : (entriesQuery.data ?? []).length === 0 ? (
           <View style={mgmtStyles.emptyState}>
             <Activity color={palette.muted} size={32} />
             <Text style={mgmtStyles.emptyTitle}>No Intelligence Entries</Text>
             <Text style={mgmtStyles.emptyDesc}>
               Submit observations from the Open Intelligence screen to see them here.
             </Text>
+          </View>
+        ) : expandedEntries.length === 0 ? (
+          <View style={mgmtStyles.emptyState}>
+            <Search color={palette.muted} size={32} />
+            <Text style={mgmtStyles.emptyTitle}>No Intelligence Matches Your Search</Text>
+            <Text style={mgmtStyles.emptyDesc}>
+              {filters.category !== "all"
+                ? "No entries in this category with the current filters."
+                : filters.sharing !== "all"
+                  ? "No entries match the selected sharing filter."
+                  : "Try adjusting your search or filters."}
+            </Text>
+            <Pressable onPress={resetFilters} style={mgmtStyles.emptyResetBtn}>
+              <Text style={mgmtStyles.emptyResetText}>Clear Filters</Text>
+            </Pressable>
           </View>
         ) : (
           <View style={mgmtStyles.entriesList}>
@@ -947,6 +1302,16 @@ export default function MyIntelligenceScreen(): JSX.Element {
                 busy={busy}
               />
             ))}
+            {hasMore ? (
+              <Pressable
+                onPress={loadMore}
+                style={({ pressed }) => [mgmtStyles.loadMoreBtn, pressed && mgmtStyles.pressed]}
+              >
+                <Text style={mgmtStyles.loadMoreText}>
+                  Load More ({filteredEntries.length - visibleCount} remaining)
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         )}
       </ScrollView>
@@ -1316,6 +1681,100 @@ const mgmtStyles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
   confirmActionText: { color: palette.void, fontSize: 14, fontWeight: "900" },
+
+  // Phase 7A: Search & Filter
+  searchRow: { flexDirection: "row", gap: 8, alignItems: "center" },
+  searchInputWrap: {
+    flex: 1, flexDirection: "row", alignItems: "center", gap: 8,
+    paddingHorizontal: 12, paddingVertical: 0, borderRadius: 6,
+    borderWidth: 1, borderColor: palette.line,
+    backgroundColor: "rgba(10,18,30,0.50)",
+    minHeight: 42,
+  },
+  searchInput: {
+    flex: 1, color: palette.text, fontSize: 13, fontWeight: "700",
+    paddingVertical: 8,
+  },
+  searchClearBtn: { width: 24, height: 24, alignItems: "center", justifyContent: "center" },
+  filterToggleBtn: {
+    width: 42, height: 42, borderRadius: 6, borderWidth: 1,
+    borderColor: palette.line, backgroundColor: "rgba(10,18,30,0.50)",
+    alignItems: "center", justifyContent: "center",
+  },
+  filterBadge: {
+    position: "absolute", top: -4, right: -4,
+    minWidth: 16, height: 16, borderRadius: 8,
+    backgroundColor: palette.cyan,
+    alignItems: "center", justifyContent: "center",
+    paddingHorizontal: 4,
+  },
+  filterBadgeText: { color: palette.void, fontSize: 8, fontWeight: "900" },
+
+  presetsScroll: { maxHeight: 36 },
+  presetsRow: { flexDirection: "row", gap: 6, paddingHorizontal: 2 },
+  presetChip: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 5, borderWidth: 1,
+    borderColor: `${palette.gold}33`, backgroundColor: `${palette.gold}08`,
+  },
+  presetPress: { flexDirection: "row", alignItems: "center", gap: 4 },
+  presetName: { color: palette.gold, fontSize: 10, fontWeight: "800", maxWidth: 100 },
+  presetDelete: { width: 18, height: 18, alignItems: "center", justifyContent: "center" },
+
+  filterPanel: {
+    borderRadius: 6, borderWidth: 1, borderColor: palette.line,
+    backgroundColor: "rgba(10,20,38,0.40)", padding: 12, gap: 4,
+  },
+  filterLabel: {
+    color: palette.cyan, fontSize: 9, fontWeight: "900",
+    letterSpacing: 1.5, textTransform: "uppercase",
+  },
+  filterChipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 4 },
+  filterChip: {
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 4, borderWidth: 1,
+    borderColor: palette.line, backgroundColor: "rgba(255,255,255,0.03)",
+    minHeight: 30,
+  },
+  filterChipText: { fontSize: 10, fontWeight: "800", color: palette.muted },
+  filterActionsRow: {
+    flexDirection: "row", gap: 8, marginTop: 12,
+    paddingTop: 10, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.05)",
+  },
+  filterActionBtn: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: 10, paddingVertical: 7, borderRadius: 5, borderWidth: 1,
+    borderColor: palette.line, backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  filterActionText: { fontSize: 10, fontWeight: "800" },
+  savePresetRow: { flex: 1, flexDirection: "row", alignItems: "center", gap: 5 },
+  savePresetInput: {
+    flex: 1, color: palette.text, fontSize: 11, fontWeight: "700",
+    borderRadius: 5, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1,
+    borderColor: `${palette.gold}33`, backgroundColor: `${palette.gold}08`,
+    minHeight: 34,
+  },
+  savePresetBtn: {
+    width: 32, height: 32, borderRadius: 5,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: palette.gold,
+  },
+  savePresetCancel: {
+    width: 28, height: 28, borderRadius: 5,
+    alignItems: "center", justifyContent: "center",
+  },
+
+  loadMoreBtn: {
+    paddingVertical: 12, borderRadius: 6, borderWidth: 1,
+    borderColor: `${palette.cyan}33`, backgroundColor: `${palette.cyan}08`,
+    alignItems: "center", justifyContent: "center", marginTop: 4,
+  },
+  loadMoreText: { color: palette.cyan, fontSize: 12, fontWeight: "800" },
+  emptyResetBtn: {
+    marginTop: 12, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 6,
+    borderWidth: 1, borderColor: palette.line,
+    backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  emptyResetText: { color: palette.cyan, fontSize: 12, fontWeight: "800" },
 
   pressed: { transform: [{ scale: 0.985 }], opacity: 0.88 },
 });

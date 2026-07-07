@@ -49,8 +49,14 @@ import {
 } from "@/app/_components/IntelligenceTrust";
 import {
   fetchBulkPublicReputations,
+  applyEntryFilters,
+  DEFAULT_FILTERS,
+  SORT_LABELS,
+  VALIDATION_STATUS_FILTER_OPTIONS,
   type OpenIntelligenceRow,
   type PublicReputation,
+  type MyIntelligenceFilters,
+  type SortOption,
 } from "@/services/openIntelligence";
 import { LinearGradient } from "expo-linear-gradient";
 import { useHaptics } from "@/hooks/useHaptics";
@@ -75,6 +81,8 @@ import {
   LogOut,
   Star,
   ArrowUp,
+  Search,
+  SlidersHorizontal,
 } from "lucide-react-native";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -425,6 +433,14 @@ function FactionDetail({
   const [feedbackModalEntryId, setFeedbackModalEntryId] = useState<string | null>(null);
   const [disputeModalEntryId, setDisputeModalEntryId] = useState<string | null>(null);
 
+  // Phase 7A: Faction intelligence search & filter
+  const [factionSearch, setFactionSearch] = useState("");
+  const [factionFilterOpen, setFactionFilterOpen] = useState(false);
+  const [factionSort, setFactionSort] = useState<SortOption>("newest");
+  const [factionValidationFilter, setFactionValidationFilter] = useState("all");
+  const [factionCategoryFilter, setFactionCategoryFilter] = useState("all");
+  const [factionContributorFilter, setFactionContributorFilter] = useState("all");
+
   // Phase 6A: Fetch shared OI entries and contributor reputations when sharedEntries are available
   useEffect(() => {
     if (!full?.sharedEntries || full.sharedEntries.length === 0) {
@@ -468,6 +484,43 @@ function FactionDetail({
     })();
     return () => { cancelled = true; };
   }, [full?.sharedEntries]);
+
+  // Phase 7A: Filtered & sorted faction shared intelligence
+  const factionContributors = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const e of sharedOIEntries) {
+      if (!map.has(e.user_id)) {
+        const rep = contributorRepMap.get(e.user_id);
+        map.set(e.user_id, rep ? `Reputation ${rep.overall_score}` : "Unknown");
+      }
+    }
+    return Array.from(map.entries()).map(([id, label]) => ({ id, label }));
+  }, [sharedOIEntries, contributorRepMap]);
+
+  const factionCategoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of sharedOIEntries) {
+      const cat = e.selected_category ?? e.tag;
+      if (cat) set.add(cat);
+    }
+    return Array.from(set).sort();
+  }, [sharedOIEntries]);
+
+  const filteredSharedOI = useMemo(() => {
+    const factionFilters: MyIntelligenceFilters = {
+      search: factionSearch,
+      category: factionCategoryFilter,
+      validationStatus: factionValidationFilter,
+      confidence: "all",
+      sharing: "all",
+      sort: factionSort,
+    };
+    let result = applyEntryFilters(sharedOIEntries, factionFilters);
+    if (factionContributorFilter !== "all") {
+      result = result.filter((e) => e.user_id === factionContributorFilter);
+    }
+    return result;
+  }, [sharedOIEntries, factionSearch, factionCategoryFilter, factionValidationFilter, factionSort, factionContributorFilter]);
 
   // Phase 6A: Build access info for feedback/dispute
   const myMemberStatus = myMember?.status ?? null;
@@ -856,20 +909,168 @@ function FactionDetail({
         </View>
       )}
 
-      {/* ── Phase 6A: Shared Intelligence with Trust Indicators ──────── */}
+      {/* ── Phase 6A/7A: Shared Intelligence with Search & Filters ──── */}
       {sharedOIEntries.length > 0 && (
         <View style={styles.sharedIntelSection}>
           <SectionHeader eyebrow="SHARED INTELLIGENCE" title="Faction Knowledge Pool" />
-          {sharedOIEntries.map((entry) => (
-            <IntelligenceEntryCard
-              key={entry.id}
-              entry={entry}
-              contributorReputation={contributorRepMap.get(entry.user_id)}
-              access={buildFeedbackAccess(entry)}
-              onRate={handleRateEntry}
-              onDispute={handleDisputeEntry}
-            />
-          ))}
+
+          {/* Phase 7A: Search & filter bar */}
+          <View style={styles.factionSearchRow}>
+            <View style={styles.factionSearchWrap}>
+              <Search color={palette.muted} size={14} />
+              <TextInput
+                value={factionSearch}
+                onChangeText={setFactionSearch}
+                placeholder="Search shared intelligence..."
+                placeholderTextColor={palette.muted}
+                style={styles.factionSearchInput}
+                returnKeyType="search"
+              />
+              {factionSearch.length > 0 ? (
+                <Pressable onPress={() => setFactionSearch("")} style={styles.factionSearchClear}>
+                  <X color={palette.muted} size={13} />
+                </Pressable>
+              ) : null}
+            </View>
+            <Pressable
+              onPress={() => { h.selection(); setFactionFilterOpen(!factionFilterOpen); }}
+              style={({ pressed }) => [
+                styles.factionFilterToggle,
+                (factionSort !== "newest" || factionValidationFilter !== "all" || factionCategoryFilter !== "all" || factionContributorFilter !== "all") && { borderColor: palette.cyan },
+                pressed && { opacity: 0.85 },
+              ]}
+            >
+              <SlidersHorizontal color={palette.muted} size={14} />
+            </Pressable>
+          </View>
+
+          {/* Phase 7A: Filter panel */}
+          {factionFilterOpen ? (
+            <View style={styles.factionFilterPanel}>
+              <Text style={styles.factionFilterLabel}>Sort</Text>
+              <View style={styles.factionFilterChips}>
+                {(["newest", "highest_quality"] as SortOption[]).map((opt) => (
+                  <Pressable
+                    key={opt}
+                    onPress={() => { h.selection(); setFactionSort(opt); }}
+                    style={({ pressed }) => [
+                      styles.factionFilterChip,
+                      factionSort === opt && { borderColor: palette.cyan, backgroundColor: `${palette.cyan}12` },
+                      pressed && { opacity: 0.85 },
+                    ]}
+                  >
+                    <Text style={[styles.factionFilterChipText, factionSort === opt && { color: palette.cyan }]}>
+                      {SORT_LABELS[opt]}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <Text style={[styles.factionFilterLabel, { marginTop: 8 }]}>Validation</Text>
+              <View style={styles.factionFilterChips}>
+                {VALIDATION_STATUS_FILTER_OPTIONS.filter((o) => o.id !== "withdrawn" && o.id !== "rejected").map((opt) => (
+                  <Pressable
+                    key={opt.id}
+                    onPress={() => { h.selection(); setFactionValidationFilter(opt.id); }}
+                    style={({ pressed }) => [
+                      styles.factionFilterChip,
+                      factionValidationFilter === opt.id && { borderColor: palette.cyan, backgroundColor: `${palette.cyan}12` },
+                      pressed && { opacity: 0.85 },
+                    ]}
+                  >
+                    <Text style={[styles.factionFilterChipText, factionValidationFilter === opt.id && { color: palette.cyan }]}>
+                      {opt.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              {factionCategoryOptions.length > 0 ? (
+                <>
+                  <Text style={[styles.factionFilterLabel, { marginTop: 8 }]}>Category</Text>
+                  <View style={styles.factionFilterChips}>
+                    <Pressable
+                      onPress={() => { h.selection(); setFactionCategoryFilter("all"); }}
+                      style={({ pressed }) => [
+                        styles.factionFilterChip,
+                        factionCategoryFilter === "all" && { borderColor: palette.cyan, backgroundColor: `${palette.cyan}12` },
+                        pressed && { opacity: 0.85 },
+                      ]}
+                    >
+                      <Text style={[styles.factionFilterChipText, factionCategoryFilter === "all" && { color: palette.cyan }]}>All</Text>
+                    </Pressable>
+                    {factionCategoryOptions.map((cat) => (
+                      <Pressable
+                        key={cat}
+                        onPress={() => { h.selection(); setFactionCategoryFilter(cat); }}
+                        style={({ pressed }) => [
+                          styles.factionFilterChip,
+                          factionCategoryFilter === cat && { borderColor: palette.cyan, backgroundColor: `${palette.cyan}12` },
+                          pressed && { opacity: 0.85 },
+                        ]}
+                      >
+                        <Text style={[styles.factionFilterChipText, factionCategoryFilter === cat && { color: palette.cyan }]} numberOfLines={1}>
+                          {cat.replace(/_/g, " ")}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </>
+              ) : null}
+
+              {factionContributors.length > 1 ? (
+                <>
+                  <Text style={[styles.factionFilterLabel, { marginTop: 8 }]}>Contributor</Text>
+                  <View style={styles.factionFilterChips}>
+                    <Pressable
+                      onPress={() => { h.selection(); setFactionContributorFilter("all"); }}
+                      style={({ pressed }) => [
+                        styles.factionFilterChip,
+                        factionContributorFilter === "all" && { borderColor: palette.cyan, backgroundColor: `${palette.cyan}12` },
+                        pressed && { opacity: 0.85 },
+                      ]}
+                    >
+                      <Text style={[styles.factionFilterChipText, factionContributorFilter === "all" && { color: palette.cyan }]}>All</Text>
+                    </Pressable>
+                    {factionContributors.slice(0, 10).map((c) => (
+                      <Pressable
+                        key={c.id}
+                        onPress={() => { h.selection(); setFactionContributorFilter(c.id); }}
+                        style={({ pressed }) => [
+                          styles.factionFilterChip,
+                          factionContributorFilter === c.id && { borderColor: palette.cyan, backgroundColor: `${palette.cyan}12` },
+                          pressed && { opacity: 0.85 },
+                        ]}
+                      >
+                        <Text style={[styles.factionFilterChipText, factionContributorFilter === c.id && { color: palette.cyan }]} numberOfLines={1}>
+                          {c.label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </>
+              ) : null}
+            </View>
+          ) : null}
+
+          {filteredSharedOI.length === 0 ? (
+            <View style={styles.factionEmptyState}>
+              <Search color={palette.muted} size={28} />
+              <Text style={styles.factionEmptyTitle}>No Shared Faction Intelligence Found</Text>
+              <Text style={styles.factionEmptyDesc}>Try adjusting your search or filters.</Text>
+            </View>
+          ) : (
+            filteredSharedOI.map((entry) => (
+              <IntelligenceEntryCard
+                key={entry.id}
+                entry={entry}
+                contributorReputation={contributorRepMap.get(entry.user_id)}
+                access={buildFeedbackAccess(entry)}
+                onRate={handleRateEntry}
+                onDispute={handleDisputeEntry}
+              />
+            ))
+          )}
         </View>
       )}
 
@@ -1816,4 +2017,39 @@ const styles = StyleSheet.create({
   contributorName: { color: palette.text, fontSize: 13, fontWeight: "800" as const },
   contributorCount: { color: palette.muted, fontSize: 11, marginTop: 1 },
   contributorRep: { fontSize: 14, fontWeight: "900" as const },
+
+  // Phase 7A: Faction intelligence search & filter
+  factionSearchRow: { flexDirection: "row" as const, gap: 8, alignItems: "center" as const },
+  factionSearchWrap: {
+    flex: 1, flexDirection: "row" as const, alignItems: "center" as const, gap: 8,
+    paddingHorizontal: 12, borderRadius: 6, borderWidth: 1, borderColor: palette.line,
+    backgroundColor: "rgba(10,18,30,0.50)", minHeight: 40,
+  },
+  factionSearchInput: {
+    flex: 1, color: palette.text, fontSize: 12, fontWeight: "700" as const,
+    paddingVertical: 8,
+  },
+  factionSearchClear: { width: 22, height: 22, alignItems: "center" as const, justifyContent: "center" as const },
+  factionFilterToggle: {
+    width: 40, height: 40, borderRadius: 6, borderWidth: 1,
+    borderColor: palette.line, backgroundColor: "rgba(10,18,30,0.50)",
+    alignItems: "center" as const, justifyContent: "center" as const,
+  },
+  factionFilterPanel: {
+    borderRadius: 6, borderWidth: 1, borderColor: palette.line,
+    backgroundColor: "rgba(10,20,38,0.40)", padding: 10, gap: 4,
+  },
+  factionFilterLabel: {
+    color: palette.cyan, fontSize: 9, fontWeight: "900" as const,
+    letterSpacing: 1.5, textTransform: "uppercase" as const,
+  },
+  factionFilterChips: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: 5, marginTop: 4 },
+  factionFilterChip: {
+    paddingHorizontal: 9, paddingVertical: 5, borderRadius: 4, borderWidth: 1,
+    borderColor: palette.line, backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  factionFilterChipText: { fontSize: 10, fontWeight: "800" as const, color: palette.muted },
+  factionEmptyState: { alignItems: "center" as const, paddingVertical: 30, gap: 6 },
+  factionEmptyTitle: { color: palette.text, fontSize: 14, fontWeight: "900" as const },
+  factionEmptyDesc: { color: palette.muted, fontSize: 11, fontWeight: "700" as const, textAlign: "center" as const },
 });

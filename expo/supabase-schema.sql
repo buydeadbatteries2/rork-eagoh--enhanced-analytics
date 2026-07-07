@@ -2731,6 +2731,14 @@ create unique index if not exists arena_deductions_user_request_uniq
 alter table public.arena_deductions enable row level security;
 -- No client policies: only service_role (bypasses RLS) may read or write.
 
+-- Remove any older overloads of deduct_arena_neurons before creating the new
+-- three-argument version. The previous signature accepted a client-controlled
+-- p_amount (uuid, text, int, text) which must not remain callable. DROP FUNCTION
+-- IF EXISTS is safe and idempotent.
+drop function if exists public.deduct_arena_neurons(uuid, text, int, text);
+drop function if exists public.deduct_arena_neurons(uuid, text, int);
+drop function if exists public.deduct_arena_neurons(uuid, text);
+
 -- Atomic Arena deduction (service_role only)
 -- The Arena cost is enforced server-side as exactly 50 Neurons (ARENA_COST).
 -- The function has NO p_amount argument so the caller cannot change the cost.
@@ -3000,6 +3008,21 @@ create index if not exists arena_history_eagoh_idx on public.arena_history(eagoh
 -- backfill any legacy rows created before the NOT NULL constraint).
 update public.arena_history set request_id = id::text where request_id is null;
 alter table public.arena_history alter column request_id set not null;
+
+-- Safe duplicate handling before creating the unique index.
+-- If duplicate (user_id, request_id) rows already exist, keep the OLDEST completed
+-- row (lowest created_at, then lowest id as a tiebreaker) and delete only the
+-- younger duplicates. This preserves the canonical result and lets the unique
+-- index be created without a silent full-wipe or a blocking exception.
+delete from public.arena_history h
+  using public.arena_history keep
+  where h.user_id = keep.user_id
+    and h.request_id = keep.request_id
+    and h.id <> keep.id
+    and (
+      keep.created_at < h.created_at
+      or (keep.created_at = h.created_at and keep.id < h.id)
+    );
 
 drop index if exists arena_history_user_request_uniq;
 create unique index if not exists arena_history_user_request_uniq

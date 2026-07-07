@@ -2699,17 +2699,17 @@ revoke execute on function public.get_owner_exchange_contributions(uuid) from au
 grant execute on function public.get_owner_exchange_contributions(uuid) to service_role;
 
 -- =============================================================================
--- PHASE 11B FINAL — ATOMIC ARENA NEURON DEDUCTION / REFUND (service_role only)
+-- PHASE 11B FINAL - ATOMIC ARENA NEURON DEDUCTION / REFUND (service_role only)
 -- =============================================================================
 -- These RPCs make Arena Mode Neuron movement atomic and idempotent at the
 -- database level so concurrent requests can never overspend and a request_id
 -- can be charged or refunded only once. Executable only by service_role.
 
--- ── Arena deduction ledger ─────────────────────────────────────────────────
+-- Arena deduction ledger
 -- Tracks exactly what was deducted for each Arena request_id so refunds can
 -- return the precise subscription/purchased amounts (not a balance snapshot),
 -- and so a request_id can be charged or refunded only once. RLS-disabled with
--- no client policies — only service_role (which bypasses RLS) writes to it.
+-- no client policies: only service_role (which bypasses RLS) writes to it.
 create table if not exists public.arena_deductions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -2731,7 +2731,7 @@ create unique index if not exists arena_deductions_user_request_uniq
 alter table public.arena_deductions enable row level security;
 -- No client policies: only service_role (bypasses RLS) may read or write.
 
--- ── Atomic Arena deduction ─────────────────────────────────────────────────
+-- Atomic Arena deduction
 -- Atomically verifies the user has enough Neurons, deducts exactly the
 -- requested amount (subscription bucket first, then purchased), records the
 -- request_id in arena_deductions so the same request_id cannot charge twice,
@@ -2830,11 +2830,11 @@ begin
 end;
 $$;
 
--- ── Idempotent Arena refund ────────────────────────────────────────────────
+-- Idempotent Arena refund
 -- Refunds the exact subscription/purchased amounts recorded for a request_id,
 -- but only the first time it is called for that request_id. Subsequent refund
 -- attempts for the same request_id short-circuit (no second credit). Does NOT
--- snapshot/restore the whole balance — it adds back only what was deducted for
+-- snapshot/restore the whole balance: it adds back only what was deducted for
 -- this specific Arena request, so other purchases/sessions in the meantime are
 -- unaffected.
 create or replace function public.refund_arena_neurons(
@@ -2870,7 +2870,7 @@ begin
   end if;
 
   if v_ded.status = 'refunded' then
-    -- Already refunded — idempotent no-op.
+    -- Already refunded; idempotent no-op.
     return jsonb_build_object('ok', true, 'duplicate', true, 'message', 'already_refunded');
   end if;
 
@@ -2920,11 +2920,11 @@ revoke execute on function public.refund_arena_neurons(uuid, text, text) from au
 grant execute on function public.refund_arena_neurons(uuid, text, text) to service_role;
 
 -- =============================================================================
--- PHASE 11B — ARENA HISTORY
+-- PHASE 11B - ARENA HISTORY
 -- =============================================================================
 -- Trusted server inserts only. Clients may read their own history but never
 -- create/update/delete rows directly. The worker writes verdict, scores, and
--- metadata from the secure Arena analysis pipeline — the client cannot forge
+-- metadata from the secure Arena analysis pipeline; the client cannot forge
 -- results, verdicts, source counts, or Neuron cost.
 create table if not exists public.arena_history (
   id uuid primary key default gen_random_uuid(),
@@ -2962,7 +2962,7 @@ create index if not exists arena_history_user_idx on public.arena_history(user_i
 create index if not exists arena_history_eagoh_idx on public.arena_history(eagoh_id, created_at desc);
 
 -- True idempotency: a request_id may be persisted only once per user.
--- A unique violation here means a duplicate/concurrent Arena request — the
+-- A unique violation here means a duplicate/concurrent Arena request; the
 -- worker treats the existing row as the canonical result (no second charge).
 -- Idempotent: safe to run repeatedly on existing rows (nulls first become '' to
 -- backfill any legacy rows created before the NOT NULL constraint).

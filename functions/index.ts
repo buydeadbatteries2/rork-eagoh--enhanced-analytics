@@ -4952,6 +4952,364 @@ async function handleDeleteAccount(request: Request, env: Env): Promise<Response
   }
 }
 
+// ── Phase 11A: Arena Compatibility Validation ──────────────────────────────
+
+
+/**
+ * Arena domain rules — server-side source of truth.
+ *
+ * Only domains that exist in the app are included. The client never supplies
+ * the domain; it is always read from the verified EAGOH record.
+ */
+const ARENA_DOMAIN_RULES: Record<string, {
+  comparisonTypes: Array<{ id: string; label: string }>;
+  /** Known sports used for same-sport validation heuristics. */
+  knownSports?: string[];
+}> = {
+  sports: {
+    comparisonTypes: [
+      { id: "player-vs-player", label: "Player vs Player" },
+      { id: "team-vs-team", label: "Team vs Team" },
+      { id: "coach-vs-coach", label: "Coach vs Coach" },
+      { id: "season-vs-season", label: "Season vs Season" },
+    ],
+    knownSports: [
+      "basketball", "football", "baseball", "soccer", "hockey", "tennis",
+      "golf", "boxing", "mma", "ufc", "cricket", "rugby", "volleyball",
+      "track", "swimming", "gymnastics", "f1", "racing", "nascar",
+    ],
+  },
+  music: {
+    comparisonTypes: [
+      { id: "artist-vs-artist", label: "Artist vs Artist" },
+      { id: "album-vs-album", label: "Album vs Album" },
+      { id: "song-vs-song", label: "Song vs Song" },
+      { id: "producer-vs-producer", label: "Producer vs Producer" },
+    ],
+  },
+  "film-tv": {
+    comparisonTypes: [
+      { id: "actor-vs-actor", label: "Actor vs Actor" },
+      { id: "film-vs-film", label: "Film vs Film" },
+      { id: "series-vs-series", label: "Series vs Series" },
+      { id: "director-vs-director", label: "Director vs Director" },
+      { id: "character-vs-character", label: "Character vs Character" },
+    ],
+  },
+  fashion: {
+    comparisonTypes: [
+      { id: "brand-vs-brand", label: "Brand vs Brand" },
+      { id: "designer-vs-designer", label: "Designer vs Designer" },
+      { id: "collection-vs-collection", label: "Collection vs Collection" },
+      { id: "style-vs-style", label: "Style vs Style" },
+    ],
+  },
+  education: {
+    comparisonTypes: [
+      { id: "school-vs-school", label: "School vs School" },
+      { id: "program-vs-program", label: "Program vs Program" },
+      { id: "course-vs-course", label: "Course vs Course" },
+      { id: "method-vs-method", label: "Teaching Method vs Teaching Method" },
+    ],
+  },
+  gaming: {
+    comparisonTypes: [
+      { id: "game-vs-game", label: "Game vs Game" },
+      { id: "character-vs-character", label: "Character vs Character" },
+      { id: "studio-vs-studio", label: "Studio vs Studio" },
+      { id: "franchise-vs-franchise", label: "Franchise vs Franchise" },
+    ],
+  },
+  business: {
+    comparisonTypes: [
+      { id: "company-vs-company", label: "Company vs Company" },
+      { id: "product-vs-product", label: "Product vs Product" },
+      { id: "strategy-vs-strategy", label: "Strategy vs Strategy" },
+      { id: "founder-vs-founder", label: "Founder vs Founder" },
+    ],
+  },
+  finance: {
+    comparisonTypes: [
+      { id: "asset-vs-asset", label: "Asset vs Asset" },
+      { id: "strategy-vs-strategy", label: "Strategy vs Strategy" },
+      { id: "portfolio-vs-portfolio", label: "Portfolio vs Portfolio" },
+      { id: "institution-vs-institution", label: "Institution vs Institution" },
+    ],
+  },
+  technology: {
+    comparisonTypes: [
+      { id: "product-vs-product", label: "Product vs Product" },
+      { id: "company-vs-company", label: "Company vs Company" },
+      { id: "platform-vs-platform", label: "Platform vs Platform" },
+      { id: "framework-vs-framework", label: "Framework vs Framework" },
+    ],
+  },
+  "health-fitness": {
+    comparisonTypes: [
+      { id: "program-vs-program", label: "Program vs Program" },
+      { id: "method-vs-method", label: "Method vs Method" },
+      { id: "athlete-vs-athlete", label: "Athlete vs Athlete" },
+      { id: "supplement-vs-supplement", label: "Supplement vs Supplement" },
+    ],
+  },
+};
+
+const ARENA_SUBJECT_NAME_MAX = 120;
+const ARENA_SUBJECT_CONTEXT_MAX = 80;
+const ARENA_SUBJECT_YEAR_MAX = 30;
+const ARENA_SUBJECT_NOTES_MAX = 300;
+
+/** Normalize domain id — mirrors the client normalizer for the subset we need. */
+function arenaNormalizeDomainId(raw: string): string {
+  const lower = raw.trim().toLowerCase();
+  const map: Record<string, string> = {
+    sport: "sports",
+    film_tv: "film-tv",
+    "film & television": "film-tv",
+    "film and television": "film-tv",
+    "film-television": "film-tv",
+    health_fitness: "health-fitness",
+    "health & fitness": "health-fitness",
+    "health and fitness": "health-fitness",
+  };
+  if (map[lower]) return map[lower];
+  const collapsed = lower.replace(/[^a-z0-9]/g, "");
+  for (const key of Object.keys(ARENA_DOMAIN_RULES)) {
+    if (key.replace(/[^a-z0-9]/g, "") === collapsed) return key;
+  }
+  return lower;
+}
+
+/** Trim + collapse whitespace. */
+function arenaClean(s: string | undefined): string {
+  return (s ?? "").trim().replace(/\s+/g, " ");
+}
+
+/**
+ * Detect a sport from a subject's context or name using the known-sports bank.
+ * Returns the lowercased sport name, or null when none is detected.
+ */
+function arenaDetectSport(contextA: string, nameA: string, knownSports: string[]): string | null {
+  const hay = `${contextA} ${nameA}`.toLowerCase();
+  for (const sport of knownSports) {
+    if (hay.includes(sport)) return sport;
+  }
+  // Common aliases
+  if (hay.includes("hoops") || hay.includes("nba") || hay.includes("ncaa basketball")) return "basketball";
+  if (hay.includes("nfl") || hay.includes("gridiron")) return "football";
+  if (hay.includes("mlb") || hay.includes("baseball")) return "baseball";
+  if (hay.includes("football") && !hay.includes("american")) {
+    // "football" alone — ambiguous; in US context means American football, else soccer.
+    // We treat it as a match for either when both subjects share the same token.
+  }
+  if (hay.includes("soccer") || hay.includes("premier league") || hay.includes("la liga") || hay.includes("bundesliga")) return "soccer";
+  if (hay.includes("nhl") || hay.includes("hockey")) return "hockey";
+  return null;
+}
+
+/** Validate subject field lengths. Returns an error string or null when valid. */
+function arenaValidateSubjectFields(subject: {
+  name?: string; context?: string; year?: string; notes?: string;
+}): string | null {
+  if (!subject.name || arenaClean(subject.name).length === 0) {
+    return "Both subjects need a primary name.";
+  }
+  if (arenaClean(subject.name).length > ARENA_SUBJECT_NAME_MAX) {
+    return `Subject name must be ${ARENA_SUBJECT_NAME_MAX} characters or fewer.`;
+  }
+  if (subject.context && arenaClean(subject.context).length > ARENA_SUBJECT_CONTEXT_MAX) {
+    return `Subject context must be ${ARENA_SUBJECT_CONTEXT_MAX} characters or fewer.`;
+  }
+  if (subject.year && arenaClean(subject.year).length > ARENA_SUBJECT_YEAR_MAX) {
+    return `Subject year/season must be ${ARENA_SUBJECT_YEAR_MAX} characters or fewer.`;
+  }
+  if (subject.notes && arenaClean(subject.notes).length > ARENA_SUBJECT_NOTES_MAX) {
+    return `Subject notes must be ${ARENA_SUBJECT_NOTES_MAX} characters or fewer.`;
+  }
+  return null;
+}
+
+/**
+ * POST /arena/validate
+ *
+ * Secure Arena compatibility validation. Verifies JWT, EAGOH ownership,
+ * EAGOH active status, domain support, comparison-type validity, and
+ * subject compatibility for the detected domain. Never trusts a
+ * client-supplied domain or user id. Does NOT deduct Neurons or expose
+ * any Open Intelligence content.
+ */
+async function handleArenaValidate(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return jsonResponse({ ok: false, error: "Method not allowed." }, 405);
+  }
+
+  let payload: {
+    eagohId?: unknown;
+    comparisonType?: unknown;
+    subjectA?: unknown;
+    subjectB?: unknown;
+  } = {};
+  try {
+    payload = (await request.json()) as typeof payload;
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request body." }, 400);
+  }
+
+  // Authenticate
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  // Validate eagohId
+  const eagohId = typeof payload.eagohId === "string" ? payload.eagohId.trim() : "";
+  if (!eagohId) {
+    return jsonResponse({ ok: false, error: "An EAGOH is required for Arena Mode." }, 400);
+  }
+
+  // Validate comparisonType
+  const comparisonType = typeof payload.comparisonType === "string" ? payload.comparisonType.trim() : "";
+  if (!comparisonType) {
+    return jsonResponse({ ok: false, error: "Select a comparison type." }, 400);
+  }
+
+  // Validate subjects presence + shape
+  const subjectA = payload.subjectA;
+  const subjectB = payload.subjectB;
+  if (!subjectA || typeof subjectA !== "object" || !subjectB || typeof subjectB !== "object") {
+    return jsonResponse({ ok: false, error: "Both subjects are required." }, 400);
+  }
+  const a = subjectA as { name?: string; context?: string; year?: string; notes?: string };
+  const b = subjectB as { name?: string; context?: string; year?: string; notes?: string };
+
+  const fieldErr = arenaValidateSubjectFields(a) ?? arenaValidateSubjectFields(b);
+  if (fieldErr) {
+    return jsonResponse({ ok: false, error: fieldErr }, 400);
+  }
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) {
+    return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+  }
+
+  // ── 1. Verify the user owns the EAGOH (never trust client user id) ──
+  const { data: eagohRow, error: eagohErr } = await serviceClient
+    .from("eagohs")
+    .select("id, user_id, name, domain, status, is_default_shell, is_user_forged")
+    .eq("id", eagohId)
+    .maybeSingle();
+
+  if (eagohErr || !eagohRow) {
+    return jsonResponse({ ok: false, error: "EAGOH not found." }, 404);
+  }
+
+  const eagoh = eagohRow as {
+    id: string; user_id: string; name: string; domain: string | null;
+    status: string | null; is_default_shell: boolean; is_user_forged: boolean;
+  };
+
+  if (eagoh.user_id !== userId) {
+    return jsonResponse({ ok: false, error: "You can only use EAGOHs you own." }, 403);
+  }
+
+  // ── 2. EAGOH eligibility: must be forged + active ──
+  if (eagoh.is_default_shell || !eagoh.is_user_forged) {
+    return jsonResponse({ ok: false, error: "Arena Mode requires a forged EAGOH. Create one in the Forge first." }, 400);
+  }
+  if (eagoh.status && eagoh.status !== "active") {
+    return jsonResponse({ ok: false, error: "This EAGOH is not active and cannot be used in Arena Mode." }, 400);
+  }
+
+  // ── 3. Domain read from the verified EAGOH record (never from client) ──
+  if (!eagoh.domain) {
+    return jsonResponse({ ok: false, error: "This EAGOH has no domain specialization and cannot enter Arena Mode." }, 400);
+  }
+  const domainId = arenaNormalizeDomainId(eagoh.domain);
+  const rule = ARENA_DOMAIN_RULES[domainId];
+  if (!rule) {
+    return jsonResponse({ ok: false, error: "Arena Mode is not available for this EAGOH domain yet." }, 400);
+  }
+
+  // ── 4. Comparison type must belong to this domain ──
+  const cmpType = rule.comparisonTypes.find((c) => c.id === comparisonType);
+  if (!cmpType) {
+    return jsonResponse({ ok: false, error: "This comparison type is not available for the selected EAGOH domain." }, 400);
+  }
+
+  // ── 5. Subject compatibility validation ──
+  const normA = {
+    name: arenaClean(a.name),
+    context: arenaClean(a.context) || undefined,
+    year: arenaClean(a.year) || undefined,
+    notes: arenaClean(a.notes) || undefined,
+  };
+  const normB = {
+    name: arenaClean(b.name),
+    context: arenaClean(b.context) || undefined,
+    year: arenaClean(b.year) || undefined,
+    notes: arenaClean(b.notes) || undefined,
+  };
+
+  // Same-name check (no self-comparison)
+  if (normA.name.toLowerCase() === normB.name.toLowerCase() && comparisonType !== "season-vs-season") {
+    return jsonResponse({
+      ok: true,
+      valid: false,
+      normalizedA: normA,
+      normalizedB: normB,
+      explanation: "Comparing a subject against itself is not a valid Arena matchup. Enter two different subjects.",
+    });
+  }
+
+  let detectedCategory: string | undefined;
+  let valid = true;
+  let explanation = "This Arena matchup is valid.";
+
+  if (domainId === "sports") {
+    const knownSports = rule.knownSports ?? [];
+    const sportA = arenaDetectSport(normA.context ?? "", normA.name, knownSports);
+    const sportB = arenaDetectSport(normB.context ?? "", normB.name, knownSports);
+    detectedCategory = sportA ?? sportB ?? undefined;
+
+    // Player vs Player / Team vs Team / Coach vs Coach require same sport
+    if (comparisonType === "player-vs-player" || comparisonType === "team-vs-team" || comparisonType === "coach-vs-coach") {
+      if (sportA && sportB && sportA !== sportB) {
+        valid = false;
+        explanation = "These subjects appear to compete in different sports. Both subjects must be from the same sport for this Arena type.";
+      } else if (!sportA || !sportB) {
+        // Could not confirm — fail open but flag uncertainty.
+        explanation = "We could not fully confirm the sport for both subjects. Add the sport in the context field (e.g. 'Basketball') and try again if this matchup is rejected in the next phase.";
+      }
+    } else if (comparisonType === "season-vs-season") {
+      // Season vs season requires the same player/team/league/sport context.
+      const sameName = normA.name.toLowerCase() === normB.name.toLowerCase();
+      const sameContext = sportA && sportB && sportA === sportB;
+      if (!sameName && !sameContext) {
+        valid = false;
+        explanation = "Season vs Season comparisons must refer to the same player, team, league, or sport context. Enter the same subject name or matching sport context for both.";
+      }
+    }
+  } else {
+    // Non-sports domains: same-type comparison is enforced by the comparisonType
+    // selection itself. We only do a soft sanity check that names differ.
+    detectedCategory = normA.context ?? undefined;
+  }
+
+  return jsonResponse({
+    ok: true,
+    valid,
+    normalizedA: normA,
+    normalizedB: normB,
+    detectedCategory,
+    explanation,
+  });
+}
+
 // ── Export ───────────────────────────────────────────────────────────────────
 
 export default {
@@ -5053,6 +5411,11 @@ export default {
     // Phase 10A: Secure account deletion (service-role only)
     if (url.pathname === "/account/delete" && request.method === "POST") {
       return handleDeleteAccount(request, env);
+    }
+
+    // Phase 11A: Arena compatibility validation (no Neuron deduction, no OI content)
+    if (url.pathname === "/arena/validate" && request.method === "POST") {
+      return handleArenaValidate(request, env);
     }
 
     return jsonResponse({ ok: false, error: "Not found" }, 404);

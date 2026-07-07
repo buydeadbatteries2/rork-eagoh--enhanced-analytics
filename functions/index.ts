@@ -5311,7 +5311,7 @@ async function handleArenaValidate(request: Request, env: Env): Promise<Response
 // ── Phase 11B: Arena Analysis Engine ─────────────────────────────────────────
 
 /** Flat Arena Neuron cost. Server-authoritative — the client never supplies a cost. */
-const ARENA_NEURON_COST = 50; // atomic deduction via deduct_arena_neurons RPC
+const ARENA_NEURON_COST = 50; // atomic deduction via deduct_arena_neurons RPC (server-side cost)
 
 /** Human-readable domain labels for Arena prompts (worker-side mirror of client domains). */
 const ARENA_DOMAIN_LABELS: Record<string, string> = {
@@ -5727,7 +5727,6 @@ async function handleArenaAnalyze(request: Request, env: Env): Promise<Response>
     .rpc("deduct_arena_neurons", {
       p_user_id: userId,
       p_request_id: requestId,
-      p_amount: ARENA_NEURON_COST,
       p_note: arenaNote,
     });
 

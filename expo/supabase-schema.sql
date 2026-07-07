@@ -2155,9 +2155,9 @@ begin
 
   -- 1. Detail
   if v_char_count >= 200 then v_score := v_score + 20;
-  elseif v_char_count >= 100 then v_score := v_score + 15;
-  elseif v_char_count >= 50 then v_score := v_score + 10;
-  elseif v_char_count >= 20 then v_score := v_score + 5;
+  elsif v_char_count >= 100 then v_score := v_score + 15;
+  elsif v_char_count >= 50 then v_score := v_score + 10;
+  elsif v_char_count >= 20 then v_score := v_score + 5;
   end if;
 
   -- 2. Clarity
@@ -2731,15 +2731,28 @@ create unique index if not exists arena_deductions_user_request_uniq
 alter table public.arena_deductions enable row level security;
 -- No client policies: only service_role (bypasses RLS) may read or write.
 
--- Atomic Arena deduction
--- Atomically verifies the user has enough Neurons, deducts exactly the
--- requested amount (subscription bucket first, then purchased), records the
--- request_id in arena_deductions so the same request_id cannot charge twice,
--- and logs an edge_transactions row. Returns a structured JSON result.
+-- Atomic Arena deduction (service_role only)
+-- The Arena cost is enforced server-side as exactly 50 Neurons (ARENA_COST).
+-- The function has NO p_amount argument so the caller cannot change the cost.
+--
+-- Race-safety sequence:
+--   1. Lock the user's profile row (FOR UPDATE) so concurrent Arena requests
+--      for the same user serialize on that row.
+--   2. AFTER the lock is obtained, re-check arena_deductions for the same
+--      user_id + request_id. A concurrent request that committed first will
+--      now be visible; return duplicate without changing balances.
+--   3. Verify sufficient balance under the lock.
+--   4. Deduct exactly ARENA_COST (subscription bucket first, then purchased).
+--   5. INSERT the arena_deductions ledger row. The unique(user_id, request_id)
+--      index is the final guard: if a concurrent transaction somehow slipped
+--      through, this INSERT raises a unique violation and the whole function
+--      aborts and rolls back the balance change.
+--   6. Log edge_transactions. Return the structured result.
+-- No ON CONFLICT DO NOTHING is used after the balance change: a conflict here
+-- is a real error and must roll back the deduction.
 create or replace function public.deduct_arena_neurons(
   p_user_id uuid,
   p_request_id text,
-  p_amount int,
   p_note text default null
 )
 returns jsonb
@@ -2748,6 +2761,7 @@ security definer
 set search_path = ''
 as $$
 declare
+  ARENA_COST int := 50;
   v_sub int;
   v_purchased int;
   v_from_sub int;
@@ -2756,23 +2770,15 @@ declare
   v_next_purchased int;
   v_total int;
   v_bucket text;
+  v_existing_id uuid;
 begin
-  if p_amount <= 0 then
-    return jsonb_build_object('ok', false, 'error', 'invalid_amount');
-  end if;
   if p_request_id is null or btrim(p_request_id) = '' then
     return jsonb_build_object('ok', false, 'error', 'missing_request_id');
   end if;
 
-  -- Idempotency guard: if this request_id already produced a deduction, return
-  -- the already-charged state without charging again. Concurrent duplicate
-  -- requests short-circuit here (or hit the unique index below).
-  if exists (select 1 from public.arena_deductions ad
-             where ad.user_id = p_user_id and ad.request_id = p_request_id) then
-    return jsonb_build_object('ok', true, 'duplicate', true, 'message', 'already_charged');
-  end if;
-
-  -- Lock the profile row so concurrent deductions serialize on this user.
+  -- 1. Lock the profile row FIRST so concurrent Arena requests for this user
+  --    serialize. This is the critical race-safety step: two simultaneous
+  --    requests with the same request_id both wait here and run one at a time.
   select edge_subscription, edge_purchased
     into v_sub, v_purchased
     from public.profiles
@@ -2783,22 +2789,37 @@ begin
     return jsonb_build_object('ok', false, 'error', 'profile_not_found');
   end if;
 
+  -- 2. Re-check the ledger AFTER the lock. A concurrent request that committed
+  --    before we got the lock is now visible; return duplicate, no second charge.
+  --    (The pre-lock check in earlier versions was not enough; this is the check
+  --    that closes the race.)
+  select ad.id into v_existing_id
+    from public.arena_deductions ad
+    where ad.user_id = p_user_id and ad.request_id = p_request_id
+    limit 1;
+
+  if v_existing_id is not null then
+    return jsonb_build_object('ok', true, 'duplicate', true, 'message', 'already_charged');
+  end if;
+
+  -- 3. Verify sufficient balance while still holding the lock.
   v_sub := coalesce(v_sub, 0);
   v_purchased := coalesce(v_purchased, 0);
   v_total := v_sub + v_purchased;
 
-  if v_total < p_amount then
-    return jsonb_build_object('ok', false, 'error', 'insufficient', 'balance', v_total, 'cost', p_amount);
+  if v_total < ARENA_COST then
+    return jsonb_build_object('ok', false, 'error', 'insufficient', 'balance', v_total, 'cost', ARENA_COST);
   end if;
 
-  v_from_sub := least(v_sub, p_amount);
-  v_from_purchased := p_amount - v_from_sub;
+  -- 4. Deduct exactly ARENA_COST (subscription bucket first, then purchased).
+  v_from_sub := least(v_sub, ARENA_COST);
+  v_from_purchased := ARENA_COST - v_from_sub;
   v_next_sub := v_sub - v_from_sub;
   v_next_purchased := v_purchased - v_from_purchased;
 
   if v_from_sub > 0 and v_from_purchased > 0 then
     v_bucket := 'mixed';
-  elseif v_from_purchased > 0 then
+  elsif v_from_purchased > 0 then
     v_bucket := 'purchased';
   else
     v_bucket := 'subscription';
@@ -2810,17 +2831,21 @@ begin
         updated_at = now()
     where id = p_user_id;
 
+  -- 5. Insert the ledger row. The unique(user_id, request_id) index is the
+  --    final guard. NO ON CONFLICT DO NOTHING: if a duplicate appears here it
+  --    means a concurrent transaction committed between steps 2 and 5, which
+  --    must raise and roll back the balance change we just made.
   insert into public.arena_deductions (user_id, request_id, amount, from_subscription, from_purchased, bucket, status, note)
-    values (p_user_id, p_request_id, p_amount, v_from_sub, v_from_purchased, v_bucket, 'charged', p_note)
-    on conflict (user_id, request_id) do nothing;
+    values (p_user_id, p_request_id, ARENA_COST, v_from_sub, v_from_purchased, v_bucket, 'charged', p_note);
 
+  -- 6. Log the transaction.
   insert into public.edge_transactions (user_id, kind, reason, amount, bucket, from_subscription, from_purchased, balance_subscription_after, balance_purchased_after, note)
-    values (p_user_id, 'deduction', 'arena', p_amount, v_bucket, v_from_sub, v_from_purchased, v_next_sub, v_next_purchased, p_note);
+    values (p_user_id, 'deduction', 'arena', ARENA_COST, v_bucket, v_from_sub, v_from_purchased, v_next_sub, v_next_purchased, p_note);
 
   return jsonb_build_object(
     'ok', true,
     'duplicate', false,
-    'amount', p_amount,
+    'amount', ARENA_COST,
     'from_subscription', v_from_sub,
     'from_purchased', v_from_purchased,
     'bucket', v_bucket,
@@ -2830,7 +2855,7 @@ begin
 end;
 $$;
 
--- Idempotent Arena refund
+-- Idempotent Arena refund (service_role only)
 -- Refunds the exact subscription/purchased amounts recorded for a request_id,
 -- but only the first time it is called for that request_id. Subsequent refund
 -- attempts for the same request_id short-circuit (no second credit). Does NOT
@@ -2875,12 +2900,18 @@ begin
   end if;
 
   -- Add back exactly what was deducted for this request, not a balance snapshot.
+  -- Lock the profile row. If the profile no longer exists, return safely without
+  -- marking the deduction as refunded (so a later retry can still complete).
   select edge_subscription + coalesce(v_ded.from_subscription, 0),
          edge_purchased + coalesce(v_ded.from_purchased, 0)
     into v_next_sub, v_next_purchased
     from public.profiles
     where id = p_user_id
     for update;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'profile_not_found');
+  end if;
 
   update public.profiles
     set edge_subscription = v_next_sub,
@@ -2908,11 +2939,12 @@ begin
 end;
 $$;
 
--- Lock both Arena RPCs to service_role only.
-revoke execute on function public.deduct_arena_neurons(uuid, text, int, text) from public;
-revoke execute on function public.deduct_arena_neurons(uuid, text, int, text) from anon;
-revoke execute on function public.deduct_arena_neurons(uuid, text, int, text) from authenticated;
-grant execute on function public.deduct_arena_neurons(uuid, text, int, text) to service_role;
+-- Lock both Arena RPCs to service_role only. p_amount has been removed from the
+-- deduction signature; the cost is hardcoded server-side as 50 Neurons.
+revoke execute on function public.deduct_arena_neurons(uuid, text, text) from public;
+revoke execute on function public.deduct_arena_neurons(uuid, text, text) from anon;
+revoke execute on function public.deduct_arena_neurons(uuid, text, text) from authenticated;
+grant execute on function public.deduct_arena_neurons(uuid, text, text) to service_role;
 
 revoke execute on function public.refund_arena_neurons(uuid, text, text) from public;
 revoke execute on function public.refund_arena_neurons(uuid, text, text) from anon;

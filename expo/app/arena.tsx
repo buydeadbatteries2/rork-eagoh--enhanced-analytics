@@ -76,11 +76,14 @@ import { useEdge } from "@/providers/EdgeProvider";
 
 // ── Eligibility ──────────────────────────────────────────────────────────────
 
-/** Only user-forged, active EAGOHs are eligible for Arena Mode. */
+/** A saved EAGOH with a valid domain is eligible for Arena Mode.
+ *  The default shell (is_default_shell) is excluded. We intentionally do NOT
+ *  check is_user_forged or status — those columns are not reliably populated
+ *  on every live row, which caused valid EAGOHs to be rejected. */
 function isArenaEligible(e: EagohRecord): boolean {
-  if (e.is_default_shell || !e.is_user_forged) return false;
-  if (e.status && e.status !== "active") return false;
+  if (!e.id) return false;
   if (!e.domain) return false;
+  if (e.is_default_shell === true) return false;
   return true;
 }
 
@@ -284,7 +287,7 @@ export default function ArenaSetupScreen(): JSX.Element {
   const h = useHaptics();
   const goBack = useSafeBack("/(tabs)/sessions");
   const router = useRouter();
-  const { eagohs } = useEagohs();
+  const { eagohs, isLoading: eagohsLoading } = useEagohs();
   const { balances, total } = useEdge();
   const queryClient = useQueryClient();
 
@@ -445,7 +448,34 @@ export default function ArenaSetupScreen(): JSX.Element {
     } as never);
   }, [h, router]);
 
-  // ── No eligible EAGOH empty state ──
+  // ── Loading / no-eligible-EAGOH states ──
+  if (eagohsLoading) {
+    return (
+      <SafeAreaView style={arStyles.safe} edges={["top"]}>
+        <View style={arStyles.header}>
+          <Pressable onPress={goBack} hitSlop={12} style={arStyles.backBtn}>
+            <ArrowLeft color={palette.text} size={20} />
+          </Pressable>
+          <Text style={arStyles.headerTitle}>Arena Mode</Text>
+          <View style={{ width: 28 }} />
+        </View>
+        <View style={arStyles.emptyWrap}>
+          <View style={arStyles.emptyIconWrap}>
+            <LinearGradient
+              colors={["rgba(138,92,255,0.16)", "rgba(8,15,26,0.7)"]}
+              style={StyleSheet.absoluteFill}
+            />
+            <Swords color={palette.violet} size={36} />
+          </View>
+          <Text style={arStyles.emptyTitle}>Loading your EAGOHs…</Text>
+          <Text style={arStyles.emptyText}>
+            Preparing Arena Mode.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   if (eligibleEagohs.length === 0) {
     return (
       <SafeAreaView style={arStyles.safe} edges={["top"]}>

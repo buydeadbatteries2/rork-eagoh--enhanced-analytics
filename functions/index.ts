@@ -5200,7 +5200,7 @@ async function handleArenaValidate(request: Request, env: Env): Promise<Response
   // ── 1. Verify the user owns the EAGOH (never trust client user id) ──
   const { data: eagohRow, error: eagohErr } = await serviceClient
     .from("eagohs")
-    .select("id, user_id, name, domain, status, is_default_shell, is_user_forged")
+    .select("id, user_id, name, domain, is_default_shell")
     .eq("id", eagohId)
     .maybeSingle();
 
@@ -5210,22 +5210,20 @@ async function handleArenaValidate(request: Request, env: Env): Promise<Response
 
   const eagoh = eagohRow as {
     id: string; user_id: string; name: string; domain: string | null;
-    status: string | null; is_default_shell: boolean; is_user_forged: boolean;
+    is_default_shell: boolean;
   };
 
   if (eagoh.user_id !== userId) {
     return jsonResponse({ ok: false, error: "You can only use EAGOHs you own." }, 403);
   }
 
-  // ── 2. EAGOH eligibility: must be forged + active ──
-  if (eagoh.is_default_shell || !eagoh.is_user_forged) {
+  // ── 2. EAGOH eligibility: exclude the free default shell ──
+  if (eagoh.is_default_shell) {
     return jsonResponse({ ok: false, error: "Arena Mode requires a forged EAGOH. Create one in the Forge first." }, 400);
-  }
-  if (eagoh.status && eagoh.status !== "active") {
-    return jsonResponse({ ok: false, error: "This EAGOH is not active and cannot be used in Arena Mode." }, 400);
   }
 
   // ── 3. Domain read from the verified EAGOH record (never from client) ──
+  // (ownership + domain checks retained; status/is_user_forged intentionally removed)
   if (!eagoh.domain) {
     return jsonResponse({ ok: false, error: "This EAGOH has no domain specialization and cannot enter Arena Mode." }, 400);
   }
@@ -5642,7 +5640,7 @@ async function handleArenaAnalyze(request: Request, env: Env): Promise<Response>
   // ── 1. Verify EAGOH ownership + active status (service_role) ──
   const { data: eagohRow, error: eagohErr } = await serviceClient
     .from("eagohs")
-    .select("id, user_id, name, domain, status, is_default_shell, is_user_forged")
+    .select("id, user_id, name, domain, is_default_shell")
     .eq("id", eagohId)
     .maybeSingle();
 
@@ -5651,17 +5649,14 @@ async function handleArenaAnalyze(request: Request, env: Env): Promise<Response>
   }
   const eagoh = eagohRow as {
     id: string; user_id: string; name: string; domain: string | null;
-    status: string | null; is_default_shell: boolean; is_user_forged: boolean;
+    is_default_shell: boolean;
   };
 
   if (eagoh.user_id !== userId) {
     return jsonResponse({ ok: false, error: "You can only use EAGOHs you own." }, 403);
   }
-  if (eagoh.is_default_shell || !eagoh.is_user_forged) {
+  if (eagoh.is_default_shell) {
     return jsonResponse({ ok: false, error: "Arena Mode requires a forged EAGOH." }, 400);
-  }
-  if (eagoh.status && eagoh.status !== "active") {
-    return jsonResponse({ ok: false, error: "This EAGOH is not active." }, 400);
   }
   if (!eagoh.domain) {
     return jsonResponse({ ok: false, error: "This EAGOH has no domain specialization." }, 400);
@@ -6275,3 +6270,4 @@ export default {
     return jsonResponse({ ok: false, error: "Not found" }, 404);
   },
 };
+

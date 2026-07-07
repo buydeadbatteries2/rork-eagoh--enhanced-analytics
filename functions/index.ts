@@ -1,5 +1,6 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker (Phase 6C — notifications & audit history)
+ * EAGOH Analyst Chat — Cloudflare Worker (Phase 9A — security audit + analytics route fix)
+ * Phase 6C — notifications & audit history)
  * Phase 6B: entry management, moderation, is_admin access.
  * Phase 6C: intelligence notifications, moderation audit trail, notification center.
  * Phase 6C-deploy: worker bundling fix.
@@ -2684,6 +2685,15 @@ async function handleSubmitDispute(request: Request, env: Env): Promise<Response
   if (!payload.explanation?.trim() || payload.explanation.trim().length < 10) {
     return jsonResponse({ ok: false, error: "Explanation must be at least 10 characters." }, 400);
   }
+  if (payload.explanation.trim().length > 1000) {
+    return jsonResponse({ ok: false, error: "Explanation must be 1000 characters or fewer." }, 400);
+  }
+  // Validate supporting URL format if provided
+  if (payload.supportingUrl && payload.supportingUrl.trim()) {
+    if (!isValidHttpUrl(payload.supportingUrl.trim())) {
+      return jsonResponse({ ok: false, error: "Supporting URL must be a valid HTTP or HTTPS URL." }, 400);
+    }
+  }
 
   // Authenticate
   const authHeader = request.headers.get("Authorization") ?? "";
@@ -3085,8 +3095,10 @@ async function handleUpdateOIEntry(request: Request, env: Env): Promise<Response
   };
 
   if (payload.content !== undefined) {
-    updateFields.content = newContent;
-    updateFields.character_count_no_spaces = newContent.replace(/\s/g, "").length;
+    // Input validation: reject excessively long content (match client 5000 char limit)
+    const trimmedContent = newContent.slice(0, 5000);
+    updateFields.content = trimmedContent;
+    updateFields.character_count_no_spaces = trimmedContent.replace(/\s/g, "").length;
   }
   if (payload.confidenceLevel !== undefined) {
     updateFields.confidence_level = payload.confidenceLevel;
@@ -4882,6 +4894,11 @@ export default {
     // Phase 6C: Moderation audit history (admin only)
     if (url.pathname === "/moderation/audit" && request.method === "GET") {
       return handleGetModerationAudit(request, env);
+    }
+
+    // Phase 8A: Intelligence analytics (owner-scoped, secure)
+    if (url.pathname === "/intelligence/analytics" && request.method === "GET") {
+      return handleGetIntelligenceAnalytics(request, env);
     }
 
     return jsonResponse({ ok: false, error: "Not found" }, 404);

@@ -13,7 +13,7 @@ import { useWindowDimensions } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useHaptics } from "@/hooks/useHaptics";
 import { useRouter } from "expo-router";
-import { Award, BrainCircuit, Coins, Cpu, Crown, Eye, Flame, FlaskConical, Layers3, LogOut, Swords, Sparkles, Shield, Ticket, Trophy, TrendingUp, Zap } from "lucide-react-native";
+import { Award, Bell, BrainCircuit, Coins, Cpu, Crown, Eye, Flame, FlaskConical, Layers3, LogOut, Swords, Sparkles, Shield, Ticket, Trophy, TrendingUp, Zap } from "lucide-react-native";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import PublicProfileModal from "@/components/PublicProfileModal";
@@ -493,6 +493,16 @@ export default function ProfileScreen(): JSX.Element {
             <View style={styles.featureInfo}>
               <Text style={styles.featureTitle}>View My Public Profile</Text>
               <Text style={styles.featureDesc}>Preview how other EAGOH users see your profile.</Text>
+            </View>
+            <Cpu color={palette.muted} size={16} />
+          </Pressable>
+          <Pressable onPress={() => { h.selection(); router.push("/notifications" as never); }} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
+            <View style={[styles.featureIconWrap, { borderColor: "rgba(54,245,255,0.35)" }]}>
+              <Bell color={palette.cyan} size={20} />
+            </View>
+            <View style={styles.featureInfo}>
+              <Text style={styles.featureTitle}>Intelligence Notifications</Text>
+              <Text style={styles.featureDesc}>View updates about your Open Intelligence entries.</Text>
             </View>
             <Cpu color={palette.muted} size={16} />
           </Pressable>

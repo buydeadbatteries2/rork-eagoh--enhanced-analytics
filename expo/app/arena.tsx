@@ -31,7 +31,7 @@ import {
   listArenaHistory,
   normalizeSubject,
   runArenaAnalysis,
-  validateArenaMatchup,
+  validateArenaMatchupLocal,
   type ArenaAnalysisResult,
   type ArenaComparisonTypeId,
   type ArenaComparisonFocus,
@@ -441,33 +441,28 @@ export default function ArenaSetupScreen(): JSX.Element {
     return true;
   }, [selectedEagoh, domainRule, comparisonType, subjectA, subjectB]);
 
-  const handleEnterArena = useCallback(async () => {
-    if (!selectedEagoh || !comparisonType) return;
+  const handleEnterArena = useCallback(() => {
+    if (!selectedEagoh || !comparisonType || !domainRule) return;
     h.selection();
     setValidating(true);
     setResult(null);
     setAnalyzeError(null);
     try {
-      const res = await validateArenaMatchup({
-        eagohId: selectedEagoh.id,
+      const res = validateArenaMatchupLocal(
+        selectedEagoh.domain ?? "",
         comparisonType,
-        subjectA: normalizeSubject(subjectA),
-        subjectB: normalizeSubject(subjectB),
-      });
-      if (!res.ok) {
-        setAnalyzeError(res.explanation ?? res.error ?? "Could not connect to Arena validation. Please try again.");
-        setResult(null);
-      } else {
-        setResult(res);
-        if (res.valid) h.success();
-      }
+        normalizeSubject(subjectA),
+        normalizeSubject(subjectB),
+      );
+      setResult(res);
+      if (res.valid) h.success();
     } catch {
-      setAnalyzeError("Could not connect to Arena validation. Please try again.");
+      setAnalyzeError("Validation failed. Please check your inputs and try again.");
       setResult(null);
     } finally {
       setValidating(false);
     }
-  }, [selectedEagoh, comparisonType, subjectA, subjectB, h]);
+  }, [selectedEagoh, comparisonType, domainRule, subjectA, subjectB, h]);
 
   const handleRunAnalysis = useCallback(async () => {
     if (!selectedEagoh || !comparisonType) return;
@@ -835,7 +830,7 @@ export default function ArenaSetupScreen(): JSX.Element {
                     { color: result.valid ? palette.success : palette.ember },
                   ]}
                 >
-                  {result.valid ? "Matchup Valid" : "Matchup Not Valid"}
+                  {result.valid ? "Matchup Confirmed" : "Matchup Not Valid"}
                 </Text>
               </View>
               <Text style={arStyles.resultExplanation}>{result.explanation}</Text>
@@ -846,7 +841,7 @@ export default function ArenaSetupScreen(): JSX.Element {
                 <View style={arStyles.confirmedBanner}>
                   <Trophy color={palette.violet} size={14} />
                   <Text style={arStyles.confirmedText}>
-                    Matchup confirmed. Press “Run Arena Analysis” to generate the full comparison.
+                    Matchup confirmed. You can now run Arena.
                   </Text>
                 </View>
               ) : null}

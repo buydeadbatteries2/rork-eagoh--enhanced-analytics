@@ -198,7 +198,7 @@ export type ArenaHistoryEntry = {
   created_at: string;
 };
 
-/** Result returned by the secure validation endpoint. */
+/** Result returned by local validation or the secure validation endpoint. */
 export type ArenaValidationResult = {
   ok: boolean;
   valid: boolean;
@@ -212,6 +212,184 @@ export type ArenaValidationResult = {
   explanation: string;
   error?: string;
 };
+
+// ── Local validation helpers ────────────────────────────────────────────────
+
+/** Known sports used by the local sport-detection heuristic. Mirrors the worker. */
+const ARENA_KNOWN_SPORTS: string[] = [
+  "basketball", "football", "baseball", "soccer", "hockey", "tennis",
+  "golf", "boxing", "mma", "ufc", "cricket", "rugby", "volleyball",
+  "track", "swimming", "gymnastics", "f1", "racing", "nascar",
+];
+
+/**
+ * Detect a sport from a subject's context or name using the known-sports bank.
+ * Returns the lowercased sport name, or null when none is detected.
+ * Mirrors the worker-side arenaDetectSport so local validation matches server-side.
+ */
+function arenaDetectSportLocal(context: string, name: string): string | null {
+  const hay = `${context} ${name}`.toLowerCase();
+  for (const sport of ARENA_KNOWN_SPORTS) {
+    if (hay.includes(sport)) return sport;
+  }
+  if (hay.includes("hoops") || hay.includes("nba") || hay.includes("ncaa basketball")) return "basketball";
+  if (hay.includes("nfl") || hay.includes("gridiron")) return "football";
+  if (hay.includes("mlb")) return "baseball";
+  if (hay.includes("soccer") || hay.includes("premier league") || hay.includes("la liga") || hay.includes("bundesliga")) return "soccer";
+  if (hay.includes("nhl") || hay.includes("hockey")) return "hockey";
+  return null;
+}
+
+/** Trim + collapse whitespace (client-side mirror of worker arenaClean). */
+function arenaCleanLocal(s: string | undefined): string {
+  return (s ?? "").trim().replace(/\s+/g, " ");
+}
+
+/** Normalize domain id — mirrors the worker normalizer for the subset we need. */
+function arenaNormalizeDomainIdLocal(raw: string): string {
+  const lower = raw.trim().toLowerCase();
+  const map: Record<string, string> = {
+    sport: "sports",
+    film_tv: "film-tv",
+    "film & television": "film-tv",
+    "film and television": "film-tv",
+    "film-television": "film-tv",
+    health_fitness: "health-fitness",
+    "health & fitness": "health-fitness",
+    "health and fitness": "health-fitness",
+  };
+  if (map[lower]) return map[lower];
+  const collapsed = lower.replace(/[^a-z0-9]/g, "");
+  for (const key of Object.keys(ARENA_DOMAIN_RULES)) {
+    if (key.replace(/[^a-z0-9]/g, "") === collapsed) return key;
+  }
+  return lower;
+}
+
+/**
+ * Validate an Arena matchup entirely on-device — no network call, no auth.
+ *
+ * Checks:
+ *   - EAGOH exists with a domain
+ *   - domain has Arena rules
+ *   - comparison type is allowed for the domain
+ *   - both subjects have names
+ *   - same-name guard (except season-vs-season)
+ *   - sports: both subjects share the same sport when detectable
+ *   - player-vs-team mismatches are blocked by comparison-type selection
+ *
+ * The Run Arena worker still re-validates server-side before charging.
+ */
+export function validateArenaMatchupLocal(
+  domainId: string,
+  comparisonType: ArenaComparisonTypeId,
+  subjectA: ArenaSubject,
+  subjectB: ArenaSubject,
+): ArenaValidationResult {
+  const normalizedDomain = arenaNormalizeDomainIdLocal(domainId);
+  const rule = ARENA_DOMAIN_RULES[normalizedDomain] ?? null;
+  if (!rule) {
+    return {
+      ok: true,
+      valid: false,
+      explanation: "Arena Mode is not available for this EAGOH domain yet.",
+    };
+  }
+
+  const cmpType = rule.comparisonTypes.find((c) => c.id === comparisonType);
+  if (!cmpType) {
+    return {
+      ok: true,
+      valid: false,
+      explanation: "This comparison type is not available for the selected EAGOH domain.",
+    };
+  }
+
+  const normA: ArenaSubject = {
+    name: arenaCleanLocal(subjectA.name),
+    context: arenaCleanLocal(subjectA.context) || undefined,
+    year: arenaCleanLocal(subjectA.year) || undefined,
+    notes: arenaCleanLocal(subjectA.notes) || undefined,
+  };
+  const normB: ArenaSubject = {
+    name: arenaCleanLocal(subjectB.name),
+    context: arenaCleanLocal(subjectB.context) || undefined,
+    year: arenaCleanLocal(subjectB.year) || undefined,
+    notes: arenaCleanLocal(subjectB.notes) || undefined,
+  };
+
+  if (!normA.name || !normB.name) {
+    return {
+      ok: true,
+      valid: false,
+      normalizedA: normA,
+      normalizedB: normB,
+      explanation: "Both subjects need a primary name.",
+    };
+  }
+
+  // Same-name guard (except season-vs-season)
+  if (
+    normA.name.toLowerCase() === normB.name.toLowerCase() &&
+    comparisonType !== "season-vs-season"
+  ) {
+    return {
+      ok: true,
+      valid: false,
+      normalizedA: normA,
+      normalizedB: normB,
+      explanation:
+        "Comparing a subject against itself is not a valid Arena matchup. Enter two different subjects.",
+    };
+  }
+
+  let detectedCategory: string | undefined;
+  let valid = true;
+  let explanation = "Matchup confirmed. You can now run Arena.";
+
+  if (normalizedDomain === "sports") {
+    const sportA = arenaDetectSportLocal(normA.context ?? "", normA.name);
+    const sportB = arenaDetectSportLocal(normB.context ?? "", normB.name);
+    detectedCategory = sportA ?? sportB ?? undefined;
+
+    if (
+      comparisonType === "player-vs-player" ||
+      comparisonType === "team-vs-team" ||
+      comparisonType === "coach-vs-coach"
+    ) {
+      if (sportA && sportB && sportA !== sportB) {
+        valid = false;
+        explanation =
+          "These subjects appear to be from different sports. Both subjects must be from the same sport for this Arena type.";
+      } else if (!sportA || !sportB) {
+        // Could not confirm — fail open but flag uncertainty.
+        explanation =
+          "Matchup confirmed. You can now run Arena. (Add the sport in the context field if the matchup is rejected during analysis.)";
+      }
+    } else if (comparisonType === "season-vs-season") {
+      const sameName = normA.name.toLowerCase() === normB.name.toLowerCase();
+      const sameContext = sportA && sportB && sportA === sportB;
+      if (!sameName && !sameContext) {
+        valid = false;
+        explanation =
+          "Season vs Season comparisons must refer to the same player, team, league, or sport context. Enter the same subject name or matching sport context for both.";
+      }
+    }
+  } else {
+    // Non-sports domains: same-type comparison is enforced by the comparisonType
+    // selection itself.
+    detectedCategory = normA.context ?? undefined;
+  }
+
+  return {
+    ok: true,
+    valid,
+    normalizedA: normA,
+    normalizedB: normB,
+    detectedCategory,
+    explanation,
+  };
+}
 
 // ── Domain rules ─────────────────────────────────────────────────────────────
 

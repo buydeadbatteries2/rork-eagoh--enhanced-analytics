@@ -5310,8 +5310,11 @@ async function handleArenaValidate(request: Request, env: Env): Promise<Response
 
 // ── Phase 11B: Arena Analysis Engine ─────────────────────────────────────────
 
-/** Flat Arena Neuron cost. Server-authoritative — the client never supplies a cost. */
-const ARENA_NEURON_COST = 50; // atomic deduction via deduct_arena_neurons RPC (server-side cost)
+/** Flat Arena Neuron cost. Server-authoritative — the client never supplies a cost.
+ *  Deduction uses the 3-arg RPC deduct_arena_neurons(p_user_id, p_request_id, p_note);
+ *  refund uses refund_arena_neurons(p_user_id, p_request_id, p_note). Arena cost is hardcoded
+ *  to 50 server-side inside the RPCs — no amount is accepted from the client. */
+const ARENA_NEURON_COST = 50;
 
 /** Human-readable domain labels for Arena prompts (worker-side mirror of client domains). */
 const ARENA_DOMAIN_LABELS: Record<string, string> = {

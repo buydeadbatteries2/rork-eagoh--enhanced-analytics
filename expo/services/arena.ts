@@ -561,10 +561,54 @@ const ARENA_FUNCTIONS_BASE_URL =
   process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL ||
   "https://eagoh-mobile-app-backend.rork.app";
 
-/** Get the current Supabase access token for worker auth. */
+/** User-facing auth error when the session is invalid or expired. */
+export const ARENA_AUTH_EXPIRED_MESSAGE = "Your session expired. Please sign in again.";
+
+/** User-facing auth error when no session exists at all. */
+export const ARENA_AUTH_REQUIRED_MESSAGE = "Please sign in again.";
+
+/** True when a worker response indicates an auth failure (401 or invalid auth). */
+export function isArenaAuthError(status: number, error?: string): boolean {
+  if (status === 401) return true;
+  if (error && /invalid auth|authentication required|unauthorized/i.test(error)) return true;
+  return false;
+}
+
+/**
+ * Get a fresh Supabase access token for worker auth.
+ * If the session is missing or may be expired, attempts to refresh it
+ * before returning. Returns null if refresh fails — callers should
+ * show a "Please sign in again" message in that case.
+ */
 async function getArenaWorkerAuth(): Promise<string | null> {
-  const { data: sessionData } = await supabase.auth.getSession();
-  return sessionData?.session?.access_token ?? null;
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const session = sessionData?.session;
+    if (session?.access_token) {
+      // Check if the token is expired or about to expire (within 60s).
+      const expiresAt = session.expires_at ?? 0;
+      const now = Math.floor(Date.now() / 1000);
+      if (expiresAt - now > 60) {
+        return session.access_token;
+      }
+    }
+    // Token missing or near expiry — try to refresh.
+    const { data: refreshed, error } = await supabase.auth.refreshSession();
+    if (error || !refreshed.session?.access_token) {
+      console.warn(
+        "[arena] session refresh failed",
+        error?.message ?? "no session",
+      );
+      return null;
+    }
+    return refreshed.session.access_token;
+  } catch (err) {
+    console.warn(
+      "[arena] getArenaWorkerAuth exception",
+      err instanceof Error ? err.message : "unknown",
+    );
+    return null;
+  }
 }
 
 /**
@@ -606,7 +650,7 @@ export async function runArenaAnalysis(
   }
   const token = await getArenaWorkerAuth();
   if (!token) {
-    return { ok: false, error: "Not authenticated." };
+    return { ok: false, error: ARENA_AUTH_REQUIRED_MESSAGE };
   }
   try {
     const res = await fetch(`${ARENA_FUNCTIONS_BASE_URL}/arena/analyze`, {
@@ -626,6 +670,9 @@ export async function runArenaAnalysis(
         ok: false,
         error: "Could not connect to Arena service. Please try again.",
       };
+    }
+    if (isArenaAuthError(res.status, data.error)) {
+      return { ok: false, error: ARENA_AUTH_EXPIRED_MESSAGE };
     }
     if (data.ok === false || res.status >= 400) {
       return {
@@ -656,7 +703,7 @@ export async function listArenaHistory(
   }
   const token = await getArenaWorkerAuth();
   if (!token) {
-    return { ok: false, error: "Not authenticated." };
+    return { ok: false, error: ARENA_AUTH_REQUIRED_MESSAGE };
   }
   try {
     const url = `${ARENA_FUNCTIONS_BASE_URL}/arena/history?page=${page}&pageSize=${pageSize}`;
@@ -670,6 +717,9 @@ export async function listArenaHistory(
     );
     if (data === null) {
       return { ok: false, error: "Could not load Arena history. Please try again." };
+    }
+    if (isArenaAuthError(res.status, data.error)) {
+      return { ok: false, error: ARENA_AUTH_EXPIRED_MESSAGE };
     }
     if (data.ok === false || res.status >= 400) {
       return { ok: false, error: data.error ?? "Could not load Arena history." };
@@ -696,7 +746,7 @@ export async function validateArenaMatchup(
   }
   const token = await getArenaWorkerAuth();
   if (!token) {
-    return { ok: false, valid: false, explanation: "Not authenticated." };
+    return { ok: false, valid: false, explanation: ARENA_AUTH_REQUIRED_MESSAGE };
   }
   try {
     const res = await fetch(`${ARENA_FUNCTIONS_BASE_URL}/arena/validate`, {
@@ -716,6 +766,13 @@ export async function validateArenaMatchup(
         ok: false,
         valid: false,
         explanation: "Could not connect to Arena validation. Please try again.",
+      };
+    }
+    if (isArenaAuthError(res.status, data.error)) {
+      return {
+        ok: false,
+        valid: false,
+        explanation: ARENA_AUTH_EXPIRED_MESSAGE,
       };
     }
     if (data.ok === false || res.status >= 400) {

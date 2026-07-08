@@ -39,6 +39,10 @@ import {
   type ArenaSubject,
   type ArenaValidationResult,
 } from "@/services/arena";
+import {
+  getArenaSuggestions,
+  type ArenaSubjectSuggestion,
+} from "@/services/arenaSuggestions";
 import type { EagohRecord } from "@/services/eagohs";
 import {
   ArrowLeft,
@@ -96,6 +100,8 @@ const SubjectCard = memo(function SubjectCard({
   contextLabel,
   contextPlaceholder,
   accent,
+  domain,
+  comparisonType,
 }: {
   label: string;
   subject: ArenaSubject;
@@ -103,7 +109,38 @@ const SubjectCard = memo(function SubjectCard({
   contextLabel: string;
   contextPlaceholder: string;
   accent: string;
+  domain: string;
+  comparisonType: string;
 }): JSX.Element {
+  const [nameFocused, setNameFocused] = useState<boolean>(false);
+
+  const suggestions = useMemo<ArenaSubjectSuggestion[]>(() => {
+    if (!nameFocused || subject.name.trim().length < 1) return [];
+    return getArenaSuggestions(
+      subject.name,
+      domain,
+      comparisonType,
+      subject.context,
+      6,
+    );
+  }, [nameFocused, subject.name, subject.context, domain, comparisonType]);
+
+  const showSuggestions = nameFocused && suggestions.length > 0;
+
+  const handleSelectSuggestion = useCallback(
+    (s: ArenaSubjectSuggestion) => {
+      const updated: ArenaSubject = {
+        name: s.name,
+        context: s.context ?? subject.context,
+        year: subject.year,
+        notes: s.notes ?? s.league ?? s.category ?? subject.notes,
+      };
+      onChange(updated);
+      setNameFocused(false);
+    },
+    [subject.context, subject.year, subject.notes, onChange],
+  );
+
   return (
     <View style={[arStyles.subjectCard, { borderColor: `${accent}33` }]}>
       <LinearGradient
@@ -122,10 +159,36 @@ const SubjectCard = memo(function SubjectCard({
         placeholderTextColor={palette.placeholderText}
         value={subject.name}
         onChangeText={(v) => onChange({ ...subject, name: v })}
+        onFocus={() => setNameFocused(true)}
+        onBlur={() => setNameFocused(false)}
         maxLength={120}
         autoCapitalize="words"
         autoCorrect={false}
       />
+      {/* Autocomplete suggestions */}
+      {showSuggestions ? (
+        <View style={arStyles.suggestionWrap}>
+          {suggestions.map((s, i) => (
+            <Pressable
+              key={`${s.name}-${i}`}
+              onPress={() => handleSelectSuggestion(s)}
+              style={({ pressed }) => [
+                arStyles.suggestionItem,
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Text style={arStyles.suggestionName} numberOfLines={1}>
+                {s.name}
+              </Text>
+              {s.context ? (
+                <Text style={arStyles.suggestionMeta} numberOfLines={1}>
+                  {s.context}{s.league ? " \u00b7 " + s.league : ""}
+                </Text>
+              ) : null}
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
       <TextInput
         style={arStyles.subjectContextInput}
         placeholder={contextPlaceholder ? `${contextLabel}: ${contextPlaceholder}` : contextLabel}
@@ -640,6 +703,8 @@ export default function ArenaSetupScreen(): JSX.Element {
                 contextLabel={domainRule.labels.context}
                 contextPlaceholder={domainRule.labels.contextPlaceholder}
                 accent={palette.cyan}
+                domain={selectedEagoh?.domain ?? ""}
+                comparisonType={comparisonType ?? ""}
               />
               <View style={arStyles.vsRow}>
                 <View style={arStyles.vsLine} />
@@ -655,6 +720,8 @@ export default function ArenaSetupScreen(): JSX.Element {
                 contextLabel={domainRule.labels.context}
                 contextPlaceholder={domainRule.labels.contextPlaceholder}
                 accent={palette.gold}
+                domain={selectedEagoh?.domain ?? ""}
+                comparisonType={comparisonType ?? ""}
               />
             </View>
           ) : null}
@@ -1372,4 +1439,32 @@ const arStyles = StyleSheet.create({
   historyTitle: { color: palette.text, fontSize: 13, fontWeight: "900" },
   historyMeta: { color: palette.muted, fontSize: 10, fontWeight: "700", marginTop: 1 },
   historyEmpty: { color: palette.muted, fontSize: 12, fontWeight: "700", marginTop: 10, fontStyle: "italic" },
+
+  // Autocomplete suggestions
+  suggestionWrap: {
+    marginTop: 4,
+    marginBottom: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "rgba(108,230,255,0.18)",
+    backgroundColor: "rgba(8,18,30,0.95)",
+    overflow: "hidden",
+  },
+  suggestionItem: {
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(108,230,255,0.08)",
+  },
+  suggestionName: {
+    color: palette.text,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  suggestionMeta: {
+    color: palette.muted,
+    fontSize: 10,
+    fontWeight: "700",
+    marginTop: 1,
+  },
 });

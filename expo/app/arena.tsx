@@ -391,8 +391,16 @@ export default function ArenaSetupScreen(): JSX.Element {
         subjectA: normalizeSubject(subjectA),
         subjectB: normalizeSubject(subjectB),
       });
-      setResult(res);
-      if (res.valid) h.success();
+      if (!res.ok) {
+        setAnalyzeError(res.explanation ?? res.error ?? "Could not connect to Arena validation. Please try again.");
+        setResult(null);
+      } else {
+        setResult(res);
+        if (res.valid) h.success();
+      }
+    } catch {
+      setAnalyzeError("Could not connect to Arena validation. Please try again.");
+      setResult(null);
     } finally {
       setValidating(false);
     }

@@ -555,6 +555,41 @@ export const ARENA_EMPTY_NO_EAGOH = "Create an EAGOH in the Forge before enterin
 /** Flat Arena analysis cost in Neurons. */
 export const ARENA_NEURON_COST = 50;
 
+// ── Worker base URL + auth ─────────────────────────────────────────────────
+
+const ARENA_FUNCTIONS_BASE_URL =
+  process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL ||
+  "https://eagoh-mobile-app-backend.rork.app";
+
+/** Get the current Supabase access token for worker auth. */
+async function getArenaWorkerAuth(): Promise<string | null> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  return sessionData?.session?.access_token ?? null;
+}
+
+/**
+ * Safely parse a JSON response from the Arena worker. Returns null when the
+ * response is not valid JSON (e.g. Cloudflare 503 text/plain "route unavailable"),
+ * so callers can show a clean user message instead of crashing.
+ */
+async function safeArenaJson<T>(
+  res: Response,
+  fallbackError: string,
+): Promise<T | null> {
+  try {
+    const text = await res.text();
+    if (!text) return null;
+    return JSON.parse(text) as T;
+  } catch (err) {
+    console.warn(
+      "[arena] non-JSON worker response",
+      res.status,
+      err instanceof Error ? err.message : "parse failed",
+    );
+    return null;
+  }
+}
+
 // ── Worker analysis + history calls ─────────────────────────────────────────
 
 /**
@@ -582,7 +617,16 @@ export async function runArenaAnalysis(
       },
       body: JSON.stringify(request),
     });
-    const data = (await res.json()) as ArenaAnalysisResult & { ok?: boolean };
+    const data = await safeArenaJson<ArenaAnalysisResult & { ok?: boolean }>(
+      res,
+      "Arena analysis failed.",
+    );
+    if (data === null) {
+      return {
+        ok: false,
+        error: "Could not connect to Arena service. Please try again.",
+      };
+    }
     if (data.ok === false || res.status >= 400) {
       return {
         ok: false,
@@ -590,10 +634,11 @@ export async function runArenaAnalysis(
       };
     }
     return data;
-  } catch {
+  } catch (err) {
+    console.warn("[arena] analyze fetch failed", err instanceof Error ? err.message : "unknown");
     return {
       ok: false,
-      error: "Network error. Try again.",
+      error: "Could not connect to Arena service. Please try again.",
     };
   }
 }
@@ -619,25 +664,24 @@ export async function listArenaHistory(
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
     });
-    const data = (await res.json()) as { ok: boolean; entries?: ArenaHistoryEntry[]; error?: string };
+    const data = await safeArenaJson<{ ok: boolean; entries?: ArenaHistoryEntry[]; error?: string }>(
+      res,
+      "Could not load Arena history.",
+    );
+    if (data === null) {
+      return { ok: false, error: "Could not load Arena history. Please try again." };
+    }
     if (data.ok === false || res.status >= 400) {
       return { ok: false, error: data.error ?? "Could not load Arena history." };
     }
     return { ok: true, entries: data.entries ?? [] };
-  } catch {
-    return { ok: false, error: "Network error. Try again." };
+  } catch (err) {
+    console.warn("[arena] history fetch failed", err instanceof Error ? err.message : "unknown");
+    return { ok: false, error: "Could not load Arena history. Please try again." };
   }
 }
 
 // ── Worker validation call ─────────────────────────────────────────────────
-
-const ARENA_FUNCTIONS_BASE_URL = process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL;
-
-/** Get the current Supabase access token for worker auth. */
-async function getArenaWorkerAuth(): Promise<string | null> {
-  const { data: sessionData } = await supabase.auth.getSession();
-  return sessionData?.session?.access_token ?? null;
-}
 
 /**
  * Validate an Arena matchup through the secure worker endpoint
@@ -663,8 +707,18 @@ export async function validateArenaMatchup(
       },
       body: JSON.stringify(request),
     });
-    const data = (await res.json()) as ArenaValidationResult & { ok?: boolean };
-    if (data.ok === false) {
+    const data = await safeArenaJson<ArenaValidationResult & { ok?: boolean }>(
+      res,
+      "Arena validation failed.",
+    );
+    if (data === null) {
+      return {
+        ok: false,
+        valid: false,
+        explanation: "Could not connect to Arena validation. Please try again.",
+      };
+    }
+    if (data.ok === false || res.status >= 400) {
       return {
         ok: false,
         valid: false,
@@ -679,11 +733,12 @@ export async function validateArenaMatchup(
       detectedCategory: data.detectedCategory,
       explanation: data.explanation,
     };
-  } catch {
+  } catch (err) {
+    console.warn("[arena] validate fetch failed", err instanceof Error ? err.message : "unknown");
     return {
       ok: false,
       valid: false,
-      explanation: "Network error. Try again.",
+      explanation: "Could not connect to Arena validation. Please try again.",
     };
   }
 }

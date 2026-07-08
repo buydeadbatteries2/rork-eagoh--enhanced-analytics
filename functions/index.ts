@@ -1,5 +1,5 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker (Phase 11B — Arena analysis engine)
+ * EAGOH Analyst Chat — Cloudflare Worker (Phase 11B — Arena analysis engine + network fix)
  * Phase 6C — notifications & audit history)
  * Phase 6B: entry management, moderation, is_admin access.
  * Phase 6C: intelligence notifications, moderation audit trail, notification center.
@@ -5160,6 +5160,11 @@ async function handleArenaValidate(request: Request, env: Env): Promise<Response
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    console.warn("[arena:validate] missing Supabase config");
+    return jsonResponse({ ok: false, error: "Arena service is not configured." }, 503);
+  }
+
   const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
@@ -5541,6 +5546,10 @@ async function handleArenaAnalyze(request: Request, env: Env): Promise<Response>
   }
 
   if (!env.OPENAI_API_KEY) {
+    return jsonResponse({ ok: false, error: "Arena service is not configured." }, 503);
+  }
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    console.warn("[arena:analyze] missing Supabase config");
     return jsonResponse({ ok: false, error: "Arena service is not configured." }, 503);
   }
 
@@ -6124,6 +6133,11 @@ async function handleArenaHistory(request: Request, env: Env): Promise<Response>
   const authHeader = request.headers.get("Authorization") ?? "";
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    console.warn("[arena:history] missing Supabase config");
+    return jsonResponse({ ok: false, error: "Arena service is not configured." }, 503);
+  }
 
   const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },

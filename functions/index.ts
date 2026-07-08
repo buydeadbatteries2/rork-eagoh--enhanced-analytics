@@ -54,6 +54,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 // ── Environment ───────────────────────────────────────────────────────────────
+// Worker entry point — EAGOH Analyst Chat (Cloudflare)
 
 type Env = {
   OPENAI_API_KEY?: string;
@@ -271,6 +272,27 @@ function getServiceRoleClient(env: Env): SupabaseClient | null {
   return createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_SERVICE_ROLE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
+}
+
+/**
+ * Create a Supabase client authenticated with the user's JWT.
+ *
+ * The JWT is injected into the global `Authorization` header so that every
+ * query/mutation the worker makes on behalf of the user is evaluated against
+ * Row Level Security policies as that user. This is the pattern used by all
+ * secure routes (account deletion, Arena history) and is now used by the main
+ * analyst chat route so that EAGOH ownership checks respect RLS for every
+ * EAGOH owned by the authenticated user — not just the primary one.
+ */
+function createAuthedClient(env: Env, jwt: string): SupabaseClient {
+  return createClient(
+    normalizeSupabaseUrl(env.SUPABASE_URL ?? ""),
+    env.SUPABASE_ANON_KEY!,
+    {
+      auth: { autoRefreshToken: false, persistSession: false },
+      global: { headers: { Authorization: `Bearer ${jwt}` } },
+    },
+  );
 }
 
 // ── CORS ─────────────────────────────────────────────────────────────────────
@@ -4352,9 +4374,11 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
   }
 
   // ── Create Supabase client & authenticate ────────────────────────────────
-  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
+  // Use createAuthedClient so the JWT is injected into global headers — every
+  // query/mutation is evaluated against RLS as the authenticated user. This
+  // ensures EAGOH ownership checks work for every EAGOH owned by the user, not
+  // just the primary one.
+  const supabase = createAuthedClient(env, jwt);
 
   const userId = await verifyAuth(supabase, jwt);
   if (!userId) {
@@ -5596,9 +5620,7 @@ async function handleArenaAnalyze(request: Request, env: Env): Promise<Response>
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY!, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
+  const supabase = createAuthedClient(env, jwt);
   const userId = await verifyAuth(supabase, jwt);
   if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
 

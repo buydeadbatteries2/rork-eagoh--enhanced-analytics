@@ -70,10 +70,17 @@ export async function createThread(params: {
   return data as AnalystThread;
 }
 
-/** List recent threads for a user, newest first. */
+/**
+ * List recent threads for a user, newest first.
+ *
+ * Supports offset-based pagination so callers can load incrementally
+ * (e.g. the Analyst Archive loads 10 at a time via Load More).
+ * The `offset` parameter skips the first `offset` rows before taking `limit`.
+ */
 export async function listThreads(
   userId: string,
   limit: number = 20,
+  offset: number = 0,
 ): Promise<ThreadWithMeta[]> {
   const { data, error } = await supabase
     .from("analyst_threads")
@@ -83,7 +90,7 @@ export async function listThreads(
     `)
     .eq("user_id", userId)
     .order("updated_at", { ascending: false })
-    .limit(limit);
+    .range(offset, offset + limit - 1);
 
   if (error) throw error;
 

@@ -62,7 +62,7 @@ function toneColor(tone: string): string {
   return palette.cyan;
 }
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 
 // ── Main Screen ─────────────────────────────────────────────────────────────
 
@@ -77,9 +77,9 @@ export default function AnalystArchiveScreen(): JSX.Element {
   const [loadingMore, setLoadingMore] = useState<boolean>(false);
   const [hasMore, setHasMore] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const pageRef = React.useRef(0);
+  const offsetRef = React.useRef(0);
 
-  // Initial load
+  // Initial load — fetch first PAGE_SIZE threads
   React.useEffect(() => {
     if (!profile?.id) return;
     let cancelled = false;
@@ -88,14 +88,11 @@ export default function AnalystArchiveScreen(): JSX.Element {
       setLoading(true);
       setError(null);
       try {
-        // Fetch first page — listThreads returns newest first
-        // We fetch a larger batch to simulate pagination since listThreads
-        // doesn't have native offset support; we slice on the client.
-        const data = await listThreads(profile.id, 100);
+        const data = await listThreads(profile.id, PAGE_SIZE, 0);
         if (cancelled) return;
         setThreads(data);
-        setHasMore(data.length >= PAGE_SIZE);
-        pageRef.current = 1;
+        offsetRef.current = data.length;
+        setHasMore(data.length === PAGE_SIZE);
       } catch (err: unknown) {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : "Failed to load threads.";
@@ -153,19 +150,25 @@ export default function AnalystArchiveScreen(): JSX.Element {
     );
   }, [h]);
 
-  // Client-side pagination — slice the loaded threads
-  const visibleThreads = threads.slice(0, pageRef.current * PAGE_SIZE);
-
-  const handleLoadMore = useCallback((): void => {
-    if (loadingMore || !hasMore) return;
+  // Real incremental loading — fetch the next PAGE_SIZE threads from Supabase
+  const handleLoadMore = useCallback(async (): Promise<void> => {
+    if (loadingMore || !hasMore || !profile?.id) return;
     setLoadingMore(true);
-    // Simulate async load — data is already in memory
-    setTimeout(() => {
-      pageRef.current += 1;
-      setHasMore(threads.length > pageRef.current * PAGE_SIZE);
+    try {
+      const data = await listThreads(profile.id, PAGE_SIZE, offsetRef.current);
+      if (data.length > 0) {
+        setThreads((prev) => [...prev, ...data]);
+        offsetRef.current += data.length;
+      }
+      // If we got fewer than PAGE_SIZE, there are no more threads
+      setHasMore(data.length === PAGE_SIZE);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to load more threads.";
+      setError(msg);
+    } finally {
       setLoadingMore(false);
-    }, 300);
-  }, [loadingMore, hasMore, threads.length]);
+    }
+  }, [loadingMore, hasMore, profile?.id]);
 
   // ── Loading state ──────────────────────────────────────────────────────
 
@@ -237,7 +240,7 @@ export default function AnalystArchiveScreen(): JSX.Element {
           <ArrowLeft color={palette.text} size={18} />
         </Pressable>
         <Text style={styles.headerTitle}>Analyst Archive</Text>
-        <Text style={styles.headerCount}>{threads.length} thread{threads.length === 1 ? "" : "s"}</Text>
+        <Text style={styles.headerCount}>{threads.length}{hasMore ? "+" : ""} thread{threads.length === 1 ? "" : "s"}</Text>
       </View>
 
       <ScrollView
@@ -245,7 +248,7 @@ export default function AnalystArchiveScreen(): JSX.Element {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {visibleThreads.map((thread) => {
+        {threads.map((thread) => {
           const meta = SESSION_META[thread.session_type] ?? SESSION_META["standard"];
           const ac = toneColor(meta.tone);
           return (

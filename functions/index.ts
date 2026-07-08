@@ -5071,6 +5071,7 @@ const ARENA_DOMAIN_RULES: Record<string, {
   },
 };
 
+const DEBUG_ARENA = true; // dev-only Arena logging
 const ARENA_SUBJECT_NAME_MAX = 120;
 const ARENA_SUBJECT_CONTEXT_MAX = 80;
 const ARENA_SUBJECT_YEAR_MAX = 30;
@@ -5220,32 +5221,38 @@ async function handleArenaValidate(request: Request, env: Env): Promise<Response
   }
 
   // ── 1. Verify the user owns the EAGOH (never trust client user id) ──
+  // NOTE: is_default_shell intentionally NOT selected — the app already filters
+  // default-shell EAGOHs on the Arena screen, so the worker only needs ownership + domain.
+  if (DEBUG_ARENA) {
+    console.log("[arena/validate] eagohId=" + String(eagohId).slice(0, 8) + " userIdPrefix=" + String(userId).slice(0, 8));
+  }
   const { data: eagohRow, error: eagohErr } = await serviceClient
     .from("eagohs")
-    .select("id, user_id, name, domain, is_default_shell")
+    .select("id, user_id, name, domain")
     .eq("id", eagohId)
     .maybeSingle();
 
-  if (eagohErr || !eagohRow) {
+  if (eagohErr) {
+    if (DEBUG_ARENA) console.log("[arena/validate] EAGOH lookup error: " + eagohErr.message);
+    return jsonResponse({ ok: false, error: "EAGOH not found." }, 404);
+  }
+  if (!eagohRow) {
+    if (DEBUG_ARENA) console.log("[arena/validate] EAGOH lookup returned no row");
     return jsonResponse({ ok: false, error: "EAGOH not found." }, 404);
   }
 
   const eagoh = eagohRow as {
     id: string; user_id: string; name: string; domain: string | null;
-    is_default_shell: boolean;
   };
+
+  if (DEBUG_ARENA) console.log("[arena/validate] EAGOH found: " + eagoh.name);
 
   if (eagoh.user_id !== userId) {
     return jsonResponse({ ok: false, error: "You can only use EAGOHs you own." }, 403);
   }
 
-  // ── 2. EAGOH eligibility: exclude the free default shell ──
-  if (eagoh.is_default_shell) {
-    return jsonResponse({ ok: false, error: "Arena Mode requires a forged EAGOH. Create one in the Forge first." }, 400);
-  }
-
-  // ── 3. Domain read from the verified EAGOH record (never from client) ──
-  // (ownership + domain checks retained; status/is_user_forged intentionally removed)
+  // ── 2. Domain read from the verified EAGOH record (never from client) ──
+  // (ownership + domain checks retained; status/is_user_forged/is_default_shell intentionally removed)
   if (!eagoh.domain) {
     return jsonResponse({ ok: false, error: "This EAGOH has no domain specialization and cannot enter Arena Mode." }, 400);
   }
@@ -5666,26 +5673,34 @@ async function handleArenaAnalyze(request: Request, env: Env): Promise<Response>
     return jsonResponse({ ok: false, error: fieldErr }, 400);
   }
 
-  // ── 1. Verify EAGOH ownership + active status (service_role) ──
+  // ── 1. Verify EAGOH ownership + domain (service_role) ──
+  // NOTE: is_default_shell intentionally NOT selected — the app already filters
+  // default-shell EAGOHs on the Arena screen, so the worker only needs ownership + domain.
+  if (DEBUG_ARENA) {
+    console.log("[arena/analyze] eagohId=" + String(eagohId).slice(0, 8) + " userIdPrefix=" + String(userId).slice(0, 8));
+  }
   const { data: eagohRow, error: eagohErr } = await serviceClient
     .from("eagohs")
-    .select("id, user_id, name, domain, is_default_shell")
+    .select("id, user_id, name, domain")
     .eq("id", eagohId)
     .maybeSingle();
 
-  if (eagohErr || !eagohRow) {
+  if (eagohErr) {
+    if (DEBUG_ARENA) console.log("[arena/analyze] EAGOH lookup error: " + eagohErr.message);
+    return jsonResponse({ ok: false, error: "EAGOH not found." }, 404);
+  }
+  if (!eagohRow) {
+    if (DEBUG_ARENA) console.log("[arena/analyze] EAGOH lookup returned no row");
     return jsonResponse({ ok: false, error: "EAGOH not found." }, 404);
   }
   const eagoh = eagohRow as {
     id: string; user_id: string; name: string; domain: string | null;
-    is_default_shell: boolean;
   };
+
+  if (DEBUG_ARENA) console.log("[arena/analyze] EAGOH found: " + eagoh.name);
 
   if (eagoh.user_id !== userId) {
     return jsonResponse({ ok: false, error: "You can only use EAGOHs you own." }, 403);
-  }
-  if (eagoh.is_default_shell) {
-    return jsonResponse({ ok: false, error: "Arena Mode requires a forged EAGOH." }, 400);
   }
   if (!eagoh.domain) {
     return jsonResponse({ ok: false, error: "This EAGOH has no domain specialization." }, 400);

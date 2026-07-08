@@ -2405,55 +2405,6 @@ export default function SessionsScreen(): JSX.Element {
             })}
           </View>
 
-          {/* Arena Mode — domain-based subject comparison */}
-          <Text style={[styles.sectionLabel, { marginTop: 18 }]}>ARENA MODE</Text>
-          <Pressable
-            onPress={() => { h.selection(); router.push("/arena" as never); }}
-            disabled={userTier === "free"}
-            style={({ pressed }) => [
-              styles.arenaCard,
-              userTier === "free" && styles.cardDisabled,
-              pressed && styles.pressed,
-            ]}
-          >
-            <LinearGradient
-              colors={["rgba(138,92,255,0.12)", "rgba(8,15,26,0.88)", "rgba(6,11,20,0.94)"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            <View style={[styles.cardAccent, { backgroundColor: palette.violet, shadowColor: palette.violet }]} />
-            <View style={[styles.cardIcon, { backgroundColor: "rgba(138,92,255,0.12)", borderColor: "rgba(138,92,255,0.40)" }]}>
-              <Swords color={palette.violet} size={22} />
-            </View>
-            <View style={styles.cardBody}>
-              <View style={styles.cardTopRow}>
-                <Text style={styles.cardName}>Arena Mode</Text>
-                <View style={[styles.liveBadge, { borderColor: "rgba(138,92,255,0.40)" }]}>
-                  <View style={[styles.liveDot, { backgroundColor: palette.violet }]} />
-                  <Text style={[styles.liveBadgeText, { color: palette.violet }]}>NEW</Text>
-                </View>
-              </View>
-              <Text style={styles.cardDesc}>Compare two subjects using AI research and Open Intelligence.</Text>
-              <View style={styles.cardMeta}>
-                <Clock color={palette.muted} size={11} />
-                <Text style={styles.cardMetaText}>~3 min</Text>
-                <View style={[styles.costChip, { backgroundColor: "rgba(138,92,255,0.10)", borderColor: "rgba(138,92,255,0.30)" }]}>
-                  <Swords color={palette.violet} size={11} />
-                  <Text style={[styles.cardCost, { color: palette.violet }]}>50 Neurons</Text>
-                </View>
-              </View>
-            </View>
-            <View style={styles.cardRight}>
-              <View style={[styles.cardArrow, { borderColor: "rgba(138,92,255,0.33)" }]}>
-                <ChevronRight color={palette.violet} size={16} />
-              </View>
-            </View>
-          </Pressable>
-          {userTier === "free" ? (
-            <Text style={[styles.arenaLockedNote, { color: palette.muted }]}>Arena Mode requires a paid plan and a forged EAGOH.</Text>
-          ) : null}
-
           {/* Free-tier upgrade prompt — shown after Quick Check card */}
           {userTier === "free" ? (
             <View style={styles.upgradeBanner}>

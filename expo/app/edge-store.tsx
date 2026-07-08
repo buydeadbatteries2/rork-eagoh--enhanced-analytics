@@ -793,6 +793,74 @@ export default function EdgeStoreScreen(): JSX.Element {
           </View>
         )}
 
+        {/* DEV TEST ONLY: Mock Neuron purchase buttons */}
+        {/* Only visible in __DEV__ AND when RC is not configured (Expo Go / preview) */}
+        {__DEV__ && !rcConfigured && canBuyPacks ? (
+          <View style={{ gap: 10, marginTop: 8 }}>
+            <View style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 6,
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              borderRadius: 5,
+              borderWidth: 1,
+              borderColor: "rgba(255,107,53,0.30)",
+              backgroundColor: "rgba(255,107,53,0.06)",
+            }}>
+              <AlertTriangle color={palette.ember} size={12} />
+              <Text style={{
+                color: palette.ember,
+                fontSize: 10,
+                fontWeight: "900" as const,
+                letterSpacing: 1,
+              }}>DEV TEST ONLY — NOT REAL PURCHASES</Text>
+            </View>
+            {EDGE_PACKS.map((pack) => (
+              <Pressable
+                key={pack.productId}
+                onPress={async () => {
+                  if (!user?.id || !profile) return;
+                  h.heavy();
+                  setPurchasing(true);
+                  try {
+                    await creditEdge(pack.edgeAmount, `DEV TEST: ${pack.label} (${pack.productId})`);
+                    Alert.alert("Dev Test Complete", `${pack.edgeAmount.toLocaleString()} Neurons credited (mock).`);
+                  } catch (err: unknown) {
+                    const msg = err instanceof Error ? err.message : "Unknown error";
+                    Alert.alert("Error", msg);
+                  } finally {
+                    setPurchasing(false);
+                  }
+                }}
+                disabled={purchasing || isMutating}
+                style={({ pressed }) => [{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
+                  borderRadius: 5,
+                  borderWidth: 1,
+                  borderColor: "rgba(255,107,53,0.20)",
+                  backgroundColor: "rgba(255,107,53,0.04)",
+                  opacity: (purchasing || isMutating) ? 0.5 : 1,
+                }, pressed && { opacity: 0.8 }]}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                  <Zap color={palette.ember} size={16} />
+                  <Text style={{ color: palette.text, fontSize: 14, fontWeight: "800" as const }}>
+                    Test {pack.label}
+                  </Text>
+                </View>
+                <Text style={{ color: palette.ember, fontSize: 11, fontWeight: "900" as const, letterSpacing: 0.5 }}>
+                  +{pack.edgeAmount.toLocaleString()}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
         {/* Restore purchases */}
         <Pressable
           onPress={handleRestore}

@@ -2348,12 +2348,12 @@ export default function SessionsScreen(): JSX.Element {
             onPress={() => setShowPicker(true)}
           />
 
-          {/* Recent Analyst Threads */}
+          {/* Recent Analyst Threads — limited to 3 on Sessions, full list in Archive */}
           {threadsQuery.data && threadsQuery.data.length > 0 ? (
             <View style={styles.recentThreadsSection}>
               <Text style={styles.sectionLabel}>RECENT ANALYST THREADS</Text>
               <View style={styles.recentThreadsList}>
-                {threadsQuery.data.slice(0, 5).map((thread) => {
+                {threadsQuery.data.slice(0, 3).map((thread) => {
                   const st = sessionTypes.find((s) => s.id === thread.session_type);
                   const ac = st ? toneColor(st.tone) : palette.cyan;
                   return (
@@ -2386,6 +2386,32 @@ export default function SessionsScreen(): JSX.Element {
                   );
                 })}
               </View>
+              {/* View All Analyst Threads button */}
+              {threadsQuery.data.length > 3 ? (
+                <Pressable
+                  onPress={() => router.push("/analyst-archive" as never)}
+                  style={({ pressed }) => [
+                    {
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6,
+                      paddingVertical: 10,
+                      marginTop: 6,
+                      borderRadius: 5,
+                      borderWidth: 1,
+                      borderColor: "rgba(108,230,255,0.18)",
+                      backgroundColor: "rgba(108,230,255,0.04)",
+                    },
+                    pressed && { opacity: 0.8 },
+                  ]}
+                >
+                  <Text style={{ color: palette.cyan, fontSize: 12, fontWeight: "800" as const }}>
+                    View All Analyst Threads
+                  </Text>
+                  <ChevronRight color={palette.cyan} size={14} />
+                </Pressable>
+              ) : null}
             </View>
           ) : null}
 

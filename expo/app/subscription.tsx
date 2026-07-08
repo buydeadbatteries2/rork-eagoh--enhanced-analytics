@@ -26,6 +26,7 @@ import {
   type SubscriptionTier,
 } from "@/services/tiers";
 import { getOfferings as getRcOfferings } from "@/services/revenuecat";
+import { supabase } from "@/lib/supabase";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeBack } from "@/hooks/useSafeBack";
 import { useRouter } from "expo-router";
@@ -577,7 +578,6 @@ export default function SubscriptionScreen(): JSX.Element {
                 text: `Activate ${tierLabel}`,
                 onPress: async () => {
                   // Directly update Supabase profile tier for testing
-                  const { supabase } = await import("@/lib/supabase");
                   const { error } = await supabase
                     .from("profiles")
                     .update({ subscription_tier: tier, updated_at: new Date().toISOString() })
@@ -628,7 +628,6 @@ export default function SubscriptionScreen(): JSX.Element {
       setPurchaseSuccess(false);
 
       try {
-        const { supabase } = await import("@/lib/supabase");
         const { error } = await supabase
           .from("profiles")
           .update({ subscription_tier: tier, updated_at: new Date().toISOString() })

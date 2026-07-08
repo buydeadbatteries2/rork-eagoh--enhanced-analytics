@@ -1,5 +1,5 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker (Phase 11B — Arena analysis engine + network fix)
+ * EAGOH Analyst Chat — Cloudflare Worker (Phase 11C — JWT-authed RLS client + network fix)
  * Phase 6C — notifications & audit history)
  * Phase 6B: entry management, moderation, is_admin access.
  * Phase 6C: intelligence notifications, moderation audit trail, notification center.
@@ -4852,9 +4852,7 @@ async function handleDeleteAccount(request: Request, env: Env): Promise<Response
     return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
   }
 
-  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
+  const supabase = createAuthedClient(env, jwt);
   const userId = await verifyAuth(supabase, jwt);
   if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
 
@@ -6171,9 +6169,7 @@ async function handleArenaHistory(request: Request, env: Env): Promise<Response>
     return jsonResponse({ ok: false, error: "Arena service is not configured." }, 503);
   }
 
-  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
+  const supabase = createAuthedClient(env, jwt);
   const userId = await verifyAuth(supabase, jwt);
   if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
 

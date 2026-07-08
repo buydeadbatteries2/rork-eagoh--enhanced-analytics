@@ -562,10 +562,10 @@ const ARENA_FUNCTIONS_BASE_URL =
   "https://eagoh-mobile-app-backend.rork.app";
 
 /** User-facing auth error when the session is invalid or expired. */
-export const ARENA_AUTH_EXPIRED_MESSAGE = "Your session expired. Please sign in again.";
+export const ARENA_AUTH_EXPIRED_MESSAGE = "Please sign out and sign back in.";
 
 /** User-facing auth error when no session exists at all. */
-export const ARENA_AUTH_REQUIRED_MESSAGE = "Please sign in again.";
+export const ARENA_AUTH_REQUIRED_MESSAGE = "Please sign out and sign back in.";
 
 /** True when a worker response indicates an auth failure (401 or invalid auth). */
 export function isArenaAuthError(status: number, error?: string): boolean {
@@ -575,38 +575,53 @@ export function isArenaAuthError(status: number, error?: string): boolean {
 }
 
 /**
- * Get a fresh Supabase access token for worker auth.
- * If the session is missing or may be expired, attempts to refresh it
- * before returning. Returns null if refresh fails — callers should
- * show a "Please sign in again" message in that case.
+ * Development-only Arena auth diagnostic log. Never logs the token itself.
  */
-async function getArenaWorkerAuth(): Promise<string | null> {
+function arenaAuthLog(event: string, details: Record<string, unknown>): void {
+  if (process.env.NODE_ENV === "production") return;
+  // eslint-disable-next-line no-console
+  console.log(`[arena:auth] ${event}`, JSON.stringify(details));
+}
+
+/**
+ * Get the current Supabase access token for worker auth.
+ *
+ * Uses the exact same pattern as the working analyst service: reads the
+ * session from the shared Supabase client (which has autoRefreshToken
+ * enabled) and returns the access_token. Does NOT call refreshSession()
+ * manually — the SDK handles token refresh automatically and a manual
+ * call can race with the auto-refresher, causing transient null tokens.
+ *
+ * Returns null only when there is genuinely no signed-in session.
+ */
+async function getArenaWorkerAuth(endpoint: string): Promise<string | null> {
   try {
     const { data: sessionData } = await supabase.auth.getSession();
     const session = sessionData?.session;
-    if (session?.access_token) {
-      // Check if the token is expired or about to expire (within 60s).
-      const expiresAt = session.expires_at ?? 0;
-      const now = Math.floor(Date.now() / 1000);
-      if (expiresAt - now > 60) {
-        return session.access_token;
-      }
+    const hasToken = !!session?.access_token;
+    const expiresAt = session?.expires_at ?? 0;
+    const now = Math.floor(Date.now() / 1000);
+    const expiresIn = expiresAt > 0 ? expiresAt - now : 0;
+
+    arenaAuthLog("getSession", {
+      endpoint,
+      hasSession: !!session,
+      hasToken,
+      expiresAt: expiresAt > 0 ? new Date(expiresAt * 1000).toISOString() : "unknown",
+      expiresInSec: expiresIn,
+    });
+
+    if (hasToken) {
+      return session.access_token;
     }
-    // Token missing or near expiry — try to refresh.
-    const { data: refreshed, error } = await supabase.auth.refreshSession();
-    if (error || !refreshed.session?.access_token) {
-      console.warn(
-        "[arena] session refresh failed",
-        error?.message ?? "no session",
-      );
-      return null;
-    }
-    return refreshed.session.access_token;
+
+    arenaAuthLog("no-token", { endpoint, hasSession: !!session });
+    return null;
   } catch (err) {
-    console.warn(
-      "[arena] getArenaWorkerAuth exception",
-      err instanceof Error ? err.message : "unknown",
-    );
+    arenaAuthLog("exception", {
+      endpoint,
+      error: err instanceof Error ? err.message : "unknown",
+    });
     return null;
   }
 }
@@ -648,7 +663,7 @@ export async function runArenaAnalysis(
   if (!ARENA_FUNCTIONS_BASE_URL) {
     return { ok: false, error: "Backend not configured." };
   }
-  const token = await getArenaWorkerAuth();
+  const token = await getArenaWorkerAuth("/arena/analyze");
   if (!token) {
     return { ok: false, error: ARENA_AUTH_REQUIRED_MESSAGE };
   }
@@ -701,7 +716,7 @@ export async function listArenaHistory(
   if (!ARENA_FUNCTIONS_BASE_URL) {
     return { ok: false, error: "Backend not configured." };
   }
-  const token = await getArenaWorkerAuth();
+  const token = await getArenaWorkerAuth("/arena/history");
   if (!token) {
     return { ok: false, error: ARENA_AUTH_REQUIRED_MESSAGE };
   }
@@ -744,7 +759,7 @@ export async function validateArenaMatchup(
   if (!ARENA_FUNCTIONS_BASE_URL) {
     return { ok: false, valid: false, explanation: "Backend not configured." };
   }
-  const token = await getArenaWorkerAuth();
+  const token = await getArenaWorkerAuth("/arena/validate");
   if (!token) {
     return { ok: false, valid: false, explanation: ARENA_AUTH_REQUIRED_MESSAGE };
   }

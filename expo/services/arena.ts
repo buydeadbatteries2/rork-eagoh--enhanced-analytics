@@ -764,37 +764,29 @@ function arenaAuthLog(event: string, details: Record<string, unknown>): void {
 /**
  * Get the current Supabase access token for worker auth.
  *
- * Uses the exact same pattern as the working analyst service: reads the
+ * Identical to the working analyst service's getAccessToken(): reads the
  * session from the shared Supabase client (which has autoRefreshToken
- * enabled) and returns the access_token. Does NOT call refreshSession()
- * manually — the SDK handles token refresh automatically and a manual
- * call can race with the auto-refresher, causing transient null tokens.
+ * enabled) and returns the access_token. No manual refreshSession() call —
+ * the SDK handles token refresh automatically.
  *
  * Returns null only when there is genuinely no signed-in session.
  */
 async function getArenaWorkerAuth(endpoint: string): Promise<string | null> {
   try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const session = sessionData?.session;
-    const hasToken = !!session?.access_token;
-    const expiresAt = session?.expires_at ?? 0;
-    const now = Math.floor(Date.now() / 1000);
-    const expiresIn = expiresAt > 0 ? expiresAt - now : 0;
+    const { data } = await supabase.auth.getSession();
+    const session = data?.session;
+    const token = session?.access_token ?? null;
 
     arenaAuthLog("getSession", {
       endpoint,
       hasSession: !!session,
-      hasToken,
-      expiresAt: expiresAt > 0 ? new Date(expiresAt * 1000).toISOString() : "unknown",
-      expiresInSec: expiresIn,
+      hasToken: !!token,
+      expiresAt: session?.expires_at
+        ? new Date(session.expires_at * 1000).toISOString()
+        : "unknown",
     });
 
-    if (hasToken) {
-      return session.access_token;
-    }
-
-    arenaAuthLog("no-token", { endpoint, hasSession: !!session });
-    return null;
+    return token;
   } catch (err) {
     arenaAuthLog("exception", {
       endpoint,
@@ -845,14 +837,21 @@ export async function runArenaAnalysis(
   if (!token) {
     return { ok: false, error: ARENA_AUTH_REQUIRED_MESSAGE };
   }
+  const analyzeUrl = `${ARENA_FUNCTIONS_BASE_URL}/arena/analyze`;
+  arenaAuthLog("fetch-start", { endpoint: "/arena/analyze", url: analyzeUrl });
   try {
-    const res = await fetch(`${ARENA_FUNCTIONS_BASE_URL}/arena/analyze`, {
+    const res = await fetch(analyzeUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(request),
+    });
+    arenaAuthLog("fetch-response", {
+      endpoint: "/arena/analyze",
+      status: res.status,
+      ok: res.ok,
     });
     const data = await safeArenaJson<ArenaAnalysisResult & { ok?: boolean }>(
       res,
@@ -865,6 +864,11 @@ export async function runArenaAnalysis(
       };
     }
     if (isArenaAuthError(res.status, data.error)) {
+      arenaAuthLog("auth-rejected", {
+        endpoint: "/arena/analyze",
+        status: res.status,
+        workerError: data.error ?? "none",
+      });
       return { ok: false, error: ARENA_AUTH_EXPIRED_MESSAGE };
     }
     if (data.ok === false || res.status >= 400) {
@@ -900,9 +904,15 @@ export async function listArenaHistory(
   }
   try {
     const url = `${ARENA_FUNCTIONS_BASE_URL}/arena/history?page=${page}&pageSize=${pageSize}`;
+    arenaAuthLog("fetch-start", { endpoint: "/arena/history", url });
     const res = await fetch(url, {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
+    });
+    arenaAuthLog("fetch-response", {
+      endpoint: "/arena/history",
+      status: res.status,
+      ok: res.ok,
     });
     const data = await safeArenaJson<{ ok: boolean; entries?: ArenaHistoryEntry[]; error?: string }>(
       res,

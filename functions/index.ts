@@ -268,7 +268,7 @@ type AuditEntryRecord = {
  */
 function getServiceRoleClient(env: Env): SupabaseClient | null {
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return null;
-  return createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+  return createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_SERVICE_ROLE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 }
@@ -283,6 +283,23 @@ const corsHeaders: Record<string, string> = {
 
 function jsonResponse(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: corsHeaders });
+}
+
+/**
+ * Normalize the Supabase URL — strip trailing slashes and any path suffix
+ * (e.g. "/rest/v1", "/auth/v1") so the SDK gets the project origin.
+ * Mirrors the client-side normalizeSupabaseUrl in lib/supabase.ts.
+ */
+function normalizeSupabaseUrl(input: string): string {
+  if (!input) return "";
+  let url = input.replace(/\/+$/, "");
+  try {
+    const u = new URL(url);
+    url = `${u.protocol}//${u.host}`;
+  } catch {
+    // leave as-is
+  }
+  return url;
 }
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
@@ -2288,7 +2305,7 @@ async function handleSubmitFeedback(request: Request, env: Env): Promise<Respons
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -2700,7 +2717,7 @@ async function handleSubmitDispute(request: Request, env: Env): Promise<Response
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -2817,7 +2834,7 @@ async function handleGetReputation(request: Request, env: Env): Promise<Response
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -2906,7 +2923,7 @@ async function handleEvaluateQuality(request: Request, env: Env): Promise<Respon
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -3021,7 +3038,7 @@ async function handleUpdateOIEntry(request: Request, env: Env): Promise<Response
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -3186,7 +3203,7 @@ async function handleWithdrawOIEntry(request: Request, env: Env): Promise<Respon
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -3296,7 +3313,7 @@ async function handleRestoreOIEntry(request: Request, env: Env): Promise<Respons
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -3390,7 +3407,7 @@ async function handleToggleFactionShare(request: Request, env: Env): Promise<Res
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -3462,7 +3479,7 @@ async function handleGetVersionHistory(request: Request, env: Env): Promise<Resp
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -3638,7 +3655,7 @@ async function handleGetModerationQueue(request: Request, env: Env): Promise<Res
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -3757,7 +3774,7 @@ async function handleModerationAction(request: Request, env: Env): Promise<Respo
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -3963,7 +3980,7 @@ async function handleGetNotifications(request: Request, env: Env): Promise<Respo
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -4018,7 +4035,7 @@ async function handleMarkNotificationRead(request: Request, env: Env): Promise<R
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -4047,7 +4064,7 @@ async function handleMarkAllNotificationsRead(request: Request, env: Env): Promi
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -4089,7 +4106,7 @@ async function handleGetModerationAudit(request: Request, env: Env): Promise<Res
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -4152,7 +4169,7 @@ async function handleGetIntelligenceAnalytics(request: Request, env: Env): Promi
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -4335,7 +4352,7 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
   }
 
   // ── Create Supabase client & authenticate ────────────────────────────────
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
@@ -4835,7 +4852,7 @@ async function handleDeleteAccount(request: Request, env: Env): Promise<Response
     return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
   }
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -5165,7 +5182,7 @@ async function handleArenaValidate(request: Request, env: Env): Promise<Response
     return jsonResponse({ ok: false, error: "Arena service is not configured." }, 503);
   }
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -5574,7 +5591,7 @@ async function handleArenaAnalyze(request: Request, env: Env): Promise<Response>
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY!, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);
@@ -6139,7 +6156,7 @@ async function handleArenaHistory(request: Request, env: Env): Promise<Response>
     return jsonResponse({ ok: false, error: "Arena service is not configured." }, 503);
   }
 
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL ?? ""), env.SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const userId = await verifyAuth(supabase, jwt);

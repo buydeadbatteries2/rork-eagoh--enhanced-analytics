@@ -347,7 +347,7 @@ export async function submitEntry(input: SubmitEntryInput): Promise<SubmitEntryR
     return { ok: false, error: "Your session expired. Please sign in again." };
   }
 
-  let data: { ok: boolean; entry?: OpenIntelligenceRow; error?: string; edgeCost?: number };
+  let data: { ok: boolean; entry?: OpenIntelligenceRow; error?: string; edgeCost?: number; debug?: Record<string, unknown> };
   try {
     data = (await res.json()) as typeof data;
   } catch {
@@ -357,6 +357,9 @@ export async function submitEntry(input: SubmitEntryInput): Promise<SubmitEntryR
   if (!data.ok) {
     if (__DEV__) {
       console.warn("[oi/create] worker returned error", data.error);
+      if (data.debug) {
+        console.warn("[oi/create] DEBUG diagnostics", JSON.stringify(data.debug, null, 2));
+      }
     }
     return { ok: false, error: data.error ?? "Entry could not be saved. No Neurons were charged." };
   }

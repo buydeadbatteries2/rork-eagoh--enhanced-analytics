@@ -3191,8 +3191,112 @@ async function handleCreateOIEntry(request: Request, env: Env): Promise<Response
   });
 
   if (rpcErr) {
-    console.warn("[oi/create] RPC failed", rpcErr.message);
-    return jsonResponse({ ok: false, error: "Entry could not be saved. No Neurons were charged." }, 500);
+    if (DEBUG_OI) console.warn("[oi/create] RPC failed — falling back to manual insert+deduct:", rpcErr.code ?? "unknown", rpcErr.message);
+    // ── Fallback: manual insert + deduct (service-role, bypasses RLS) ──
+    // Used when the create_oi_entry RPC is not yet deployed to the live DB.
+    // Order: insert entry → check balance → deduct → if deduction fails, delete entry (rollback).
+    const cost = OI_ENTRY_COSTS[entryType];
+
+    // 1. Insert the OI entry via service-role client (bypasses RLS)
+    const charCountNoSpacesForInsert = content.replace(/\s/g, "").length;
+    const { data: insertData, error: insertErr } = await serviceClient
+      .from("open_intelligence")
+      .insert({
+        user_id: userId,
+        eagoh_id: eagohId,
+        intelligence_domain: intelligenceDomain || eagoh.domain,
+        entry_type: entryType,
+        tag: tag,
+        content: content,
+        character_count_no_spaces: charCountNoSpacesForInsert,
+        confidence_level: confidenceLevel,
+        quality_score: 0,
+        validation_status: "pending_review",
+        influence_score: 0,
+        selected_category: selectedCategory,
+        selected_subtags: subtags,
+        custom_tags: customTags,
+      })
+      .select("*")
+      .maybeSingle();
+
+    if (insertErr) {
+      if (DEBUG_OI) console.warn("[oi/create] fallback insert error:", insertErr.code ?? "unknown", insertErr.message);
+      return jsonResponse({ ok: false, error: "Entry could not be saved. No Neurons were charged." }, 500);
+    }
+    if (!insertData) {
+      if (DEBUG_OI) console.warn("[oi/create] fallback insert returned no row");
+      return jsonResponse({ ok: false, error: "Entry could not be saved. No Neurons were charged." }, 500);
+    }
+
+    const fallbackEntryId = (insertData as { id: string }).id;
+
+    // 2. Check balance and deduct via service-role client
+    const { data: profileRow, error: profileErr } = await serviceClient
+      .from("profiles")
+      .select("edge_subscription, edge_purchased")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (profileErr || !profileRow) {
+      if (DEBUG_OI) console.warn("[oi/create] fallback profile lookup failed — deleting entry:", profileErr?.message ?? "no row");
+      // Rollback: delete the entry since we can't charge
+      await serviceClient.from("open_intelligence").delete().eq("id", fallbackEntryId);
+      return jsonResponse({ ok: false, error: "Could not verify Neuron balance." }, 500);
+    }
+
+    const sub = (profileRow as { edge_subscription: number | null }).edge_subscription ?? 0;
+    const purch = (profileRow as { edge_purchased: number | null }).edge_purchased ?? 0;
+    const total = sub + purch;
+
+    if (total < cost) {
+      if (DEBUG_OI) console.warn("[oi/create] fallback insufficient balance — deleting entry. have=" + total + " need=" + cost);
+      // Rollback: delete the entry
+      await serviceClient.from("open_intelligence").delete().eq("id", fallbackEntryId);
+      return jsonResponse({ ok: false, error: `Insufficient Neurons. Need ${cost} Neurons (have ${total}).` }, 402);
+    }
+
+    const fromSub = Math.min(sub, cost);
+    const fromPurchased = cost - fromSub;
+    const nextSub = sub - fromSub;
+    const nextPurchased = purch - fromPurchased;
+    const bucket = fromSub > 0 && fromPurchased > 0 ? "mixed" : fromPurchased > 0 ? "purchased" : "subscription";
+
+    const { error: deductErr } = await serviceClient
+      .from("profiles")
+      .update({ edge_subscription: nextSub, edge_purchased: nextPurchased, updated_at: new Date().toISOString() })
+      .eq("id", userId);
+
+    if (deductErr) {
+      if (DEBUG_OI) console.warn("[oi/create] fallback deduct failed — deleting entry:", deductErr.message);
+      // Rollback: delete the entry since deduction failed
+      await serviceClient.from("open_intelligence").delete().eq("id", fallbackEntryId);
+      return jsonResponse({ ok: false, error: "Entry could not be saved. No Neurons were charged." }, 500);
+    }
+
+    // 3. Log the transaction (best-effort)
+    await serviceClient.from("edge_transactions").insert({
+      user_id: userId,
+      kind: "deduction",
+      reason: "observation",
+      amount: cost,
+      bucket: bucket,
+      from_subscription: fromSub,
+      from_purchased: fromPurchased,
+      balance_subscription_after: nextSub,
+      balance_purchased_after: nextPurchased,
+      note: note,
+    }).then(() => {}).catch(() => {});
+
+    if (DEBUG_OI) console.log("[oi/create] fallback success entryId=" + fallbackEntryId.slice(0, 8) + " cost=" + cost);
+
+    return jsonResponse({
+      ok: true,
+      entry: insertData,
+      edgeCost: cost,
+      balanceSubscriptionAfter: nextSub,
+      balancePurchasedAfter: nextPurchased,
+    });
   }
 
   const rpcResult = (rpcData ?? null) as {
@@ -3211,7 +3315,7 @@ async function handleCreateOIEntry(request: Request, env: Env): Promise<Response
   if (!rpcResult || rpcResult.ok === false) {
     const errCode = rpcResult?.error ?? "create_failed";
     if (errCode === "insufficient") {
-      const bal = rpcResult?.balance ?? 0;
+      const bal = (rpcResult as { balance?: number }).balance ?? 0;
       const cost = OI_ENTRY_COSTS[entryType];
       return jsonResponse({ ok: false, error: `Insufficient Neurons. Need ${cost} Neurons (have ${bal}).` }, 402);
     }
@@ -6592,4 +6696,5 @@ export default {
     return jsonResponse({ ok: false, error: "Not found" }, 404);
   },
 };
+
 

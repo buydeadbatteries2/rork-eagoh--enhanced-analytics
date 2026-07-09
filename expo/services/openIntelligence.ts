@@ -1,8 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "@/lib/supabase";
-import { spendEdge } from "@/services/edge";
 import type { UserProfile } from "@/services/profile";
-import type { EdgeReason } from "@/services/edge";
 import { getObservationTags, getAllTagsFlat, searchTags } from "@/data/observationTags";
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -262,17 +260,21 @@ export interface SubmitEntryResult {
 }
 
 /**
- * Submit an open intelligence entry.
+ * Submit an open intelligence entry through the secure worker.
  *
- * Flow:
- *   1. Validate character count (excluding spaces)
- *   2. Check domain lock — entry must match EAGOH's domain
- *   3. Compute quality score
- *   4. Deduct Edge (subscription first, purchased second)
- *   5. Persist to Supabase
- *   6. Record recently used tags
+ * The worker:
+ *   1. Authenticates the user via JWT
+ *   2. Verifies EAGOH ownership and domain match
+ *   3. Validates entry type, content, and confidence level
+ *   4. Atomically deducts Neurons and inserts the OI entry via a DB RPC
+ *      (create_oi_entry) — if either step fails, both roll back
+ *   5. Returns the saved entry with server-authoritative quality scores
+ *   6. Never trusts client-supplied userId, balance, quality, or influence
+ *
+ * The user never loses Neurons if the entry is not saved.
  */
 export async function submitEntry(input: SubmitEntryInput): Promise<SubmitEntryResult> {
+  // ── Local pre-validation (fast-fail before network call) ──
   const cleanContent = input.content.trim();
   const charCountNoSpaces = cleanContent.replace(/\s/g, "").length;
   const limit = ENTRY_TYPE_LIMITS[input.entryType];
@@ -290,68 +292,83 @@ export async function submitEntry(input: SubmitEntryInput): Promise<SubmitEntryR
     return { ok: false, error: `Insufficient Neurons. Need ${edgeCost} Neurons (have ${totalEdge}).`, edgeCost };
   }
 
-  // Deduct Edge
-  let updatedProfile: UserProfile;
-  try {
-    const reason: EdgeReason = input.entryType === "quick_observation"
-      ? "observation"
-      : input.entryType === "basic_deep_entry"
-        ? "observation"
-        : "observation";
-    updatedProfile = await spendEdge(
-      input.userId,
-      input.profile,
-      edgeCost,
-      reason,
-      `OI ${input.entryType.replace(/_/g, " ")} · ${input.intelligenceDomain}`,
-    );
-  } catch (err) {
-    return { ok: false, error: "Neuron deduction failed. Try again.", edgeCost };
+  // ── Call the secure worker endpoint ──
+  const functionsUrl = process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL;
+  if (!functionsUrl) {
+    return { ok: false, error: "Backend not configured." };
   }
 
-  // Quality score is PREVIEW only — the DB trigger (evaluate_oi_quality_trigger)
-  // overwrites quality_score, influence_score, content_hash, and duplicate_flag
-  // with server-authoritative values on insert. We send placeholder 0s.
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData?.session?.access_token;
+  if (!accessToken) {
+    return { ok: false, error: "Please sign in again." };
+  }
+
+  if (__DEV__) {
+    const expiresAt = sessionData?.session?.expires_at;
+    console.log("[oi/create] endpoint=" + functionsUrl + "/oi/create, hasSession:true, hasToken:true, expiresAt=" + (expiresAt ?? "unknown"));
+  }
+
   const subtags = input.selectedSubtags ?? [];
   const customTags = input.customTags ?? [];
   const formattedTag = formatTagField(subtags, customTags);
+  const requestId = `${input.userId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
-  const row: Omit<OpenIntelligenceRow, "id" | "created_at" | "updated_at"> = {
-    user_id: input.userId,
-    eagoh_id: input.eagohId,
-    intelligence_domain: input.intelligenceDomain,
-    entry_type: input.entryType,
-    tag: formattedTag,
-    content: cleanContent,
-    character_count_no_spaces: charCountNoSpaces,
-    confidence_level: input.confidenceLevel,
-    quality_score: 0, // overwritten by DB trigger
-    validation_status: "pending_review",
-    influence_score: 0, // overwritten by DB trigger
-    selected_category: input.selectedCategory ?? null,
-    selected_subtags: subtags.length > 0 ? subtags : null,
-    custom_tags: customTags.length > 0 ? customTags : null,
-  };
-
-  const { data, error } = await supabase
-    .from("open_intelligence")
-    .insert(row)
-    .select("*")
-    .single();
-
-  if (error) {
-    console.warn("[open-intelligence] insert failed", error.message);
-    return { ok: false, error: "Failed to save entry. Neurons were deducted. Please contact support." };
+  let res: Response;
+  try {
+    res = await fetch(`${functionsUrl}/oi/create`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        requestId,
+        eagohId: input.eagohId,
+        intelligenceDomain: input.intelligenceDomain,
+        entryType: input.entryType,
+        content: cleanContent,
+        confidenceLevel: input.confidenceLevel,
+        tag: formattedTag,
+        selectedSubtags: subtags,
+        customTags,
+        selectedCategory: input.selectedCategory ?? undefined,
+      }),
+    });
+  } catch {
+    return { ok: false, error: "Network error. Try again." };
   }
 
-  // Record recently used tags
+  if (__DEV__) {
+    console.log("[oi/create] response status=" + res.status);
+  }
+
+  if (res.status === 401) {
+    return { ok: false, error: "Your session expired. Please sign in again." };
+  }
+
+  let data: { ok: boolean; entry?: OpenIntelligenceRow; error?: string; edgeCost?: number };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    return { ok: false, error: "Network error. Try again." };
+  }
+
+  if (!data.ok) {
+    if (__DEV__) {
+      console.warn("[oi/create] worker returned error", data.error);
+    }
+    return { ok: false, error: data.error ?? "Entry could not be saved. No Neurons were charged." };
+  }
+
+  // Record recently used tags (best-effort)
   try {
     await recordRecentTags([...subtags, ...customTags.map((t) => `custom:${t}`)]);
   } catch {
     // best-effort
   }
 
-  return { ok: true, entry: data as OpenIntelligenceRow, edgeCost };
+  return { ok: true, entry: data.entry, edgeCost: data.edgeCost ?? edgeCost };
 }
 
 /**

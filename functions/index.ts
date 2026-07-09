@@ -1,5 +1,6 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker (Phase 11C — JWT-authed RLS client + network fix)
+ * EAGOH Analyst Chat — Cloudflare Worker (Phase OI-CREATE — atomic OI entry creation)
+ * Phase 11C — JWT-authed RLS client + network fix)
  * Phase 6C — notifications & audit history)
  * Phase 6B: entry management, moderation, is_admin access.
  * Phase 6C: intelligence notifications, moderation audit trail, notification center.
@@ -3030,6 +3031,256 @@ async function handleEvaluateQuality(request: Request, env: Env): Promise<Respon
     influenceScore: newInfluence,
     duplicateDetected: duplicateOf !== null,
     duplicateOf: duplicateOf,
+  });
+}
+
+// ── OI Create Handler (atomic deduction + insert) ─────────────────────────────
+
+const DEBUG_OI = true; // dev-only OI logging
+
+const OI_ENTRY_COSTS: Record<string, number> = {
+  quick_observation: 10,
+  basic_deep_entry: 15,
+  advanced_deep_entry: 25,
+};
+
+const OI_ENTRY_TYPE_LIMITS: Record<string, number> = {
+  quick_observation: 110,
+  basic_deep_entry: 200,
+  advanced_deep_entry: 400,
+};
+
+const OI_VALID_CONFIDENCE_LEVELS = new Set([
+  "weak_suspicion",
+  "moderate_confidence",
+  "strong_confidence",
+  "verified_observation",
+]);
+
+async function handleCreateOIEntry(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  let payload: {
+    requestId?: unknown;
+    eagohId?: unknown;
+    intelligenceDomain?: unknown;
+    entryType?: unknown;
+    content?: unknown;
+    confidenceLevel?: unknown;
+    tag?: unknown;
+    selectedSubtags?: unknown;
+    customTags?: unknown;
+    selectedCategory?: unknown;
+  };
+  try {
+    payload = (await request.json()) as typeof payload;
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request." }, 400);
+  }
+
+  // ── Authenticate ──
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createAuthedClient(env, jwt);
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) {
+    return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+  }
+
+  // ── Validate requestId (idempotency key) ──
+  const requestId = typeof payload.requestId === "string" ? payload.requestId.trim().slice(0, 120) : "";
+  if (!requestId) {
+    return jsonResponse({ ok: false, error: "A request ID is required." }, 400);
+  }
+
+  // ── Validate entry type ──
+  const entryType = typeof payload.entryType === "string" ? payload.entryType.trim() : "";
+  if (!OI_ENTRY_COSTS[entryType]) {
+    return jsonResponse({ ok: false, error: "Invalid entry type." }, 400);
+  }
+
+  // ── Validate content ──
+  const content = typeof payload.content === "string" ? payload.content.trim() : "";
+  if (content.length === 0) {
+    return jsonResponse({ ok: false, error: "Entry cannot be empty." }, 400);
+  }
+  const charCountNoSpaces = content.replace(/\s/g, "").length;
+  const limit = OI_ENTRY_TYPE_LIMITS[entryType];
+  if (charCountNoSpaces > limit) {
+    return jsonResponse({ ok: false, error: `Entry exceeds ${limit} character limit (excl. spaces).` }, 400);
+  }
+
+  // ── Validate confidence level ──
+  const confidenceLevel = typeof payload.confidenceLevel === "string" ? payload.confidenceLevel.trim() : "";
+  if (!OI_VALID_CONFIDENCE_LEVELS.has(confidenceLevel)) {
+    return jsonResponse({ ok: false, error: "Invalid confidence level." }, 400);
+  }
+
+  // ── Validate eagohId ──
+  const eagohId = typeof payload.eagohId === "string" ? payload.eagohId.trim() : "";
+  if (!eagohId) {
+    return jsonResponse({ ok: false, error: "An EAGOH is required." }, 400);
+  }
+
+  if (DEBUG_OI) {
+    console.log("[oi/create] eagohId=" + eagohId.slice(0, 8) + " userIdPrefix=" + userId.slice(0, 8) + " type=" + entryType);
+  }
+
+  // ── Verify EAGOH ownership + domain ──
+  const { data: eagohRow, error: eagohErr } = await serviceClient
+    .from("eagohs")
+    .select("id, user_id, name, domain")
+    .eq("id", eagohId)
+    .maybeSingle();
+
+  if (eagohErr) {
+    if (DEBUG_OI) console.log("[oi/create] EAGOH lookup error: " + eagohErr.message);
+    return jsonResponse({ ok: false, error: "EAGOH not found." }, 404);
+  }
+  if (!eagohRow) {
+    if (DEBUG_OI) console.log("[oi/create] EAGOH lookup returned no row");
+    return jsonResponse({ ok: false, error: "EAGOH not found." }, 404);
+  }
+
+  const eagoh = eagohRow as { id: string; user_id: string; name: string; domain: string | null };
+
+  if (DEBUG_OI) console.log("[oi/create] EAGOH found: " + eagoh.name);
+
+  if (eagoh.user_id !== userId) {
+    return jsonResponse({ ok: false, error: "You can only use EAGOHs you own." }, 403);
+  }
+  if (!eagoh.domain) {
+    return jsonResponse({ ok: false, error: "This EAGOH has no domain specialization." }, 400);
+  }
+
+  // ── Verify entry domain matches EAGOH domain ──
+  const intelligenceDomain = typeof payload.intelligenceDomain === "string" ? payload.intelligenceDomain.trim() : "";
+  if (intelligenceDomain && intelligenceDomain !== eagoh.domain) {
+    return jsonResponse({ ok: false, error: "Entry domain does not match this EAGOH's domain." }, 400);
+  }
+
+  // ── Build insert fields ──
+  const subtags = Array.isArray(payload.selectedSubtags) ? payload.selectedSubtags.filter((t) => typeof t === "string") : [];
+  const customTags = Array.isArray(payload.customTags) ? payload.customTags.filter((t) => typeof t === "string") : [];
+  const tag = typeof payload.tag === "string" ? payload.tag : "general";
+  const selectedCategory = typeof payload.selectedCategory === "string" ? payload.selectedCategory : null;
+
+  const note = `OI ${entryType.replace(/_/g, " ")} · ${intelligenceDomain || eagoh.domain}`;
+
+  // ── Atomic deduction + insert via RPC ──
+  const { data: rpcData, error: rpcErr } = await serviceClient.rpc("create_oi_entry", {
+    p_user_id: userId,
+    p_request_id: requestId,
+    p_eagoh_id: eagohId,
+    p_intelligence_domain: intelligenceDomain || eagoh.domain,
+    p_entry_type: entryType,
+    p_content: content,
+    p_confidence_level: confidenceLevel,
+    p_tag: tag,
+    p_selected_subtags: subtags,
+    p_custom_tags: customTags,
+    p_selected_category: selectedCategory,
+    p_note: note,
+  });
+
+  if (rpcErr) {
+    console.warn("[oi/create] RPC failed", rpcErr.message);
+    return jsonResponse({ ok: false, error: "Entry could not be saved. No Neurons were charged." }, 500);
+  }
+
+  const rpcResult = (rpcData ?? null) as {
+    ok?: boolean;
+    error?: string;
+    duplicate?: boolean;
+    entry_id?: string;
+    amount?: number;
+    from_subscription?: number;
+    from_purchased?: number;
+    bucket?: string;
+    balance_subscription_after?: number;
+    balance_purchased_after?: number;
+  } | null;
+
+  if (!rpcResult || rpcResult.ok === false) {
+    const errCode = rpcResult?.error ?? "create_failed";
+    if (errCode === "insufficient") {
+      const bal = rpcResult?.balance ?? 0;
+      const cost = OI_ENTRY_COSTS[entryType];
+      return jsonResponse({ ok: false, error: `Insufficient Neurons. Need ${cost} Neurons (have ${bal}).` }, 402);
+    }
+    if (errCode === "profile_not_found") {
+      return jsonResponse({ ok: false, error: "Could not verify Neuron balance." }, 500);
+    }
+    if (errCode === "invalid_entry_type") {
+      return jsonResponse({ ok: false, error: "Invalid entry type." }, 400);
+    }
+    if (errCode === "empty_content") {
+      return jsonResponse({ ok: false, error: "Entry cannot be empty." }, 400);
+    }
+    console.warn("[oi/create] RPC rejected", errCode);
+    return jsonResponse({ ok: false, error: "Entry could not be saved. No Neurons were charged." }, 500);
+  }
+
+  // ── Duplicate (already created) — return the existing entry ──
+  if (rpcResult.duplicate === true && rpcResult.entry_id) {
+    if (DEBUG_OI) console.log("[oi/create] duplicate requestId — returning existing entry");
+    const { data: existingEntry } = await serviceClient
+      .from("open_intelligence")
+      .select("*")
+      .eq("id", rpcResult.entry_id)
+      .maybeSingle();
+
+    if (existingEntry) {
+      return jsonResponse({
+        ok: true,
+        entry: existingEntry,
+        edgeCost: OI_ENTRY_COSTS[entryType],
+        duplicate: true,
+      });
+    }
+  }
+
+  const newEntryId = rpcResult.entry_id;
+  if (!newEntryId) {
+    console.warn("[oi/create] RPC succeeded but no entry_id returned");
+    return jsonResponse({ ok: false, error: "Entry could not be saved. No Neurons were charged." }, 500);
+  }
+
+  // ── Fetch the created entry (with trigger-computed quality/influence/hash) ──
+  const { data: newEntry, error: fetchErr } = await serviceClient
+    .from("open_intelligence")
+    .select("*")
+    .eq("id", newEntryId)
+    .maybeSingle();
+
+  if (fetchErr || !newEntry) {
+    // The entry was created (RPC succeeded) but we can't fetch it. Don't refund —
+    // the entry exists. Return success with the ID.
+    console.warn("[oi/create] entry created but fetch failed", fetchErr?.message);
+    return jsonResponse({
+      ok: true,
+      entryId: newEntryId,
+      edgeCost: OI_ENTRY_COSTS[entryType],
+    });
+  }
+
+  if (DEBUG_OI) {
+    console.log("[oi/create] success entryId=" + newEntryId.slice(0, 8) + " cost=" + OI_ENTRY_COSTS[entryType]);
+  }
+
+  return jsonResponse({
+    ok: true,
+    entry: newEntry,
+    edgeCost: OI_ENTRY_COSTS[entryType],
+    balanceSubscriptionAfter: rpcResult.balance_subscription_after,
+    balancePurchasedAfter: rpcResult.balance_purchased_after,
   });
 }
 
@@ -6251,6 +6502,11 @@ export default {
     // Phase 5B: Server-side quality evaluation
     if (url.pathname === "/quality/evaluate" && request.method === "POST") {
       return handleEvaluateQuality(request, env);
+    }
+
+    // OI Create: atomic Neuron deduction + entry insert (secure, idempotent)
+    if (url.pathname === "/oi/create" && request.method === "POST") {
+      return handleCreateOIEntry(request, env);
     }
 
     // Phase 5B: OI entry update (version history + dispute preservation)

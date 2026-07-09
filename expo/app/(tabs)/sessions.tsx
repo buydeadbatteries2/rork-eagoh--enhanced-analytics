@@ -1152,7 +1152,7 @@ function OpenIntelSession({
 }): JSX.Element {
   const h = useHaptics();
   const { eagohs } = useEagohs();
-  const { profile } = useProfile();
+  const { profile, invalidate: invalidateProfile } = useProfile();
   const { balances } = useEdge();
   const queryClient = useQueryClient();
 
@@ -1244,11 +1244,13 @@ function OpenIntelSession({
       setCustomTag("");
       setSubmitSuccess(`Entry saved. ${result.edgeCost} Neurons deducted.`);
       queryClient.invalidateQueries({ queryKey: ["oi", "feed", selectedEagohId] });
+      invalidateProfile();
     } else {
-      setSubmitError(result.error ?? "Submit failed.");
+      setSubmitError(result.error ?? "Entry could not be saved. No Neurons were charged.");
+      invalidateProfile();
     }
     setIsSubmitting(false);
-  }, [selectedEagohId, profile, content, selectedEagoh, entryType, selectedTag, confidenceLevel, queryClient]);
+  }, [selectedEagohId, profile, content, selectedEagoh, entryType, selectedTag, confidenceLevel, queryClient, invalidateProfile]);
 
   const toggleTagCat = useCallback((id: string): void => {
     setOpenTagCat((prev) => prev === id ? null : id);

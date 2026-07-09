@@ -3040,3 +3040,297 @@ drop policy if exists "arena_history_self_delete" on public.arena_history;
 -- attempt is rejected because no matching policy exists.
 create policy "arena_history_self_select" on public.arena_history
   for select using (auth.uid() = user_id);
+
+-- =============================================================================
+-- PHASE OI-CREATE: ATOMIC OPEN INTELLIGENCE ENTRY CREATION (service_role only)
+-- =============================================================================
+-- These RPCs make Open Intelligence entry creation atomic at the database level:
+-- Neurons are deducted and the OI entry is inserted together in one transaction.
+-- If either step fails, the entire operation rolls back — the user never pays
+-- without getting their entry saved.
+--
+-- Idempotency: a request_id prevents double-charging on retries. The unique
+-- index on oi_creation_ledger(user_id, request_id) is the final guard.
+-- Executable only by service_role (bypasses RLS).
+
+-- OI creation ledger — tracks exactly what was deducted for each OI request_id
+-- so a refund can return the precise amounts (not a balance snapshot).
+create table if not exists public.oi_creation_ledger (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  request_id text not null,
+  entry_id uuid references public.open_intelligence(id) on delete set null,
+  amount int not null,
+  from_subscription int not null default 0,
+  from_purchased int not null default 0,
+  bucket text not null default 'subscription',
+  status text not null default 'charged', -- 'charged' | 'refunded'
+  note text,
+  created_at timestamptz default now(),
+  refunded_at timestamptz
+);
+
+drop index if exists oi_ledger_user_request_uniq;
+create unique index if not exists oi_ledger_user_request_uniq
+  on public.oi_creation_ledger(user_id, request_id);
+
+alter table public.oi_creation_ledger enable row level security;
+-- No client policies: only service_role (bypasses RLS) may read or write.
+
+-- Drop any older overloads before creating the final version.
+drop function if exists public.create_oi_entry(uuid, text, uuid, text, text, text, text, text, jsonb, jsonb, int);
+drop function if exists public.create_oi_entry(uuid, uuid, text, text, text, text, jsonb, jsonb, text);
+
+-- Atomic OI entry creation (service_role only)
+-- Deducts Neurons (subscription bucket first, then purchased) and inserts the
+-- OI entry in a single transaction. The cost is determined server-side from
+-- p_entry_type — the caller cannot specify an arbitrary amount.
+--
+-- Race-safety sequence:
+--   1. Lock the user's profile row (FOR UPDATE) so concurrent requests serialize.
+--   2. AFTER the lock, re-check the ledger for the same user_id + request_id.
+--      A concurrent request that committed first is now visible; return duplicate.
+--   3. Verify sufficient balance under the lock.
+--   4. Deduct the cost (subscription first, then purchased).
+--   5. Insert the OI entry. The DB trigger (evaluate_oi_quality_trigger) runs
+--      before insert and overwrites quality_score, influence_score, content_hash,
+--      and duplicate_flag with server-authoritative values.
+--   6. Insert the ledger row. The unique(user_id, request_id) index is the final
+--      guard: a concurrent transaction that slipped through raises and rolls
+--      back everything (balance change + OI insert).
+--   7. Log edge_transactions. Return the new entry ID and balance info.
+create or replace function public.create_oi_entry(
+  p_user_id uuid,
+  p_request_id text,
+  p_eagoh_id uuid,
+  p_intelligence_domain text,
+  p_entry_type text,
+  p_content text,
+  p_confidence_level text,
+  p_tag text,
+  p_selected_subtags jsonb default '[]'::jsonb,
+  p_custom_tags jsonb default '[]'::jsonb,
+  p_selected_category text default null,
+  p_note text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_cost_map jsonb := '{"quick_observation":10,"basic_deep_entry":15,"advanced_deep_entry":25}'::jsonb;
+  v_cost int;
+  v_sub int;
+  v_purchased int;
+  v_from_sub int;
+  v_from_purchased int;
+  v_next_sub int;
+  v_next_purchased int;
+  v_total int;
+  v_bucket text;
+  v_existing_id uuid;
+  v_existing_entry_id uuid;
+  v_new_entry_id uuid;
+  v_char_count int;
+begin
+  if p_request_id is null or btrim(p_request_id) = '' then
+    return jsonb_build_object('ok', false, 'error', 'missing_request_id');
+  end if;
+
+  -- Determine cost from entry type (server-side, not client-controlled)
+  v_cost := (v_cost_map ->> p_entry_type)::int;
+  if v_cost is null then
+    return jsonb_build_object('ok', false, 'error', 'invalid_entry_type');
+  end if;
+
+  -- Validate content is not empty
+  if p_content is null or btrim(p_content) = '' then
+    return jsonb_build_object('ok', false, 'error', 'empty_content');
+  end if;
+
+  -- 1. Lock the profile row so concurrent OI requests for this user serialize.
+  select edge_subscription, edge_purchased
+    into v_sub, v_purchased
+    from public.profiles
+    where id = p_user_id
+    for update;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'profile_not_found');
+  end if;
+
+  -- 2. Re-check the ledger AFTER the lock. A concurrent request that committed
+  --    before we got the lock is now visible; return duplicate with the entry id.
+  select id, entry_id into v_existing_id, v_existing_entry_id
+    from public.oi_creation_ledger
+    where user_id = p_user_id and request_id = p_request_id
+    limit 1;
+
+  if v_existing_id is not null then
+    return jsonb_build_object(
+      'ok', true,
+      'duplicate', true,
+      'entry_id', v_existing_entry_id,
+      'message', 'already_created'
+    );
+  end if;
+
+  -- 3. Verify sufficient balance while still holding the lock.
+  v_sub := coalesce(v_sub, 0);
+  v_purchased := coalesce(v_purchased, 0);
+  v_total := v_sub + v_purchased;
+
+  if v_total < v_cost then
+    return jsonb_build_object('ok', false, 'error', 'insufficient', 'balance', v_total, 'cost', v_cost);
+  end if;
+
+  -- 4. Deduct the cost (subscription bucket first, then purchased).
+  v_from_sub := least(v_sub, v_cost);
+  v_from_purchased := v_cost - v_from_sub;
+  v_next_sub := v_sub - v_from_sub;
+  v_next_purchased := v_purchased - v_from_purchased;
+
+  if v_from_sub > 0 and v_from_purchased > 0 then
+    v_bucket := 'mixed';
+  elsif v_from_purchased > 0 then
+    v_bucket := 'purchased';
+  else
+    v_bucket := 'subscription';
+  end if;
+
+  update public.profiles
+    set edge_subscription = v_next_sub,
+        edge_purchased = v_next_purchased,
+        updated_at = now()
+    where id = p_user_id;
+
+  -- 5. Insert the OI entry. The DB trigger overwrites quality_score, influence_score,
+  --    content_hash, and duplicate_flag with server-authoritative values.
+  v_char_count := length(replace(replace(replace(replace(p_content, ' ', ''), chr(9), ''), chr(10), ''), chr(13), ''));
+
+  insert into public.open_intelligence (
+    user_id, eagoh_id, intelligence_domain, entry_type, tag, content,
+    character_count_no_spaces, confidence_level, quality_score,
+    validation_status, influence_score,
+    selected_category, selected_subtags, custom_tags
+  )
+  values (
+    p_user_id, p_eagoh_id, p_intelligence_domain, p_entry_type, p_tag, p_content,
+    v_char_count, p_confidence_level, 0,
+    'pending_review', 0,
+    p_selected_category, p_selected_subtags, p_custom_tags
+  )
+  returning id into v_new_entry_id;
+
+  -- 6. Insert the ledger row. The unique(user_id, request_id) index is the final
+  --    guard. NO ON CONFLICT: a conflict means a concurrent transaction committed
+  --    between steps 2 and 6, which must raise and roll back the deduction + insert.
+  insert into public.oi_creation_ledger (user_id, request_id, entry_id, amount, from_subscription, from_purchased, bucket, status, note)
+    values (p_user_id, p_request_id, v_new_entry_id, v_cost, v_from_sub, v_from_purchased, v_bucket, 'charged', p_note);
+
+  -- 7. Log the transaction.
+  insert into public.edge_transactions (user_id, kind, reason, amount, bucket, from_subscription, from_purchased, balance_subscription_after, balance_purchased_after, note)
+    values (p_user_id, 'deduction', 'observation', v_cost, v_bucket, v_from_sub, v_from_purchased, v_next_sub, v_next_purchased, p_note);
+
+  return jsonb_build_object(
+    'ok', true,
+    'duplicate', false,
+    'entry_id', v_new_entry_id,
+    'amount', v_cost,
+    'from_subscription', v_from_sub,
+    'from_purchased', v_from_purchased,
+    'bucket', v_bucket,
+    'balance_subscription_after', v_next_sub,
+    'balance_purchased_after', v_next_purchased
+  );
+end;
+$$;
+
+-- Idempotent OI refund (service_role only)
+-- Refunds the exact amounts recorded for a request_id, but only the first time.
+-- Subsequent refund attempts for the same request_id short-circuit (no double credit).
+create or replace function public.refund_oi_entry(
+  p_user_id uuid,
+  p_request_id text,
+  p_note text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_led record;
+  v_next_sub int;
+  v_next_purchased int;
+begin
+  if p_request_id is null or btrim(p_request_id) = '' then
+    return jsonb_build_object('ok', false, 'error', 'missing_request_id');
+  end if;
+
+  -- Lock the ledger row so concurrent refund attempts serialize.
+  select amount, from_subscription, from_purchased, bucket, status, refunded_at
+    into v_led
+    from public.oi_creation_ledger
+    where user_id = p_user_id and request_id = p_request_id
+    for update;
+
+  if not found then
+    -- Nothing was ever charged for this request_id. Nothing to refund.
+    return jsonb_build_object('ok', true, 'duplicate', true, 'message', 'no_charge_to_refund');
+  end if;
+
+  if v_led.status = 'refunded' then
+    -- Already refunded; idempotent no-op.
+    return jsonb_build_object('ok', true, 'duplicate', true, 'message', 'already_refunded');
+  end if;
+
+  -- Add back exactly what was deducted for this request.
+  select edge_subscription + coalesce(v_led.from_subscription, 0),
+         edge_purchased + coalesce(v_led.from_purchased, 0)
+    into v_next_sub, v_next_purchased
+    from public.profiles
+    where id = p_user_id
+    for update;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'profile_not_found');
+  end if;
+
+  update public.profiles
+    set edge_subscription = v_next_sub,
+        edge_purchased = v_next_purchased,
+        updated_at = now()
+    where id = p_user_id;
+
+  update public.oi_creation_ledger
+    set status = 'refunded',
+        refunded_at = now()
+    where user_id = p_user_id and request_id = p_request_id;
+
+  insert into public.edge_transactions (user_id, kind, reason, amount, bucket, from_subscription, from_purchased, balance_subscription_after, balance_purchased_after, note)
+    values (p_user_id, 'addition', 'oi_refund', v_led.amount, v_led.bucket, v_led.from_subscription, v_led.from_purchased, v_next_sub, v_next_purchased, p_note);
+
+  return jsonb_build_object(
+    'ok', true,
+    'duplicate', false,
+    'amount', v_led.amount,
+    'from_subscription', v_led.from_subscription,
+    'from_purchased', v_led.from_purchased,
+    'balance_subscription_after', v_next_sub,
+    'balance_purchased_after', v_next_purchased
+  );
+end;
+$$;
+
+-- Lock both OI RPCs to service_role only.
+revoke execute on function public.create_oi_entry(uuid, text, uuid, text, text, text, text, text, jsonb, jsonb, text, text) from public;
+revoke execute on function public.create_oi_entry(uuid, text, uuid, text, text, text, text, text, jsonb, jsonb, text, text) from anon;
+revoke execute on function public.create_oi_entry(uuid, text, uuid, text, text, text, text, text, jsonb, jsonb, text, text) from authenticated;
+grant execute on function public.create_oi_entry(uuid, text, uuid, text, text, text, text, text, jsonb, jsonb, text, text) to service_role;
+
+revoke execute on function public.refund_oi_entry(uuid, text, text) from public;
+revoke execute on function public.refund_oi_entry(uuid, text, text) from anon;
+revoke execute on function public.refund_oi_entry(uuid, text, text) from authenticated;
+grant execute on function public.refund_oi_entry(uuid, text, text) to service_role;

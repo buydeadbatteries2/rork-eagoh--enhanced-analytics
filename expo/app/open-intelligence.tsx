@@ -1353,7 +1353,7 @@ function ConfirmDialog({
 export default function OpenIntelligenceScreen(): JSX.Element {
   const h = useHaptics();
   const { eagohs } = useEagohs();
-  const { profile } = useProfile();
+  const { profile, invalidate: invalidateProfile } = useProfile();
   const { balances } = useEdge();
   const { palette: pal } = useAppTheme();
   const queryClient = useQueryClient();
@@ -1632,11 +1632,13 @@ export default function OpenIntelligenceScreen(): JSX.Element {
       setCustomTags([]);
       setSubmitSuccess(`Entry saved. ${result.edgeCost} Neurons deducted.`);
       queryClient.invalidateQueries({ queryKey: ["oi", "feed", selectedEagohId] });
+      invalidateProfile();
     } else {
-      setSubmitError(result.error ?? "Submit failed.");
+      setSubmitError(result.error ?? "Entry could not be saved. No Neurons were charged.");
+      invalidateProfile();
     }
     setIsSubmitting(false);
-  }, [selectedEagohId, profile, content, selectedEagoh, entryType, legacyTag, confidenceLevel, selectedSubtags, customTags, queryClient]);
+  }, [selectedEagohId, profile, content, selectedEagoh, entryType, legacyTag, confidenceLevel, selectedSubtags, customTags, queryClient, invalidateProfile]);
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: pal.void }]} edges={["top"]}>

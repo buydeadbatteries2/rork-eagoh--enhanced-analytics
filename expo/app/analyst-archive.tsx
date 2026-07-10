@@ -21,6 +21,7 @@ import type { AnalystSessionType } from "@/services/analyst";
 import {
   ArrowLeft,
   ChevronRight,
+  Info,
   MessageSquare,
   Trash2,
 } from "lucide-react-native";
@@ -209,6 +210,11 @@ export default function AnalystArchiveScreen(): JSX.Element {
     );
   }
 
+  const handleViewOI = useCallback((): void => {
+    h.selection();
+    router.push("/open-intelligence" as never);
+  }, [router, h]);
+
   // ── Empty state ────────────────────────────────────────────────────────
 
   if (threads.length === 0) {
@@ -224,8 +230,15 @@ export default function AnalystArchiveScreen(): JSX.Element {
           <MessageSquare color={palette.muted} size={36} />
           <Text style={styles.centerTitle}>No Threads Yet</Text>
           <Text style={styles.centerText}>
-            Your analyst session history will appear here. Start a session from the Sessions page.
+            No analyst threads yet. Run a Quick Check, Quick Analysis, or another session to create threads.
           </Text>
+          <Pressable
+            onPress={handleViewOI}
+            style={({ pressed }) => [styles.viewOIBtn, pressed && { opacity: 0.8 }]}
+          >
+            <Info color={palette.cyan} size={14} />
+            <Text style={styles.viewOIBtnText}>View My Intelligence Entries</Text>
+          </Pressable>
         </View>
       </SafeAreaView>
     );
@@ -241,6 +254,14 @@ export default function AnalystArchiveScreen(): JSX.Element {
         </Pressable>
         <Text style={styles.headerTitle}>Analyst Archive</Text>
         <Text style={styles.headerCount}>{threads.length}{hasMore ? "+" : ""} thread{threads.length === 1 ? "" : "s"}</Text>
+      </View>
+
+      {/* Description banner */}
+      <View style={styles.descBanner}>
+        <Info color={palette.muted} size={13} />
+        <Text style={styles.descText}>
+          Analyst Archive shows your past AI session threads. Open Intelligence entries are managed separately in My Intelligence.
+        </Text>
       </View>
 
       <ScrollView
@@ -318,6 +339,17 @@ export default function AnalystArchiveScreen(): JSX.Element {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* Bottom: View My Intelligence Entries */}
+      <View style={styles.bottomBar}>
+        <Pressable
+          onPress={handleViewOI}
+          style={({ pressed }) => [styles.viewOIBtn, pressed && { opacity: 0.8 }]}
+        >
+          <Info color={palette.cyan} size={14} />
+          <Text style={styles.viewOIBtnText}>View My Intelligence Entries</Text>
+        </Pressable>
+      </View>
     </SafeAreaView>
   );
 }
@@ -391,4 +423,46 @@ const styles = StyleSheet.create({
   centerState: { flex: 1, alignItems: "center" as const, justifyContent: "center" as const, padding: 40, gap: 14 },
   centerTitle: { color: palette.text, fontSize: 17, fontWeight: "900" as const, textAlign: "center" as const },
   centerText: { color: palette.muted, fontSize: 13, fontWeight: "600" as const, textAlign: "center" as const, lineHeight: 19 },
+
+  descBanner: {
+    flexDirection: "row" as const,
+    alignItems: "flex-start" as const,
+    gap: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    backgroundColor: "rgba(108,230,255,0.04)" as const,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(108,230,255,0.12)" as const,
+  },
+  descText: {
+    flex: 1,
+    color: palette.muted,
+    fontSize: 11,
+    fontWeight: "600" as const,
+    lineHeight: 16,
+  },
+
+  bottomBar: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: palette.line,
+    backgroundColor: palette.obsidian,
+  },
+  viewOIBtn: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "rgba(108,230,255,0.30)" as const,
+    backgroundColor: "rgba(108,230,255,0.06)" as const,
+  },
+  viewOIBtnText: {
+    color: palette.cyan,
+    fontSize: 13,
+    fontWeight: "800" as const,
+  },
 });

@@ -171,6 +171,11 @@ export default function AnalystArchiveScreen(): JSX.Element {
     }
   }, [loadingMore, hasMore, profile?.id]);
 
+  const handleViewOI = useCallback((): void => {
+    h.selection();
+    router.push("/open-intelligence" as never);
+  }, [router, h]);
+
   // ── Loading state ──────────────────────────────────────────────────────
 
   if (loading) {
@@ -209,11 +214,6 @@ export default function AnalystArchiveScreen(): JSX.Element {
       </SafeAreaView>
     );
   }
-
-  const handleViewOI = useCallback((): void => {
-    h.selection();
-    router.push("/open-intelligence" as never);
-  }, [router, h]);
 
   // ── Empty state ────────────────────────────────────────────────────────
 

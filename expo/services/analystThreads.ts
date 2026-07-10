@@ -18,7 +18,7 @@ import type { AnalystSessionType } from "@/services/analyst";
 export type AnalystThread = {
   id: string;
   user_id: string;
-  eagoh_id: string;
+  eagoh_id: string | null;
   session_type: AnalystSessionType;
   title: string;
   domain: string | null;
@@ -44,12 +44,26 @@ export type ThreadWithMeta = AnalystThread & {
   last_message_preview: string | null;
 };
 
+/** Raw thread row from Supabase (eagoh_id may be null). */
+type ThreadRow = {
+  id: string;
+  user_id: string;
+  eagoh_id: string | null;
+  session_type: string;
+  title: string;
+  domain: string | null;
+  created_at: string;
+  updated_at: string;
+  eagohs: { name: string | null; image_url: string | null; image_thumb_url: string | null } | null;
+};
+
 // ── Thread CRUD ────────────────────────────────────────────────────────────
 
 /** Create a new analyst thread. Returns the created thread row. */
 export async function createThread(params: {
   userId: string;
-  eagohId: string;
+  /** null for Quick Check with virtual fallback EAGOH. */
+  eagohId: string | null;
   sessionType: AnalystSessionType;
   title: string;
   domain?: string | null;
@@ -94,9 +108,7 @@ export async function listThreads(
 
   if (error) throw error;
 
-  const threads = (data ?? []) as (AnalystThread & {
-    eagohs: { name: string | null; image_url: string | null; image_thumb_url: string | null } | null;
-  })[];
+  const threads = (data ?? []) as ThreadRow[];
 
   // Enrich with message count and preview
   const enriched: ThreadWithMeta[] = [];
@@ -118,7 +130,7 @@ export async function listThreads(
       id: t.id,
       user_id: t.user_id,
       eagoh_id: t.eagoh_id,
-      session_type: t.session_type,
+      session_type: t.session_type as AnalystSessionType,
       title: t.title,
       domain: t.domain,
       created_at: t.created_at,

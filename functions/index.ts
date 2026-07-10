@@ -1,6 +1,7 @@
 /**
  * EAGOH Analyst Chat — Cloudflare Worker (Phase OI-CREATE — atomic OI entry creation)
  * Phase 11C — JWT-authed RLS client + network fix + OI save diagnostics)
+ * Phase 11D — Analyst thread save fix + Exchange sharing validation
  * Phase 11D — RPC null-data fallback + diagnostic insert errors)
  * Phase 11E — minimal insert fallback for schema mismatch)
  * Phase 6C — notifications & audit history)
@@ -3685,6 +3686,16 @@ async function handleUpdateOIEntry(request: Request, env: Env): Promise<Response
     updateFields.custom_tags = payload.customTags;
   }
   if (payload.exchangeShareEnabled !== undefined) {
+    // Block enabling exchange sharing on rejected or withdrawn entries
+    if (payload.exchangeShareEnabled === true) {
+      const blockedStatuses = ["rejected", "withdrawn"];
+      if (blockedStatuses.includes(entryRow.validation_status)) {
+        return jsonResponse({
+          ok: false,
+          error: "Exchange sharing could not be updated. Please try again.",
+        }, 403);
+      }
+    }
     updateFields.exchange_share_enabled = payload.exchangeShareEnabled;
   }
 

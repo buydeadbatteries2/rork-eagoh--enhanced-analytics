@@ -962,7 +962,7 @@ export default function MyIntelligenceScreen(): JSX.Element {
       setActionMsg(`Exchange sharing ${enabled ? "enabled" : "disabled"}.`);
       refreshAll();
     } else {
-      setActionMsg(result.error ?? "Failed to toggle sharing.");
+      setActionMsg(result.error ?? "Exchange sharing could not be updated. Please try again.");
     }
   }, [h, refreshAll]);
 

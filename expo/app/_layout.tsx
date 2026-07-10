@@ -119,6 +119,10 @@ function AuthGate(): JSX.Element {
           options={{ presentation: "modal", headerShown: false }}
         />
         <Stack.Screen
+          name="analyst-thread-detail"
+          options={{ presentation: "modal", headerShown: false }}
+        />
+        <Stack.Screen
           name="my-intelligence"
           options={{ presentation: "modal", headerShown: false }}
         />

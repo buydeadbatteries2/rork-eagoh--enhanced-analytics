@@ -1570,7 +1570,7 @@ export default function OpenIntelligenceScreen(): JSX.Element {
       setMyActionMsg(`Exchange sharing ${enabled ? "enabled" : "disabled"}.`);
       refreshMyEntries();
     } else {
-      setMyActionMsg(result.error ?? "Failed to toggle sharing.");
+      setMyActionMsg(result.error ?? "Exchange sharing could not be updated. Please try again.");
     }
   }, [h, refreshMyEntries]);
 

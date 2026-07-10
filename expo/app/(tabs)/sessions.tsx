@@ -650,7 +650,7 @@ function AnalystChatThread({
       try {
         const thread = await createThread({
           userId: currentProfile.id,
-          eagohId: currentEagoh.id,
+          eagohId: isVirtualEagoh ? null : currentEagoh.id,
           sessionType: currentSession.id as AnalystSessionType,
           title,
           domain: currentEagoh.domain ?? null,
@@ -2156,7 +2156,7 @@ export default function SessionsScreen(): JSX.Element {
     // Find matching session type
     const st = sessionTypes.find((s) => s.id === thread.session_type);
     setActiveThreadSession(st ?? null);
-    setSelectedEagohId(thread.eagoh_id);
+    setSelectedEagohId(thread.eagoh_id ?? eagohs[0]?.id ?? "");
     setActiveSession(null);
   }, [h]);
 

@@ -1169,7 +1169,7 @@ create policy "ara_service_insert" on public.analyst_response_audits
 create table if not exists public.analyst_threads (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
+  eagoh_id uuid references public.eagohs(id) on delete set null,
   session_type text not null,
   title text not null,
   domain text,
@@ -1179,6 +1179,9 @@ create table if not exists public.analyst_threads (
 
 create index if not exists at_user_id_idx on public.analyst_threads(user_id, updated_at desc);
 create index if not exists at_eagoh_idx on public.analyst_threads(eagoh_id);
+
+-- Ensure existing live tables allow nullable eagoh_id (Quick Check with virtual EAGOH)
+alter table public.analyst_threads alter column eagoh_id drop not null;
 
 alter table public.analyst_threads enable row level security;
 

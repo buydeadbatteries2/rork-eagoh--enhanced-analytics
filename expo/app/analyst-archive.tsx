@@ -115,15 +115,10 @@ export default function AnalystArchiveScreen(): JSX.Element {
 
   const handleReopenThread = useCallback((thread: ThreadWithMeta): void => {
     h.selection();
-    // Navigate back to sessions with thread params via router
-    // The sessions screen reads searchParams to reopen a thread
+    // Open the dedicated thread detail screen — not the Sessions page
     router.push({
-      pathname: "/(tabs)/sessions",
-      params: {
-        threadId: thread.id,
-        sessionType: thread.session_type,
-        eagohId: thread.eagoh_id,
-      },
+      pathname: "/analyst-thread-detail",
+      params: { threadId: thread.id },
     } as never);
   }, [router, h]);
 

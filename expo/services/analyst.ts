@@ -20,6 +20,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { normalizeDomainId } from "./domains";
+import { parseVisualBlocks, type VisualBlock } from "@/components/analysis/visualBlockTypes";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -89,6 +90,7 @@ export type AnalystCallResult = {
   confidence: number;
   grounding: PersonalGrounding;
   sources: AnalystSource[];
+  visualBlocks: VisualBlock[] | null;
 };
 
 /** Specific error codes returned by the Cloudflare worker. */
@@ -427,6 +429,7 @@ async function callAnalyst(
     confidence?: number;
     grounding?: PersonalGrounding;
     sources?: AnalystSource[];
+    visualBlocks?: unknown;
     error?: string;
     errorCode?: string;
   };
@@ -498,6 +501,7 @@ async function callAnalyst(
       sourceCount: 0,
     },
     sources: data.sources ?? [],
+    visualBlocks: parseVisualBlocks(data.visualBlocks),
   };
 }
 

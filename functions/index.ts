@@ -2,6 +2,7 @@
  * EAGOH Analyst Chat — Cloudflare Worker (Phase OI-CREATE — atomic OI entry creation)
  * Phase 11C — JWT-authed RLS client + network fix + OI save diagnostics)
  * Phase 11D — Analyst thread save fix + Exchange sharing validation
+ * Phase 11E — Visual analysis blocks for analyst sessions
  * Phase 11D — RPC null-data fallback + diagnostic insert errors)
  * Phase 11E — minimal insert fallback for schema mismatch)
  * Phase 6C — notifications & audit history)
@@ -1905,6 +1906,100 @@ async function writeAuditRecords(
 
 // ── Prompt Building ──────────────────────────────────────────────────────────
 
+// ── Visual Block Instruction ────────────────────────────────────────────────
+
+/**
+ * Build the instruction that prompts the AI to optionally include structured
+ * visual_blocks in its response when the analysis benefits from visual
+ * presentation (comparisons, projections, statlines, trends).
+ *
+ * The AI returns a JSON array of visual blocks inside a ```visual_blocks
+ * fenced code block. The worker parses this out and returns it as a separate
+ * field in the response. The text analysis is returned separately.
+ *
+ * This is NOT betting advice. All labels use analytical framing:
+ * "Projection", "Analytical Lean", "Confidence", "Trend Signal",
+ * "Comparison", "Consensus", "Risk Factors", "Data Gaps".
+ */
+function buildVisualBlockInstruction(domain: string | null): string {
+  const domainBlocks: Record<string, string> = {
+    sports: "score_comparison, consensus_meter, over_under_meter, spread_or_margin_meter, category_breakdown, trend_summary, statline_table, confidence_meter",
+    music: "consensus_meter, category_breakdown, trend_summary, confidence_meter, statline_table",
+    "film-tv": "consensus_meter, category_breakdown, trend_summary, confidence_meter, statline_table",
+    fashion: "consensus_meter, category_breakdown, trend_summary, confidence_meter",
+    education: "category_breakdown, trend_summary, confidence_meter, statline_table",
+    business: "consensus_meter, category_breakdown, trend_summary, statline_table, confidence_meter",
+    finance: "consensus_meter, category_breakdown, trend_summary, statline_table, confidence_meter",
+    technology: "consensus_meter, category_breakdown, trend_summary, confidence_meter",
+    gaming: "score_comparison, consensus_meter, category_breakdown, statline_table, trend_summary, confidence_meter",
+    "health-fitness": "category_breakdown, trend_summary, confidence_meter, statline_table",
+  };
+
+  const allowedTypes = domainBlocks[domain ?? ""] ?? "consensus_meter, category_breakdown, trend_summary, statline_table, confidence_meter";
+
+  return [
+    "VISUAL BLOCKS (optional — include only when the analysis benefits from visual presentation):",
+    "You may include structured visual data blocks in your response when the answer involves comparisons, projections, statlines, trends, matchup analysis, confidence splits, category scoring, or consensus-style summaries.",
+    "Do NOT force visual blocks into every answer. Simple text answers are fine.",
+    "",
+    "If you include visual blocks, append them at the END of your response inside a fenced code block:",
+    "```visual_blocks",
+    "[{\"type\":\"score_comparison\",\"title\":\"Projected Score\",\"leftLabel\":\"Team A\",\"rightLabel\":\"Team B\",\"leftValue\":\"3.86\",\"rightValue\":\"2.14\"},",
+    " {\"type\":\"consensus_meter\",\"title\":\"Performance Lean\",\"leftLabel\":\"Subject A\",\"rightLabel\":\"Subject B\",\"leftPercent\":62,\"rightPercent\":38},",
+    " {\"type\":\"over_under_meter\",\"title\":\"Total Projection\",\"lineLabel\":\"Projected Total\",\"lineValue\":\"6.0\",\"underPercent\":18,\"overPercent\":82},",
+    " {\"type\":\"spread_or_margin_meter\",\"title\":\"Projected Margin\",\"leftLabel\":\"Subject A\",\"rightLabel\":\"Subject B\",\"marginLabel\":\"Analytical Lean\",\"marginValue\":\"-1.72\",\"leftPercent\":68,\"rightPercent\":32},",
+    " {\"type\":\"category_breakdown\",\"title\":\"Category Comparison\",\"leftLabel\":\"Subject A\",\"rightLabel\":\"Subject B\",\"rows\":[{\"label\":\"Recent Form\",\"leftScore\":72,\"rightScore\":66}]},",
+    " {\"type\":\"trend_summary\",\"title\":\"Trend Signals\",\"items\":[{\"label\":\"Recent Momentum\",\"value\":\"Strong\"}]},",
+    " {\"type\":\"statline_table\",\"title\":\"Statline Comparison\",\"leftLabel\":\"Subject A\",\"rightLabel\":\"Subject B\",\"rows\":[{\"label\":\"Efficiency\",\"leftValue\":\"0.87\",\"rightValue\":\"0.74\"}]},",
+    " {\"type\":\"confidence_meter\",\"title\":\"Overall Confidence\",\"label\":\"Analytical Confidence\",\"percent\":74}]",
+    "```",
+    "",
+    `Allowed block types for this domain: ${allowedTypes}`,
+    "",
+    "Rules:",
+    "- Include visual blocks ONLY when the analysis clearly benefits from visual presentation.",
+    "- Do NOT fabricate exact statistics. If data is uncertain, lower confidence and note limitations.",
+    "- Use \"Insufficient data\" as a value when data is unavailable.",
+    "- This is an analytics and research app. Do NOT use betting-advice language (never say 'lock', 'guaranteed pick', 'bet this', 'wager', 'gambling advice').",
+    "- Use analytical labels: Projection, Analytical Lean, Confidence, Trend Signal, Comparison, Consensus, Risk Factors, Data Gaps.",
+    "- Percentages must sum to 100 for meter-type blocks.",
+    "- Scores should be 0-100 scale for category_breakdown.",
+    "- Limit to 3-4 visual blocks per response maximum.",
+    "- The visual_blocks section must be the LAST thing in your response, after the text analysis.",
+  ].join("\n");
+}
+
+/**
+ * Parse visual_blocks from the AI reply. The AI appends a fenced
+ * ```visual_blocks JSON array at the end of its text response.
+ * This function extracts and parses it, returning the clean text
+ * (with the fenced section removed) and the parsed blocks array.
+ */
+function extractVisualBlocks(reply: string): { text: string; visualBlocks: unknown[] | null } {
+  const marker = "```visual_blocks";
+  const idx = reply.indexOf(marker);
+  if (idx === -1) return { text: reply, visualBlocks: null };
+
+  const afterMarker = reply.slice(idx + marker.length);
+  const endIdx = afterMarker.indexOf("```");
+  if (endIdx === -1) {
+    return { text: reply.slice(0, idx).trim(), visualBlocks: null };
+  }
+
+  const jsonStr = afterMarker.slice(0, endIdx).trim();
+  const textPart = reply.slice(0, idx).trim();
+
+  try {
+    const parsed = JSON.parse(jsonStr);
+    if (Array.isArray(parsed)) {
+      return { text: textPart, visualBlocks: parsed };
+    }
+  } catch {
+    // Invalid JSON — return text without the block section
+  }
+  return { text: textPart, visualBlocks: null };
+}
+
 function getSessionInstruction(sessionType: SessionType): string {
   switch (sessionType) {
     case "oracle":
@@ -1984,6 +2079,13 @@ function buildSystemPrompt(params: {
     getPersonalityInstruction(params.personality),
     getKindInstruction(params.kind),
   );
+
+  // 2b. Visual block instructions — prompt the AI to optionally include
+  //     structured dashboard-style visual data when the analysis benefits
+  //     from visual presentation. Quick Check is excluded (too short).
+  if (params.sessionType !== "quick-check") {
+    sections.push(buildVisualBlockInstruction(params.eagohMeta?.domain ?? null));
+  }
 
   // 3. EAGOH identity and domain
   if (params.eagohMeta) {
@@ -3606,57 +3708,74 @@ async function handleUpdateOIEntry(request: Request, env: Env): Promise<Response
   }
 
   // 1. Fetch the entry — verify ownership
+  //    Select * to avoid PostgREST errors when optional columns (e.g.
+  //    exchange_share_enabled, active_dispute_count) don't exist in the
+  //    live DB schema yet. A targeted select with a missing column returns
+  //    an error, which we'd wrongly interpret as "entry not found".
   const { data: entry, error: entryErr } = await serviceClient
     .from("open_intelligence")
-    .select("id, user_id, content, confidence_level, selected_category, selected_subtags, custom_tags, exchange_share_enabled, validation_status, version_number, active_dispute_count, quality_score, influence_score")
+    .select("*")
     .eq("id", payload.entryId)
     .maybeSingle();
 
   if (entryErr || !entry) {
+    // Safe diagnostic logging — no PII, only prefixes and error codes
+    console.warn("[oi/update] entry lookup failed", JSON.stringify({
+      entryIdPrefix: (payload.entryId ?? "").slice(0, 8),
+      userIdPrefix: userId.slice(0, 8),
+      hasRow: !!entry,
+      errCode: entryErr?.code ?? null,
+      errMsg: entryErr?.message ?? null,
+    }));
     return jsonResponse({ ok: false, error: "Entry not found." }, 404);
   }
 
-  const entryRow = entry as {
-    id: string; user_id: string; content: string; confidence_level: string;
-    selected_category: string | null; selected_subtags: string[] | null;
-    custom_tags: string[] | null; exchange_share_enabled: boolean;
-    validation_status: string; version_number: number; active_dispute_count: number;
-    quality_score: number; influence_score: number;
-  };
+  const entryRow = entry as Record<string, unknown>;
+  const entryUserId = entryRow.user_id as string;
+  const entryValidationStatus = (entryRow.validation_status as string) ?? "pending_review";
+  const entryExchangeShareEnabled = (entryRow.exchange_share_enabled as boolean) ?? false;
+  const entryContent = (entryRow.content as string) ?? "";
+  const entryConfidenceLevel = (entryRow.confidence_level as string) ?? "";
+  const entrySelectedCategory = (entryRow.selected_category as string | null) ?? null;
+  const entrySelectedSubtags = (entryRow.selected_subtags as string[] | null) ?? null;
+  const entryCustomTags = (entryRow.custom_tags as string[] | null) ?? null;
+  const entryVersionNumber = (entryRow.version_number as number) ?? 1;
+  const entryQualityScore = (entryRow.quality_score as number) ?? 0;
+  const entryInfluenceScore = (entryRow.influence_score as number) ?? 0;
 
-  if (entryRow.user_id !== userId) {
+  if (entryUserId !== userId) {
     return jsonResponse({ ok: false, error: "Only the entry owner can update this entry." }, 403);
   }
 
   // 2. Determine if this is a major edit (content changed) vs minor (tags/settings only)
-  const newContent = payload.content?.trim() ?? entryRow.content;
-  const isMajorEdit = payload.content !== undefined && newContent !== entryRow.content;
+  const newContent = payload.content?.trim() ?? entryContent;
+  const isMajorEdit = payload.content !== undefined && newContent !== entryContent;
 
-  // 3. Save version history BEFORE updating the active entry
-  const currentVersion = entryRow.version_number ?? 1;
-  // All user-initiated edits use change_type = 'edit' (never minor_edit/major_edit).
-  // isMajorEdit only controls whether version_number is incremented and reputation
-  // is recalculated downstream — it does not change the change_type value.
-  const { error: versionErr } = await serviceClient
-    .from("open_intelligence_versions")
-    .insert({
-      entry_id: payload.entryId,
-      version_number: currentVersion,
-      previous_content: entryRow.content,
-      previous_category: entryRow.selected_category,
-      previous_subtags: entryRow.selected_subtags ?? [],
-      previous_custom_tags: entryRow.custom_tags ?? [],
-      previous_confidence_level: entryRow.confidence_level,
-      previous_validation_status: entryRow.validation_status,
-      previous_quality_score: entryRow.quality_score,
-      previous_influence_score: entryRow.influence_score,
-      change_type: "edit",
-      changed_by: userId,
-    });
-
-  if (versionErr) {
-    console.warn("[oi-update] version history insert failed", versionErr.message);
-    // Non-fatal — proceed with update
+  // 3. Save version history BEFORE updating the active entry — only for content edits.
+  //    Skip for toggle-only updates (exchange sharing) to avoid unnecessary writes.
+  const currentVersion = entryVersionNumber;
+  if (isMajorEdit) {
+    try {
+      await serviceClient
+        .from("open_intelligence_versions")
+        .insert({
+          entry_id: payload.entryId,
+          version_number: currentVersion,
+          previous_content: entryContent,
+          previous_category: entrySelectedCategory,
+          previous_subtags: entrySelectedSubtags ?? [],
+          previous_custom_tags: entryCustomTags ?? [],
+          previous_confidence_level: entryConfidenceLevel,
+          previous_validation_status: entryValidationStatus,
+          previous_quality_score: entryQualityScore,
+          previous_influence_score: entryInfluenceScore,
+          change_type: "edit",
+          changed_by: userId,
+        });
+    } catch (e) {
+      console.warn("[oi-update] version history insert failed", e instanceof Error ? e.message : "unknown");
+      // Non-fatal — proceed with update
+    }
   }
 
   // 4. Build update object — only allow client to set user-editable fields.
@@ -3689,7 +3808,7 @@ async function handleUpdateOIEntry(request: Request, env: Env): Promise<Response
     // Block enabling exchange sharing on rejected or withdrawn entries
     if (payload.exchangeShareEnabled === true) {
       const blockedStatuses = ["rejected", "withdrawn"];
-      if (blockedStatuses.includes(entryRow.validation_status)) {
+      if (blockedStatuses.includes(entryValidationStatus)) {
         return jsonResponse({
           ok: false,
           error: "Exchange sharing could not be updated. Please try again.",
@@ -3709,22 +3828,26 @@ async function handleUpdateOIEntry(request: Request, env: Env): Promise<Response
   }
 
   // 5. Update the entry — the DB trigger overwrites quality/influence/hash/duplicate
+  //    Select * to avoid errors when optional columns don't exist in live schema.
   const { data: updated, error: updateErr } = await serviceClient
     .from("open_intelligence")
     .update(updateFields)
     .eq("id", payload.entryId)
-    .select("id, quality_score, influence_score, content_hash, duplicate_flag, version_number")
-    .single();
+    .select("*")
+    .maybeSingle();
 
-  if (updateErr) {
-    console.warn("[oi-update] update failed", updateErr.message);
+  if (updateErr || !updated) {
+    console.warn("[oi/update] update failed", JSON.stringify({
+      entryIdPrefix: payload.entryId.slice(0, 8),
+      userIdPrefix: userId.slice(0, 8),
+      errCode: updateErr?.code ?? null,
+      errMsg: updateErr?.message ?? null,
+      updateFields: Object.keys(updateFields),
+    }));
     return jsonResponse({ ok: false, error: "Failed to update entry." }, 500);
   }
 
-  const updatedRow = updated as {
-    id: string; quality_score: number; influence_score: number;
-    content_hash: string | null; duplicate_flag: boolean; version_number: number;
-  };
+  const updatedRow = updated as Record<string, unknown>;
 
   // 6. Best-effort: recalculate contributor reputation after a major edit
   if (isMajorEdit) {
@@ -3738,12 +3861,13 @@ async function handleUpdateOIEntry(request: Request, env: Env): Promise<Response
   return jsonResponse({
     ok: true,
     entry: {
-      id: updatedRow.id,
-      qualityScore: updatedRow.quality_score,
-      influenceScore: updatedRow.influence_score,
-      contentHash: updatedRow.content_hash,
-      duplicateFlag: updatedRow.duplicate_flag,
-      versionNumber: updatedRow.version_number,
+      id: updatedRow.id as string,
+      qualityScore: (updatedRow.quality_score as number) ?? 0,
+      influenceScore: (updatedRow.influence_score as number) ?? 0,
+      contentHash: (updatedRow.content_hash as string | null) ?? null,
+      duplicateFlag: (updatedRow.duplicate_flag as boolean) ?? false,
+      versionNumber: (updatedRow.version_number as number) ?? 1,
+      exchangeShareEnabled: (updatedRow.exchange_share_enabled as boolean) ?? false,
     },
   });
 }
@@ -5130,10 +5254,10 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
     try {
       const maxTokens =
         sessionType === "quick-check" ? 220 :
-        sessionType === "quick-analytics" ? 400 :
-        sessionType === "oracle" ? 600 :
-        sessionType === "premium-event" ? 500 :
-        450;
+        sessionType === "quick-analytics" ? 600 :
+        sessionType === "oracle" ? 900 :
+        sessionType === "premium-event" ? 800 :
+        700;
 
       const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -5172,14 +5296,17 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
       const data = (await openaiRes.json()) as {
         choices?: Array<{ message?: { content?: string } }>;
       };
-      const reply = data.choices?.[0]?.message?.content?.trim();
+      const rawReply = data.choices?.[0]?.message?.content?.trim();
 
-      if (!reply) {
+      if (!rawReply) {
         return jsonResponse(
           { ok: false, errorCode: "openai_empty_response", error: "Analyst returned an empty response." },
           502,
         );
       }
+
+      // Parse visual blocks from the reply (AI appends a ```visual_blocks fenced section)
+      const { text: reply, visualBlocks } = extractVisualBlocks(rawReply);
 
       const confidenceMap: Record<SessionType, number> = {
         "quick-check": 82,
@@ -5215,6 +5342,8 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
         externalSearchUsed: grounding.externalSearchUsed,
         sourceCount: grounding.sourceCount,
         hasEagoh: !!payload.eagohId,
+        hasVisualBlocks: !!visualBlocks,
+        visualBlockCount: visualBlocks?.length ?? 0,
       });
 
       // ── Phase 5A: Write audit records (best-effort, never fails the session) ──
@@ -5362,6 +5491,7 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
         confidence: confidenceMap[sessionType],
         grounding,
         sources: externalResearchResult.sources,
+        visualBlocks: visualBlocks ?? undefined,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";

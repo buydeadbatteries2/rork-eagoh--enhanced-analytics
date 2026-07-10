@@ -17,6 +17,8 @@ import {
   type AnalystMessage,
 } from "@/services/analystThreads";
 import type { AnalystSessionType } from "@/services/analyst";
+import { AnalysisVisualBlocks, AnalyticsDisclaimer } from "@/components/analysis/AnalysisVisualBlock";
+import { parseVisualBlocks } from "@/components/analysis/visualBlockTypes";
 import {
   ArrowLeft,
   ChevronDown,
@@ -229,6 +231,7 @@ export default function AnalystThreadDetailScreen(): JSX.Element {
         ) : (
           messages.map((msg, idx) => {
             const isUser = msg.role === "user";
+            const vblocks = !isUser && msg.visual_blocks ? parseVisualBlocks(msg.visual_blocks) : null;
             return (
               <View key={msg.id} style={[styles.msgBubble, isUser ? styles.userBubble : styles.analystBubble]}>
                 <View style={[styles.msgRoleTag, { backgroundColor: isUser ? `${palette.gold}14` : `${ac}14` }]}>
@@ -236,6 +239,14 @@ export default function AnalystThreadDetailScreen(): JSX.Element {
                     {isUser ? "You" : "Analyst"}
                   </Text>
                 </View>
+                {vblocks && vblocks.length > 0 ? (
+                  <View style={{ marginBottom: 8 }}>
+                    <AnalysisVisualBlocks blocks={vblocks} />
+                    <View style={{ marginTop: 6 }}>
+                      <AnalyticsDisclaimer />
+                    </View>
+                  </View>
+                ) : null}
                 <Text style={styles.msgContent}>{msg.content}</Text>
                 <Text style={styles.msgTime}>
                   {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}

@@ -1218,6 +1218,9 @@ create table if not exists public.analyst_messages (
 create index if not exists am_thread_id_idx on public.analyst_messages(thread_id, created_at asc);
 create index if not exists am_user_id_idx on public.analyst_messages(user_id);
 
+-- Visual blocks column for structured dashboard-style analysis cards
+alter table public.analyst_messages add column if not exists visual_blocks jsonb;
+
 alter table public.analyst_messages enable row level security;
 
 drop policy if exists "am_self_select" on public.analyst_messages;

@@ -92,6 +92,8 @@ import {
 } from "@/services/analystThreads";
 import type { EagohRecord } from "@/services/eagohs";
 import type { EdgeReason } from "@/services/edge";
+import { AnalysisVisualBlocks, AnalyticsDisclaimer } from "@/components/analysis/AnalysisVisualBlock";
+import { parseVisualBlocks, type VisualBlock } from "@/components/analysis/visualBlockTypes";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ENTRY_TYPE_EDGE_COST,
@@ -159,7 +161,7 @@ const sessionTypes: SessionType[] = [
   { id: "my-rankings", name: "My Rankings", description: "Leaderboard positions & badges", costRange: "Free", minCost: 0, maxCost: 0, model: "Rankings View", duration: "Live", tone: "gold", active: true },
 ];
 
-type ChatMessage = { id: string; sender: "user" | "analyst"; text: string; confidence?: number; cost?: number; grounding?: PersonalGrounding; sources?: AnalystSource[] };
+type ChatMessage = { id: string; sender: "user" | "analyst"; text: string; confidence?: number; cost?: number; grounding?: PersonalGrounding; sources?: AnalystSource[]; visualBlocks?: VisualBlock[] | null };
 
 function toneColor(tone: SessionTone): string {
   if (tone === "gold") return palette.gold;
@@ -509,6 +511,7 @@ function AnalystChatThread({
           sender: m.role as "user" | "analyst",
           text: m.content,
           cost: m.edge_cost > 0 ? m.edge_cost : undefined,
+          visualBlocks: m.visual_blocks ? parseVisualBlocks(m.visual_blocks) : null,
         }));
         setMessages(chatMsgs);
         setIsInitialising(false);
@@ -662,11 +665,11 @@ function AnalystChatThread({
         setCurrentThreadId(thread.id);
 
         const userMsg = await addMessage({ threadId: thread.id, userId: currentProfile.id, role: "user", content: prompt, edgeCost: cost });
-        const assistantMsg = await addMessage({ threadId: thread.id, userId: currentProfile.id, role: "assistant", content: result.reply, edgeCost: 0 });
+        const assistantMsg = await addMessage({ threadId: thread.id, userId: currentProfile.id, role: "assistant", content: result.reply, edgeCost: 0, visualBlocks: result.visualBlocks });
 
         setMessages([
           { id: userMsg.id, sender: "user", text: prompt, cost },
-          { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding, sources: result.sources },
+          { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding, sources: result.sources, visualBlocks: result.visualBlocks },
         ]);
       } catch (dbErr: unknown) {
         const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
@@ -771,18 +774,18 @@ function AnalystChatThread({
     // Save to DB
     try {
       const userMsg = await addMessage({ threadId: currentThreadId, userId: profile.id, role: "user", content: text, edgeCost: cost });
-      const assistantMsg = await addMessage({ threadId: currentThreadId, userId: profile.id, role: "assistant", content: result.reply, edgeCost: 0 });
+      const assistantMsg = await addMessage({ threadId: currentThreadId, userId: profile.id, role: "assistant", content: result.reply, edgeCost: 0, visualBlocks: result.visualBlocks });
 
       setMessages((prev) => [
         ...prev,
         { id: userMsg.id, sender: "user", text, cost },
-        { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding, sources: result.sources },
+        { id: assistantMsg.id, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding, sources: result.sources, visualBlocks: result.visualBlocks },
       ]);
     } catch {
       setMessages((prev) => [
         ...prev,
         { id: `u-${Date.now()}`, sender: "user", text, cost },
-        { id: `a-${Date.now()}`, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding, sources: result.sources },
+        { id: `a-${Date.now()}`, sender: "analyst", text: result.reply, confidence: result.confidence, grounding: result.grounding, sources: result.sources, visualBlocks: result.visualBlocks },
       ]);
       setError("Could not save to history.");
     }
@@ -894,6 +897,14 @@ function AnalystChatThread({
       >
         {messages.map((msg) => (
           <View key={msg.id} style={[styles.msgBubble, msg.sender === "analyst" ? styles.msgAnalyst : styles.msgUser]}>
+            {msg.sender === "analyst" && msg.visualBlocks && msg.visualBlocks.length > 0 ? (
+              <View style={{ marginBottom: 10 }}>
+                <AnalysisVisualBlocks blocks={msg.visualBlocks} />
+                <View style={{ marginTop: 6 }}>
+                  <AnalyticsDisclaimer />
+                </View>
+              </View>
+            ) : null}
             <Text style={msg.sender === "analyst" ? styles.msgAnalystText : styles.msgUserText}>{msg.text}</Text>
             {msg.confidence ? <Text style={styles.msgMeta}>Confidence {msg.confidence}%</Text> : null}
             {msg.cost ? <Text style={styles.msgCost}>{msg.cost} Neurons</Text> : null}

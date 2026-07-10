@@ -34,6 +34,7 @@ export type AnalystMessage = {
   content: string;
   edge_cost: number;
   created_at: string;
+  visual_blocks?: unknown[] | null;
 };
 
 export type ThreadWithMeta = AnalystThread & {
@@ -181,16 +182,21 @@ export async function addMessage(params: {
   role: "user" | "assistant";
   content: string;
   edgeCost?: number;
+  visualBlocks?: unknown[] | null;
 }): Promise<AnalystMessage> {
+  const insertObj: Record<string, unknown> = {
+    thread_id: params.threadId,
+    user_id: params.userId,
+    role: params.role,
+    content: params.content,
+    edge_cost: params.edgeCost ?? 0,
+  };
+  if (params.visualBlocks && Array.isArray(params.visualBlocks) && params.visualBlocks.length > 0) {
+    insertObj.visual_blocks = params.visualBlocks;
+  }
   const { data, error } = await supabase
     .from("analyst_messages")
-    .insert({
-      thread_id: params.threadId,
-      user_id: params.userId,
-      role: params.role,
-      content: params.content,
-      edge_cost: params.edgeCost ?? 0,
-    })
+    .insert(insertObj)
     .select("*")
     .single();
 

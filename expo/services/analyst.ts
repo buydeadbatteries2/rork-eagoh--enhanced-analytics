@@ -200,13 +200,13 @@ const ERROR_MESSAGES: Record<AnalystErrorCode, string> = {
   missing_api_key: "Analyst service is not configured.",
   missing_config: "Analyst service is not fully configured.",
   invalid_request: "Invalid session request.",
-  unauthorized: "Please sign in to use the analyst service.",
+  unauthorized: "Please sign in again.",
   eagoh_not_found: "Selected EAGOH not found or access denied.",
-  openai_error: "Analyst service encountered an error.",
+  openai_error: "Analysis could not be completed. Please try again.",
   openai_rate_limit: "Analyst service is temporarily busy. Please try again.",
   openai_empty_response: "Analyst returned an empty response.",
-  network_error: "Unable to connect to analyst service.",
-  timeout: "Analysis is taking longer than expected. Please try again.",
+  network_error: "No internet connection. Please check your connection and try again.",
+  timeout: "This analysis is taking longer than expected. You can keep waiting or try again.",
   not_implemented: "This analyst session is coming online soon.",
   unknown: "Analyst service is temporarily unavailable.",
 };
@@ -396,8 +396,13 @@ async function callAnalyst(
 
   let response: Response;
   try {
-    // Client-side timeout — 30s for quick sessions, 45s for deep sessions
-    const timeoutMs = input.sessionType === "quick-check" || input.sessionType === "quick-analytics" ? 30000 : 45000;
+    // Client-side timeout — generous limits so normal analysis doesn't timeout
+    const timeoutMs =
+      input.sessionType === "quick-check" ? 45000 :
+      input.sessionType === "quick-analytics" ? 75000 :
+      input.sessionType === "standard" ? 90000 :
+      input.sessionType === "oracle" ? 120000 :
+      input.sessionType === "premium-event" ? 120000 : 90000;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 

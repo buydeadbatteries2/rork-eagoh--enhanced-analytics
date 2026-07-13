@@ -26,6 +26,7 @@ import {
   Globe,
   MessageSquare,
   Search,
+  Sparkles,
 } from "lucide-react-native";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -79,48 +80,67 @@ export default function AnalystThreadDetailScreen(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
   const scrollRef = useRef<ScrollView>(null);
+  const loadAttemptRef = useRef<number>(0);
+  const loadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadThread = useCallback(async () => {
+    if (!threadId || !profile?.id) return;
+    const attemptId = ++loadAttemptRef.current;
+    setLoading(true);
+    setError(null);
+
+    // 45-second timeout for archived thread loading
+    if (loadingTimeoutRef.current) clearTimeout(loadingTimeoutRef.current);
+    loadingTimeoutRef.current = setTimeout(() => {
+      if (attemptId !== loadAttemptRef.current) return;
+      setLoading(false);
+      setError("This analyst thread is taking longer than expected to load. Please try again.");
+    }, 45000);
+
+    try {
+      const t = await getThread(threadId);
+      if (attemptId !== loadAttemptRef.current) return;
+      if (loadingTimeoutRef.current) { clearTimeout(loadingTimeoutRef.current); loadingTimeoutRef.current = null; }
+      if (!t) {
+        setError("This analyst thread could not be opened.");
+        setLoading(false);
+        return;
+      }
+      if (t.user_id !== profile.id) {
+        setError("This analyst thread could not be opened.");
+        setLoading(false);
+        return;
+      }
+      setThread(t);
+
+      const msgs = await listMessages(threadId);
+      if (attemptId !== loadAttemptRef.current) return;
+      setMessages(msgs);
+    } catch (err: unknown) {
+      if (attemptId !== loadAttemptRef.current) return;
+      if (loadingTimeoutRef.current) { clearTimeout(loadingTimeoutRef.current); loadingTimeoutRef.current = null; }
+      const isNetwork = err instanceof Error && (err.message.toLowerCase().includes("network") || err.message.toLowerCase().includes("fetch"));
+      setError(isNetwork
+        ? "No internet connection. Please check your connection and try again."
+        : "This analyst thread could not be loaded. Please try again.");
+    } finally {
+      if (attemptId === loadAttemptRef.current) {
+        if (loadingTimeoutRef.current) { clearTimeout(loadingTimeoutRef.current); loadingTimeoutRef.current = null; }
+        setLoading(false);
+      }
+    }
+  }, [threadId, profile?.id]);
 
   useEffect(() => {
-    if (!threadId || !profile?.id) return;
-    let cancelled = false;
-
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        // Load thread metadata — getThread uses RLS so only the owner can see it
-        const t = await getThread(threadId);
-        if (cancelled) return;
-        if (!t) {
-          setError("This analyst thread could not be opened.");
-          setLoading(false);
-          return;
-        }
-        // Verify ownership (RLS already enforces this, but double-check)
-        if (t.user_id !== profile.id) {
-          setError("This analyst thread could not be opened.");
-          setLoading(false);
-          return;
-        }
-        setThread(t);
-
-        // Load messages
-        const msgs = await listMessages(threadId);
-        if (cancelled) return;
-        setMessages(msgs);
-      } catch (err: unknown) {
-        if (cancelled) return;
-        const msg = err instanceof Error ? err.message : "Failed to load thread.";
-        setError(msg);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-
+    loadThread();
     return () => {
-      cancelled = true;
+      loadAttemptRef.current++;
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+        loadingTimeoutRef.current = null;
+      }
     };
-  }, [threadId, profile?.id]);
+  }, [loadThread]);
 
   const handleBack = useCallback((): void => {
     h.selection();
@@ -152,7 +172,7 @@ export default function AnalystThreadDetailScreen(): JSX.Element {
         </View>
         <View style={styles.centerState}>
           <ActivityIndicator color={palette.cyan} size="large" />
-          <Text style={styles.centerText}>Loading thread…</Text>
+          <Text style={styles.centerText}>Loading analyst thread…</Text>
         </View>
       </SafeAreaView>
     );
@@ -175,6 +195,13 @@ export default function AnalystThreadDetailScreen(): JSX.Element {
           <Text style={styles.centerText}>
             {error ?? "This analyst thread could not be opened."}
           </Text>
+          <Pressable
+            onPress={() => { h.selection(); loadThread(); }}
+            style={({ pressed }) => [styles.retryBtn, pressed && { opacity: 0.85 }]}
+          >
+            <Sparkles color={palette.void} size={14} />
+            <Text style={styles.retryBtnText}>Try Again</Text>
+          </Pressable>
         </View>
       </SafeAreaView>
     );
@@ -198,38 +225,26 @@ export default function AnalystThreadDetailScreen(): JSX.Element {
         </View>
       </View>
 
-      <ScrollView
-        ref={scrollRef}
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Thread metadata banner */}
-        <View style={[styles.metaBanner, { borderColor: `${ac}22` }]}>
-          <LinearGradient
-            colors={[`${ac}08`, "rgba(8,15,26,0.85)"]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
-          <View style={[styles.metaIcon, { backgroundColor: `${ac}14`, borderColor: `${ac}33` }]}>
-            <MessageSquare color={ac} size={16} />
+      <ScrollView ref={scrollRef} style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+        {/* Thread metadata card */}
+        <View style={styles.metaCard}>
+          <View style={[styles.metaIcon, { backgroundColor: `${ac}14`, borderColor: `${ac}30` }]}>
+            <MessageSquare color={ac} size={18} />
           </View>
           <View style={styles.metaInfo}>
             <Text style={styles.metaType}>{meta.name}</Text>
-            <Text style={styles.metaDetails}>
-              {thread.domain ? `Domain: ${thread.domain}` : "No domain"} · {messages.length} message{messages.length === 1 ? "" : "s"}
-            </Text>
+            <Text style={styles.metaDetails}>{thread.title}</Text>
           </View>
         </View>
 
         {/* Messages */}
         {messages.length === 0 ? (
           <View style={styles.emptyMsgs}>
+            <MessageSquare color={palette.muted} size={28} />
             <Text style={styles.emptyMsgsText}>No messages in this thread.</Text>
           </View>
         ) : (
-          messages.map((msg, idx) => {
+          messages.map((msg) => {
             const isUser = msg.role === "user";
             const vblocks = !isUser && msg.visual_blocks ? parseVisualBlocks(msg.visual_blocks) : null;
             return (
@@ -256,8 +271,6 @@ export default function AnalystThreadDetailScreen(): JSX.Element {
             );
           })
         )}
-
-        <View style={{ height: 40 }} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -268,37 +281,29 @@ export default function AnalystThreadDetailScreen(): JSX.Element {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.void },
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: palette.line,
-    backgroundColor: palette.obsidian,
+    gap: 12,
   },
-  backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 5,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: palette.panel,
-    borderWidth: 1,
-    borderColor: palette.line,
-  },
+  backBtn: { padding: 4 },
   headerInfo: { flex: 1, gap: 2 },
   headerTitle: { color: palette.text, fontSize: 16, fontWeight: "900" as const },
   headerSub: { color: palette.muted, fontSize: 11, fontWeight: "600" as const },
 
   scroll: { flex: 1 },
-  scrollContent: { padding: 14, paddingBottom: 40, gap: 10 },
+  scrollContent: { padding: 16, gap: 10 },
 
-  metaBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderRadius: 8,
+  metaCard: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    backgroundColor: "rgba(255,255,255,0.03)" as const,
+    borderRadius: 10,
     borderWidth: 1,
+    borderColor: palette.line,
     padding: 14,
     gap: 12,
     overflow: "hidden" as const,
@@ -350,4 +355,16 @@ const styles = StyleSheet.create({
   centerState: { flex: 1, alignItems: "center" as const, justifyContent: "center" as const, padding: 40, gap: 14 },
   centerTitle: { color: palette.text, fontSize: 17, fontWeight: "900" as const, textAlign: "center" as const },
   centerText: { color: palette.muted, fontSize: 13, fontWeight: "600" as const, textAlign: "center" as const, lineHeight: 19 },
+
+  retryBtn: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 6,
+    backgroundColor: palette.cyan,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 7,
+    marginTop: 6,
+  },
+  retryBtnText: { color: palette.void, fontSize: 12, fontWeight: "900" as const },
 });

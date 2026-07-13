@@ -495,31 +495,56 @@ function AnalystChatThread({
   const initialisedRef = useRef(false);
   const [progressStep, setProgressStep] = useState<number>(0);
   const progressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
+  const elapsedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Stale response guard — increments on each retry so old responses are ignored
+  const requestAttemptRef = useRef<number>(0);
+  // AbortController ref to cancel previous requests on retry
+  const abortControllerRef = useRef<AbortController | null>(null);
+  // Track if we're loading an archived thread vs sending a new analysis
+  const [isLoadingArchived, setIsLoadingArchived] = useState<boolean>(false);
 
   const PROGRESS_STEPS = [
     "Gathering intelligence…",
-    "Researching current data…",
+    "Reviewing Open Intelligence…",
+    "Checking current research…",
     "Building analysis…",
-    "Preparing visuals…",
+    "Preparing visual cards…",
+    "Almost done…",
+    "Still working. This can take a little longer for deeper analysis…",
   ] as const;
 
+  // Progress message cycling — slower for deeper sessions
   useEffect(() => {
     if (isSending) {
       setProgressStep(0);
+      setElapsedSeconds(0);
       progressIntervalRef.current = setInterval(() => {
         setProgressStep((prev) => (prev < PROGRESS_STEPS.length - 1 ? prev + 1 : prev));
-      }, 3500);
+      }, 4000);
+      elapsedIntervalRef.current = setInterval(() => {
+        setElapsedSeconds((prev) => prev + 1);
+      }, 1000);
     } else {
       if (progressIntervalRef.current) {
         clearInterval(progressIntervalRef.current);
         progressIntervalRef.current = null;
       }
+      if (elapsedIntervalRef.current) {
+        clearInterval(elapsedIntervalRef.current);
+        elapsedIntervalRef.current = null;
+      }
       setProgressStep(0);
+      setElapsedSeconds(0);
     }
     return () => {
       if (progressIntervalRef.current) {
         clearInterval(progressIntervalRef.current);
         progressIntervalRef.current = null;
+      }
+      if (elapsedIntervalRef.current) {
+        clearInterval(elapsedIntervalRef.current);
+        elapsedIntervalRef.current = null;
       }
     };
   }, [isSending]);
@@ -528,6 +553,7 @@ function AnalystChatThread({
   useEffect(() => {
     if (!threadId || initialisedRef.current) return;
     initialisedRef.current = true;
+    setIsLoadingArchived(true);
     if (__DEV__) {
       console.log("[analyst-thread] routeThreadId:", threadId);
     }
@@ -545,13 +571,15 @@ function AnalystChatThread({
         }));
         setMessages(chatMsgs);
         setIsInitialising(false);
+        setIsLoadingArchived(false);
       })
       .catch((err) => {
         if (__DEV__) {
           console.log("[analyst-thread] messages load error:", err?.message ?? err);
         }
-        setLoadError("Failed to load thread messages. The thread may have been deleted or the database is unreachable.");
+        setLoadError("This analyst thread could not be loaded. Please try again.");
         setIsInitialising(false);
+        setIsLoadingArchived(false);
       });
   }, [threadId]);
 
@@ -565,16 +593,17 @@ function AnalystChatThread({
   const sessionRef = useRef(session);
   sessionRef.current = session;
 
-  // 8-second timeout — never leave screen stuck indefinitely
+  // 45-second timeout for archived thread loading — generous to avoid false errors
   useEffect(() => {
     if (!isInitialising) return;
     timeoutRef.current = setTimeout(() => {
       if (__DEV__) {
-        console.log("[analyst-thread] timeout after 8s — isInitialising still true");
+        console.log("[analyst-thread] timeout after 45s — isInitialising still true");
       }
-      setLoadError("Loading timed out. The server may be slow or unreachable.");
+      setLoadError("This analyst thread is taking longer than expected to load. You can try again or go back.");
       setIsInitialising(false);
-    }, 8000);
+      setIsLoadingArchived(false);
+    }, 45000);
     return () => {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
@@ -603,6 +632,12 @@ function AnalystChatThread({
       setLoadError("Profile not loaded. Please try again.");
       setIsInitialising(false);
       return;
+    }
+    // Stale response guard — increment attempt ID for this request
+    const attemptId = ++requestAttemptRef.current;
+    // Cancel any previous in-flight request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
     }
     setIsSending(true);
     setError(null);
@@ -656,6 +691,8 @@ function AnalystChatThread({
       }
 
       if (!result.ok) {
+        // Ignore stale responses from previous attempts
+        if (attemptId !== requestAttemptRef.current) return;
         setError(result.error);
         setIsSending(false);
         setIsInitialising(false);
@@ -709,15 +746,24 @@ function AnalystChatThread({
         setError("Failed to save session. The database may be unreachable. Please try again.");
       }
     } catch (unexpectedErr: unknown) {
+      // Ignore stale responses from previous attempts
+      if (attemptId !== requestAttemptRef.current) return;
       const msg = unexpectedErr instanceof Error ? unexpectedErr.message : String(unexpectedErr);
       if (__DEV__) {
         console.log("[analyst-thread] unexpected error in sendInitialMessage:", msg);
       }
-      setError(`Session failed: ${msg}`);
+      // Don't show raw technical errors to users
+      const isAbort = msg.toLowerCase().includes("abort") || msg.toLowerCase().includes("timeout");
+      setError(isAbort
+        ? "This analysis is taking longer than expected. You can keep waiting or try again."
+        : "Analysis could not be completed. Please try again.");
     }
 
-    setIsSending(false);
-    setIsInitialising(false);
+    // Only update state if this is still the current attempt
+    if (attemptId === requestAttemptRef.current) {
+      setIsSending(false);
+      setIsInitialising(false);
+    }
   }, [spend]);
 
   // Send follow-up message
@@ -726,6 +772,12 @@ function AnalystChatThread({
     if (!text || !profile || !currentThreadId) return;
     Keyboard.dismiss();
     setInputText("");
+    // Stale response guard
+    const attemptId = ++requestAttemptRef.current;
+    // Cancel any previous in-flight request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
     setIsSending(true);
     setError(null);
 
@@ -777,6 +829,8 @@ function AnalystChatThread({
     }
 
     if (!result.ok) {
+      // Ignore stale responses
+      if (attemptId !== requestAttemptRef.current) return;
       // Don't deduct Edge on failure
       setMessages((prev) => [...prev, { id: `u-${Date.now()}`, sender: "user", text, cost }]);
       setError(result.error);
@@ -820,7 +874,10 @@ function AnalystChatThread({
       setError("Could not save to history.");
     }
 
-    setIsSending(false);
+    // Only update state if this is still the current attempt
+    if (attemptId === requestAttemptRef.current) {
+      setIsSending(false);
+    }
   }, [inputText, profile, currentThreadId, messages, eagoh, session, edgeTotal, spend]);
 
   // Scroll on new messages
@@ -841,13 +898,13 @@ function AnalystChatThread({
         </Pressable>
         <View style={styles.threadLoading}>
           <ActivityIndicator color={palette.cyan} />
-          <Text style={styles.threadLoadingText}>Loading thread…</Text>
+          <Text style={styles.threadLoadingText}>Loading analyst thread…</Text>
         </View>
       </View>
     );
   }
 
-  // Error state (timeout, Supabase failure, etc.) with retry + back
+  // Error state (timeout, Supabase failure, etc.) with Keep Waiting / Try Again / Back
   if (loadError) {
     return (
       <View style={styles.chatWrap}>
@@ -859,22 +916,60 @@ function AnalystChatThread({
           <View style={styles.threadErrorIcon}>
             <Cpu color={palette.ember} size={32} />
           </View>
-          <Text style={styles.threadErrorTitle}>Thread Error</Text>
+          <Text style={styles.threadErrorTitle}>Taking Longer Than Expected</Text>
           <Text style={styles.threadErrorText}>{loadError}</Text>
           <View style={styles.threadErrorButtons}>
+            {/* Keep Waiting — dismiss popup, continue loading if request is still active */}
             <Pressable
               onPress={() => {
                 setLoadError(null);
-                setIsInitialising(true);
-                initialisedRef.current = false;
+                if (isSending || isLoadingArchived) {
+                  setIsInitialising(true);
+                }
               }}
               style={({ pressed }) => [
                 styles.threadErrorRetryBtn,
                 pressed && styles.pressed,
               ]}
             >
+              <Clock color={palette.void} size={14} />
+              <Text style={styles.threadErrorRetryText}>Keep Waiting</Text>
+            </Pressable>
+            {/* Try Again — cancel previous, reset all state, start fresh */}
+            <Pressable
+              onPress={() => {
+                if (abortControllerRef.current) {
+                  abortControllerRef.current.abort();
+                  abortControllerRef.current = null;
+                }
+                setLoadError(null);
+                setError(null);
+                setIsSending(false);
+                setIsInitialising(false);
+                setIsLoadingArchived(false);
+                initialisedRef.current = false;
+                setMessages([]);
+                setProgressStep(0);
+                setElapsedSeconds(0);
+                requestAttemptRef.current++;
+                setTimeout(() => {
+                  if (initialPrompt) {
+                    setIsInitialising(true);
+                    sendInitialMessage(initialPrompt);
+                  } else if (threadId) {
+                    setIsInitialising(true);
+                    initialisedRef.current = false;
+                  }
+                }, 100);
+              }}
+              style={({ pressed }) => [
+                styles.threadErrorRetryBtn,
+                { backgroundColor: palette.gold },
+                pressed && styles.pressed,
+              ]}
+            >
               <Sparkles color={palette.void} size={14} />
-              <Text style={styles.threadErrorRetryText}>Retry</Text>
+              <Text style={styles.threadErrorRetryText}>Try Again</Text>
             </Pressable>
             <Pressable
               onPress={onDone}
@@ -1134,6 +1229,11 @@ function AnalystChatThread({
               <View style={[styles.dot, { backgroundColor: palette.cyan }]} />
             </View>
             <Text style={styles.typingText}>{PROGRESS_STEPS[progressStep]}</Text>
+            {elapsedSeconds > 15 ? (
+              <Text style={[styles.typingText, { fontSize: 10, color: palette.muted }]}>
+                {elapsedSeconds}s · Longer sessions may take up to 2 minutes.
+              </Text>
+            ) : null}
           </View>
         ) : null}
         {error ? <Text style={styles.errorText}>{error}</Text> : null}

@@ -4,6 +4,7 @@
  * Phase 11D — Analyst thread save fix + Exchange sharing validation
  * Phase 11E — Visual analysis blocks for analyst sessions
  * Phase 11F — Visual fallback generation + timeout optimization
+ * Phase 11G — Increased worker timeouts for reliability
  * Phase 11D — RPC null-data fallback + diagnostic insert errors)
  * Phase 11E — minimal insert fallback for schema mismatch)
  * Phase 6C — notifications & audit history)
@@ -5450,8 +5451,13 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
         sessionType === "premium-event" ? 700 :
         600;
 
-      // Timeout: quick sessions get 12s, deep sessions get 20s
-      const timeoutMs = sessionType === "quick-check" || sessionType === "quick-analytics" ? 12000 : 20000;
+      // Timeout: generous limits so normal analysis doesn't timeout server-side
+      const timeoutMs =
+        sessionType === "quick-check" ? 25000 :
+        sessionType === "quick-analytics" ? 45000 :
+        sessionType === "standard" ? 60000 :
+        sessionType === "oracle" ? 75000 :
+        sessionType === "premium-event" ? 75000 : 60000;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 

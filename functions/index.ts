@@ -1,5 +1,6 @@
 /**
  * EAGOH Analyst Chat — Cloudflare Worker (Phase OI-CREATE — atomic OI entry creation)
+ * Phase 12A — Social sharing + faction invite by email/username
  * Phase 11C — JWT-authed RLS client + network fix + OI save diagnostics)
  * Phase 11D — Analyst thread save fix + Exchange sharing validation
  * Phase 11E — Visual analysis blocks for analyst sessions
@@ -7122,6 +7123,177 @@ async function handleArenaHistory(request: Request, env: Env): Promise<Response>
   return jsonResponse({ ok: true, entries: data ?? [] });
 }
 
+/**
+ * POST /factions/invite
+ *
+ * Secure faction invite by email or username.
+ * - Requires JWT auth
+ * - Gets inviter user ID from verified token
+ * - Verifies inviter is the faction commander
+ * - Finds invitee by exact email or username match (no broad search)
+ * - Prevents inviting self, existing members, and duplicate pending invites
+ * - Never exposes full user lookup results publicly
+ */
+async function handleFactionInvite(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return jsonResponse({ ok: false, error: "Method not allowed." }, 405);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Server not configured." }, 503);
+  }
+
+  let payload: { factionId: string; query: string; role?: string };
+  try {
+    payload = (await request.json()) as typeof payload;
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request." }, 400);
+  }
+
+  if (!payload.factionId || !payload.query?.trim()) {
+    return jsonResponse({ ok: false, error: "Faction ID and query are required." }, 400);
+  }
+
+  const supabase = createClient(normalizeSupabaseUrl(env.SUPABASE_URL), env.SUPABASE_ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) {
+    return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+  }
+
+  // 1. Verify inviter is the faction commander
+  const { data: faction, error: factionErr } = await serviceClient
+    .from("factions")
+    .select("id, commander_id, current_members, max_members")
+    .eq("id", payload.factionId)
+    .maybeSingle();
+
+  if (factionErr || !faction) {
+    return jsonResponse({ ok: false, error: "Faction not found." }, 404);
+  }
+
+  const factionRow = faction as { id: string; commander_id: string; current_members: number; max_members: number };
+  if (factionRow.commander_id !== userId) {
+    return jsonResponse({ ok: false, error: "You do not have permission to invite members." }, 403);
+  }
+
+  if (factionRow.current_members >= factionRow.max_members) {
+    return jsonResponse({ ok: false, error: "Faction is at maximum capacity." }, 400);
+  }
+
+  const query = payload.query.trim();
+  const isEmail = query.includes("@");
+
+  // 2. Find invitee by exact email or username match (no broad search)
+  let inviteeId: string | null = null;
+
+  if (isEmail) {
+    // Look up user by email via auth admin API (service role only)
+    try {
+      const { data: authData, error: authErr } = await serviceClient.auth.admin.listUsers({
+        page: 1,
+        perPage: 1000,
+      });
+      if (!authErr && authData) {
+        const users = authData.users ?? [];
+        const match = users.find((u: { email?: string; id: string }) =>
+          u.email?.toLowerCase() === query.toLowerCase(),
+        );
+        if (match) inviteeId = match.id;
+      }
+    } catch {
+      // admin API might not be available, fall through to username lookup
+    }
+
+    // Fallback: if the email looks like a username (no @), try username lookup
+    if (!inviteeId) {
+      const { data: profileMatch } = await serviceClient
+        .from("profiles")
+        .select("id")
+        .eq("username", query)
+        .maybeSingle();
+      if (profileMatch) {
+        inviteeId = (profileMatch as { id: string }).id;
+      }
+    }
+  } else {
+    // Username lookup — exact match only (case-sensitive as usernames are lowercase)
+    const { data: profileMatch } = await serviceClient
+      .from("profiles")
+      .select("id")
+      .eq("username", query.toLowerCase())
+      .maybeSingle();
+    if (profileMatch) {
+      inviteeId = (profileMatch as { id: string }).id;
+    }
+  }
+
+  // 3. If no exact match found, return generic not found (no account enumeration)
+  if (!inviteeId) {
+    return jsonResponse({ ok: false, error: "No EAGOH user found with that email or username." }, 404);
+  }
+
+  // 4. Prevent inviting self
+  if (inviteeId === userId) {
+    return jsonResponse({ ok: false, error: "You cannot invite yourself." }, 400);
+  }
+
+  // 5. Check if already a member
+  const { data: existingMember } = await serviceClient
+    .from("faction_members")
+    .select("id")
+    .eq("faction_id", payload.factionId)
+    .eq("user_id", inviteeId)
+    .maybeSingle();
+  if (existingMember) {
+    return jsonResponse({ ok: false, error: "This user is already a member." }, 409);
+  }
+
+  // 6. Check for existing pending invite
+  const { data: existingInvite } = await serviceClient
+    .from("faction_invites")
+    .select("id")
+    .eq("faction_id", payload.factionId)
+    .eq("invitee_id", inviteeId)
+    .eq("status", "pending")
+    .maybeSingle();
+  if (existingInvite) {
+    return jsonResponse({ ok: false, error: "An invite is already pending." }, 409);
+  }
+
+  // 7. Create the invite
+  const role = (payload.role === "strategist" || payload.role === "recruit" || payload.role === "commander") ? payload.role : "analyst";
+  const { error: insertErr } = await serviceClient.from("faction_invites").insert({
+    faction_id: payload.factionId,
+    inviter_id: userId,
+    invitee_id: inviteeId,
+    role,
+  });
+
+  if (insertErr) {
+    console.warn("[factions/invite] insert failed", insertErr.message);
+    return jsonResponse({ ok: false, error: "Failed to send invite." }, 500);
+  }
+
+  // 8. Log activity
+  await serviceClient.from("faction_activity").insert({
+    faction_id: payload.factionId,
+    user_id: userId,
+    kind: "invite_sent",
+    details: { role },
+  });
+
+  return jsonResponse({ ok: true });
+}
+
 // ── Export ───────────────────────────────────────────────────────────────────
 
 export default {
@@ -7243,6 +7415,11 @@ export default {
     // Phase 11B: Arena history (paginated, owner-scoped)
     if (url.pathname === "/arena/history" && request.method === "GET") {
       return handleArenaHistory(request, env);
+    }
+
+    // Faction invite by email or username (secure, JWT-authed)
+    if (url.pathname === "/factions/invite" && request.method === "POST") {
+      return handleFactionInvite(request, env);
     }
 
     return jsonResponse({ ok: false, error: "Not found" }, 404);

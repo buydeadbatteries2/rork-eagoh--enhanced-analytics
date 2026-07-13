@@ -13,7 +13,7 @@ import { useWindowDimensions } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useHaptics } from "@/hooks/useHaptics";
 import { useRouter } from "expo-router";
-import { Award, Bell, BrainCircuit, Coins, Cpu, Crown, Eye, Flame, FlaskConical, Layers3, LogOut, Swords, Sparkles, Shield, Ticket, Trophy, TrendingUp, Zap } from "lucide-react-native";
+import { Award, Bell, BrainCircuit, Coins, Cpu, Crown, Eye, Flame, FlaskConical, Layers3, Link2, LogOut, Share2, Swords, Sparkles, Shield, Ticket, Trophy, TrendingUp, Zap } from "lucide-react-native";
 import { INTELLIGENCE_DOMAINS } from "@/services/domains";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import PublicProfileModal from "@/components/PublicProfileModal";
@@ -32,6 +32,7 @@ import {
   type EagohReputationDisplay,
 } from "@/services/reputation";
 import { getUserRankings, type LeaderboardEntry } from "@/services/leaderboards";
+import { shareProfile, copyProfileLink } from "@/services/sharing";
 
 type LabTone = "cyan" | "gold" | "violet" | "ember" | "success";
 type ProfileSection = { id: string; kind: "hero" | "stats" | "identity" | "settings" };
@@ -496,6 +497,32 @@ export default function ProfileScreen(): JSX.Element {
             </View>
             <Cpu color={palette.muted} size={16} />
           </Pressable>
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <Pressable
+              onPress={() => { h.selection(); shareProfile(displayAlias, (user?.user_metadata as { username?: string } | undefined)?.username ?? null, user?.id ?? ""); }}
+              style={({ pressed }) => [styles.settingsCard, { flex: 1 }, pressed && { opacity: 0.8 }]}
+            >
+              <View style={[styles.featureIconWrap, { borderColor: "rgba(169,77,255,0.35)" }]}>
+                <Share2 color={palette.violet} size={20} />
+              </View>
+              <View style={styles.featureInfo}>
+                <Text style={styles.featureTitle}>Share Profile</Text>
+                <Text style={styles.featureDesc}>Share your public profile link</Text>
+              </View>
+            </Pressable>
+            <Pressable
+              onPress={() => { h.selection(); copyProfileLink((user?.user_metadata as { username?: string } | undefined)?.username ?? null, user?.id ?? ""); }}
+              style={({ pressed }) => [styles.settingsCard, { flex: 1 }, pressed && { opacity: 0.8 }]}
+            >
+              <View style={[styles.featureIconWrap, { borderColor: "rgba(169,77,255,0.35)" }]}>
+                <Link2 color={palette.violet} size={20} />
+              </View>
+              <View style={styles.featureInfo}>
+                <Text style={styles.featureTitle}>Copy Link</Text>
+                <Text style={styles.featureDesc}>Copy profile link to clipboard</Text>
+              </View>
+            </Pressable>
+          </View>
           <Pressable onPress={() => { h.selection(); router.push("/notifications" as never); }} style={({ pressed }) => [styles.settingsCard, pressed && { opacity: 0.8 }]}>
             <View style={[styles.featureIconWrap, { borderColor: "rgba(54,245,255,0.35)" }]}>
               <Bell color={palette.cyan} size={20} />

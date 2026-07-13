@@ -18,6 +18,8 @@ import {
   Crown,
   Globe,
   Layers3,
+  Link2,
+  Share2,
   Shield,
   Star,
   Tag,
@@ -49,6 +51,7 @@ import { getVendorStats } from "@/services/marketplace";
 import { getBulkReputations, rankColor as repRankColor, RANK_TIERS } from "@/services/reputation";
 import type { ReputationRow } from "@/services/reputation";
 import type { EagohRecord } from "@/services/eagohs";
+import { shareProfile, copyProfileLink } from "@/services/sharing";
 
 type P = typeof palette;
 
@@ -306,6 +309,23 @@ function createStyles(pal: P) {
     },
 
     // Privacy helper
+    shareBtn: {
+      flex: 1,
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      justifyContent: "center" as const,
+      gap: 6,
+      paddingVertical: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: `${pal.violet}33`,
+      backgroundColor: `${pal.violet}0A`,
+    },
+    shareBtnText: {
+      color: pal.violet,
+      fontSize: 12,
+      fontWeight: "900" as const,
+    },
     privacyFooter: {
       marginHorizontal: 16,
       marginTop: 20,
@@ -694,6 +714,24 @@ export default function PublicProfileScreen(): JSX.Element {
             </View>
           </View>
         )}
+
+        {/* Share buttons */}
+        <View style={{ flexDirection: "row", gap: 10, marginHorizontal: 16, marginTop: 10 }}>
+          <Pressable
+            onPress={() => shareProfile(profile.username, profile.username, userId)}
+            style={({ pressed }) => [s.shareBtn, pressed && { opacity: 0.8 }]}
+          >
+            <Share2 color={pal.violet} size={16} />
+            <Text style={s.shareBtnText}>Share Profile</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => copyProfileLink(profile.username, userId)}
+            style={({ pressed }) => [s.shareBtn, pressed && { opacity: 0.8 }]}
+          >
+            <Link2 color={pal.violet} size={16} />
+            <Text style={s.shareBtnText}>Copy Link</Text>
+          </Pressable>
+        </View>
 
         {/* Privacy footer */}
         <View style={s.privacyFooter}>

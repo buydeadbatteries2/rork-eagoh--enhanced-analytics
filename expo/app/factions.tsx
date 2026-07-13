@@ -19,7 +19,8 @@ import {
   listPendingInvites,
   acceptInvite,
   declineInvite,
-  inviteToFaction,
+  inviteByEmailOrUsername,
+  getMemberProfiles,
   promoteMember,
   shareIntelToFaction,
   purchaseFactionSlots,
@@ -84,6 +85,7 @@ import {
   Search,
   SlidersHorizontal,
 } from "lucide-react-native";
+import { Image } from "expo-image";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -421,11 +423,13 @@ function FactionDetail({
 
   // ── Sub-states ──────────────────────────────────────────────────────
 
-  const [inviteUserId, setInviteUserId] = useState("");
+  const [inviteQuery, setInviteQuery] = useState("");
+  const [inviteSending, setInviteSending] = useState(false);
   const [promoteTarget, setPromoteTarget] = useState<string | null>(null);
   const [promoteRole, setPromoteRole] = useState<FactionRole>("strategist");
   const [memberRepMap, setMemberRepMap] = useState<Map<string, ReputationRow>>(new Map());
   const [userToEagohMap, setUserToEagohMap] = useState<Map<string, string>>(new Map());
+  const [memberProfileMap, setMemberProfileMap] = useState<Map<string, { username: string | null; avatar_url: string | null }>>(new Map());
 
   // ── Phase 6A: Shared intelligence trust UI state ───────────────────
   const [sharedOIEntries, setSharedOIEntries] = useState<OpenIntelligenceRow[]>([]);
@@ -548,9 +552,12 @@ function FactionDetail({
     queryClient.invalidateQueries({ queryKey: ["faction", faction.id] });
   }, [queryClient, faction.id]);
 
-  // Load reputations for member EAGOHs
+  // Load reputations for member EAGOHs + member profile info
   useEffect(() => {
     if (!full?.members || full.members.length === 0) return;
+    const memberUserIds = full.members.map((m) => m.user_id);
+    // Fetch member profiles (username, avatar_url)
+    getMemberProfiles(memberUserIds).then(setMemberProfileMap).catch(() => undefined);
     Promise.all(
       full.members.map((m) =>
         supabase.from("eagohs").select("id").eq("user_id", m.user_id).maybeSingle()
@@ -578,20 +585,23 @@ function FactionDetail({
   // ── Handlers ────────────────────────────────────────────────────────
 
   const handleInvite = useCallback(async () => {
-    if (!inviteUserId.trim() || !userId) return;
+    if (!inviteQuery.trim() || !userId) return;
+    setInviteSending(true);
     try {
-      const result = await inviteToFaction(faction.id, userId, inviteUserId.trim(), "analyst");
+      const result = await inviteByEmailOrUsername(faction.id, userId, inviteQuery.trim(), "analyst");
       if (result.ok) {
-        Alert.alert("Invite Sent", `Invited ${inviteUserId.trim()} to ${faction.name}.`);
-        setInviteUserId("");
+        Alert.alert("Invite Sent", "Faction invite sent.");
+        setInviteQuery("");
         queryClient.invalidateQueries({ queryKey: ["faction", faction.id] });
       } else {
         Alert.alert("Error", result.error ?? "Failed to send invite.");
       }
     } catch {
       Alert.alert("Error", "Failed to send invite.");
+    } finally {
+      setInviteSending(false);
     }
-  }, [inviteUserId, userId, faction.id, faction.name, queryClient]);
+  }, [inviteQuery, userId, faction.id, queryClient]);
 
   const handleSlotPurchase = useCallback(
     async (slots: number) => {
@@ -750,12 +760,26 @@ function FactionDetail({
         {dormantMembers > 0 ? <Text style={styles.rosterStat}><Text style={{ color: palette.ember, fontWeight: "900" as const }}>{dormantMembers}</Text> Dormant</Text> : null}
       </View>
 
-      {members.map((m) => (
+      {members.map((m) => {
+        const memberProfile = memberProfileMap.get(m.user_id);
+        const avatarUrl = memberProfile?.avatar_url ?? null;
+        const memberUsername = memberProfile?.username ?? null;
+        const initials = (memberUsername ?? getRoleLabel(m.role)).slice(0, 1).toUpperCase();
+        return (
         <View key={m.id} style={styles.memberRow}>
+          <View style={styles.memberAvatar}>
+            {avatarUrl ? (
+              <Image source={{ uri: avatarUrl }} style={styles.memberAvatarImg} contentFit="cover" />
+            ) : (
+              <View style={styles.memberAvatarFallback}>
+                <Text style={styles.memberAvatarInitials}>{initials}</Text>
+              </View>
+            )}
+          </View>
           <View style={[styles.memberDot, { backgroundColor: palette[getMemberStatusColor(m.status)] }]} />
           <View style={styles.rowText}>
-            <Text style={styles.rowTitle}>{getRoleLabel(m.role)}</Text>
-            <Text style={styles.rowSub}>{getMemberStatusLabel(m.status)}</Text>
+            <Text style={styles.rowTitle}>{memberUsername ?? getRoleLabel(m.role)}</Text>
+            <Text style={styles.rowSub}>{getRoleLabel(m.role)} · {getMemberStatusLabel(m.status)}</Text>
           </View>
           {canManage && m.user_id !== userId && m.role !== "commander" && (
             <Pressable
@@ -775,7 +799,8 @@ function FactionDetail({
             </Pressable>
           )}
         </View>
-      ))}
+        );
+      })}
 
       {/* ── Intelligence Dashboard ────────────────────────────────────── */}
       <SectionHeader eyebrow="SCORE" title="Faction Intelligence" />
@@ -795,18 +820,27 @@ function FactionDetail({
           <SectionHeader eyebrow="COMMAND" title="Management" />
 
           {/* Invite */}
-          <Text style={styles.fieldLabel}>INVITE ANALYST (USER ID)</Text>
+          <Text style={styles.fieldLabel}>INVITE BY EMAIL OR USERNAME</Text>
           <View style={styles.inviteInputRow}>
             <TextInput
               style={[styles.fieldInput, { flex: 1 }]}
-              value={inviteUserId}
-              onChangeText={setInviteUserId}
-              placeholder="User UUID"
+              value={inviteQuery}
+              onChangeText={setInviteQuery}
+              placeholder="friend@email.com or username"
               placeholderTextColor={palette.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
             />
-            <Pressable style={styles.inviteBtn} onPress={handleInvite}>
-              <UserPlus color={palette.text} size={16} />
-              <Text style={styles.inviteBtnText}>Invite</Text>
+            <Pressable style={styles.inviteBtn} onPress={handleInvite} disabled={inviteSending}>
+              {inviteSending ? (
+                <ActivityIndicator color={palette.void} size={14} />
+              ) : (
+                <>
+                  <UserPlus color={palette.text} size={16} />
+                  <Text style={styles.inviteBtnText}>Send Invite</Text>
+                </>
+              )}
             </Pressable>
           </View>
 
@@ -1740,6 +1774,22 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: palette.line,
   },
+  memberAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  memberAvatarImg: { width: "100%", height: "100%" },
+  memberAvatarFallback: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(108,230,255,0.10)",
+  },
+  memberAvatarInitials: { color: palette.cyan, fontSize: 13, fontWeight: "900" },
   memberDot: { width: 8, height: 8, borderRadius: 4 },
   promoteBtn: {
     width: 28,

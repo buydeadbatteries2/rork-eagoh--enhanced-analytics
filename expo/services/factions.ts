@@ -112,7 +112,11 @@ export type FactionFull = FactionRow & {
 
 export type FactionMemberDisplay = FactionMemberRow & {
   username?: string | null;
+  avatar_url?: string | null;
 };
+
+/** Avatar + username map for faction members (keyed by user_id). */
+export type MemberProfileMap = Map<string, { username: string | null; avatar_url: string | null }>;
 
 // ── Activity event descriptions ────────────────────────────────────────
 
@@ -705,6 +709,25 @@ export async function purchaseFactionSlots(
   return { ok: true, faction: updated as FactionRow, remainingBalance: updatedProfile };
 }
 
+// ── Member Profile Fetch ───────────────────────────────────────────────
+
+/** Fetches public profile info (username, avatar_url) for a list of user IDs. */
+export async function getMemberProfiles(
+  userIds: string[],
+): Promise<MemberProfileMap> {
+  const map: MemberProfileMap = new Map();
+  if (userIds.length === 0) return map;
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, username, avatar_url")
+    .in("id", userIds);
+  if (error) return map;
+  for (const row of (data ?? []) as { id: string; username: string | null; avatar_url: string | null }[]) {
+    map.set(row.id, { username: row.username, avatar_url: row.avatar_url });
+  }
+  return map;
+}
+
 // ── Invites ────────────────────────────────────────────────────────────
 
 export async function inviteToFaction(
@@ -758,6 +781,62 @@ export async function inviteToFaction(
   });
 
   return { ok: true };
+}
+
+/** Invite result type for the email/username invite flow. */
+export type InviteByLookupResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+/**
+ * Invite a user to a faction by email or username.
+ *
+ * SECURITY: Uses the secure worker endpoint to resolve the invitee.
+ * Never exposes full user lookup results publicly.
+ * Only exact matches on email or username are accepted.
+ */
+export async function inviteByEmailOrUsername(
+  factionId: string,
+  inviterId: string,
+  query: string,
+  role: FactionRole = "analyst",
+): Promise<InviteByLookupResult> {
+  const trimmed = query.trim();
+  if (!trimmed) return { ok: false, error: "Please enter an email or username." };
+
+  // Call the secure worker endpoint to resolve and invite
+  const functionsUrl = process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL;
+  if (!functionsUrl) {
+    return { ok: false, error: "Server not configured." };
+  }
+
+  const { data: sessionData } = await supabase.auth.getSession();
+  const jwt = sessionData.session?.access_token;
+  if (!jwt) return { ok: false, error: "Authentication required." };
+
+  try {
+    const response = await fetch(`${functionsUrl}/factions/invite`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${jwt}`,
+      },
+      body: JSON.stringify({
+        factionId,
+        query: trimmed,
+        role,
+      }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({})) as { error?: string };
+      return { ok: false, error: data.error ?? "Failed to send invite." };
+    }
+
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Network error. Please try again." };
+  }
 }
 
 export async function acceptInvite(

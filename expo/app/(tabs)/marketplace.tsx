@@ -17,12 +17,14 @@ import {
   Dna,
   Filter,
   Info,
+  Link2,
   PackageOpen,
   Pencil,
   PlusCircle,
   Power,
   ScrollText,
   Search,
+  Share2,
   Shield,
   Signal,
   SlidersHorizontal,
@@ -96,6 +98,7 @@ import { getBulkReputations, rankColor as repRankColor, RANK_TIERS, type RankTie
 import type { ReputationRow } from "@/services/reputation";
 import { supabase } from "@/lib/supabase";
 import { getLeaderboard } from "@/services/leaderboards";
+import { shareListing, copyListingLink } from "@/services/sharing";
 import {
   fetchVendorQualityMetrics,
   fetchBulkPublicReputations,
@@ -1878,6 +1881,25 @@ const MyListingCard = memo(function MyListingCard({
           <Text style={styles.myListingEditText}>Edit Pricing</Text>
         </Pressable>
         <Pressable
+          onPress={() => shareListing(
+            eagoh?.name ?? "My EAGOH",
+            item.vendor_username,
+            item.id,
+            item.description,
+          )}
+          style={styles.myListingShareBtn}
+        >
+          <Share2 color={palette.violet} size={13} />
+          <Text style={styles.myListingShareText}>Share</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => copyListingLink(item.id)}
+          style={styles.myListingShareBtn}
+        >
+          <Link2 color={palette.violet} size={13} />
+          <Text style={styles.myListingShareText}>Copy Link</Text>
+        </Pressable>
+        <Pressable
           onPress={() => onToggle(item.id, !item.active)}
           style={[styles.myListingActionBtn, item.active ? styles.myListingActionBtnOff : styles.myListingActionBtnOn]}
         >
@@ -2838,6 +2860,18 @@ const styles = StyleSheet.create({
     backgroundColor: palette.cyanSoft,
   },
   myListingEditText: { color: palette.cyan, fontSize: 12, fontWeight: "900" },
+  myListingShareBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    borderWidth: 1,
+    borderColor: palette.violet,
+    borderRadius: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: "rgba(169,77,255,0.08)",
+  },
+  myListingShareText: { color: palette.violet, fontSize: 12, fontWeight: "900" },
   myListingActionBtn: { borderRadius: 5, paddingHorizontal: 14, paddingVertical: 7 },
   myListingActionBtnOff: { backgroundColor: palette.emberSoft, borderWidth: 1, borderColor: palette.ember },
   myListingActionBtnOn: { backgroundColor: palette.successSoft, borderWidth: 1, borderColor: palette.success },

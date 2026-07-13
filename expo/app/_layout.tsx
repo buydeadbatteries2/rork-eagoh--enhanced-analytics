@@ -107,6 +107,10 @@ function AuthGate(): JSX.Element {
           options={{ presentation: "modal", headerShown: false }}
         />
         <Stack.Screen
+          name="public-listing"
+          options={{ presentation: "modal", headerShown: false }}
+        />
+        <Stack.Screen
           name="subscription"
           options={{ presentation: "modal", headerShown: false }}
         />

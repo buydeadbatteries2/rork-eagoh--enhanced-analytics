@@ -493,6 +493,36 @@ function AnalystChatThread({
   const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialisedRef = useRef(false);
+  const [progressStep, setProgressStep] = useState<number>(0);
+  const progressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const PROGRESS_STEPS = [
+    "Gathering intelligence…",
+    "Researching current data…",
+    "Building analysis…",
+    "Preparing visuals…",
+  ] as const;
+
+  useEffect(() => {
+    if (isSending) {
+      setProgressStep(0);
+      progressIntervalRef.current = setInterval(() => {
+        setProgressStep((prev) => (prev < PROGRESS_STEPS.length - 1 ? prev + 1 : prev));
+      }, 3500);
+    } else {
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+      setProgressStep(0);
+    }
+    return () => {
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+    };
+  }, [isSending]);
 
   // Load existing messages if reopening a thread
   useEffect(() => {
@@ -1103,7 +1133,7 @@ function AnalystChatThread({
               <View style={[styles.dot, styles.dotMid, { backgroundColor: palette.cyan }]} />
               <View style={[styles.dot, { backgroundColor: palette.cyan }]} />
             </View>
-            <Text style={styles.typingText}>Processing…</Text>
+            <Text style={styles.typingText}>{PROGRESS_STEPS[progressStep]}</Text>
           </View>
         ) : null}
         {error ? <Text style={styles.errorText}>{error}</Text> : null}

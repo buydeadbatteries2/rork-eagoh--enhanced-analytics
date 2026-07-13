@@ -206,7 +206,7 @@ const ERROR_MESSAGES: Record<AnalystErrorCode, string> = {
   openai_rate_limit: "Analyst service is temporarily busy. Please try again.",
   openai_empty_response: "Analyst returned an empty response.",
   network_error: "Unable to connect to analyst service.",
-  timeout: "Analyst request timed out. Please try again.",
+  timeout: "Analysis is taking longer than expected. Please try again.",
   not_implemented: "This analyst session is coming online soon.",
   unknown: "Analyst service is temporarily unavailable.",
 };
@@ -396,14 +396,24 @@ async function callAnalyst(
 
   let response: Response;
   try {
-    response = await fetch(`${FUNCTIONS_BASE_URL}/analyst/chat`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify(payload),
-    });
+    // Client-side timeout — 30s for quick sessions, 45s for deep sessions
+    const timeoutMs = input.sessionType === "quick-check" || input.sessionType === "quick-analytics" ? 30000 : 45000;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      response = await fetch(`${FUNCTIONS_BASE_URL}/analyst/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
   } catch (fetchError) {
     const message = fetchError instanceof Error ? fetchError.message : "Unknown fetch error";
     devLog("error", {

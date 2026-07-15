@@ -18,7 +18,7 @@ import { useAppTheme } from "@/providers/ThemeProvider";
 import { useAuth } from "@/providers/AuthProvider";
 import { useEdge } from "@/providers/EdgeProvider";
 import { useEagohs, useEagohFull } from "@/providers/EagohProvider";
-import { useForge, type ForgePending } from "@/providers/ForgeProvider";
+import { useForge, type ForgePending, type ForgeStage } from "@/providers/ForgeProvider";
 import { useProfile } from "@/providers/ProfileProvider";
 import { canUseForge } from "@/services/permissions";
 import type { EagohFull, EagohRecord, TeamFocusMode } from "@/services/eagohs";
@@ -296,6 +296,16 @@ const OptionChip = memo(function OptionChip({
   );
 });
 
+const FORGE_STAGE_LABELS: Record<string, string> = {
+  authenticating: "Verifying credentials…",
+  generating: "Generating cybernetic render…",
+  persisting: "Persisting EAGOH identity…",
+  done: "Complete",
+  idle: "",
+};
+
+const FORGE_STAGE_ORDER = ["authenticating", "generating", "persisting"] as const;
+
 function ConfirmationSheet({
   pending,
   onConfirm,
@@ -305,6 +315,7 @@ function ConfirmationSheet({
   canAfford,
   sheetError,
   forgeSuccess,
+  stage,
 }: {
   pending: ForgePending;
   onConfirm: () => void;
@@ -314,7 +325,9 @@ function ConfirmationSheet({
   canAfford: boolean;
   sheetError: string | null;
   forgeSuccess: boolean;
+  stage: ForgeStage;
 }): JSX.Element {
+  const stageIdx = FORGE_STAGE_ORDER.indexOf(stage as typeof FORGE_STAGE_ORDER[number]);
   return (
     <View style={styles.confirmOverlay}>
       <Pressable style={StyleSheet.absoluteFill} onPress={isGenerating ? undefined : onCancel} />
@@ -327,6 +340,44 @@ function ConfirmationSheet({
             </View>
             <Text style={styles.confirmSuccessTitle}>EAGOH Forged!</Text>
             <Text style={styles.confirmSuccessSub}>Your new intelligence unit is ready.</Text>
+          </>
+        ) : isGenerating ? (
+          <>
+            <Text style={styles.confirmHeader}>FORGING EAGOH</Text>
+            <Text style={styles.confirmName}>{pending.draft.name || "Unnamed EAGOH"}</Text>
+            <View style={styles.forgeStages}>
+              {FORGE_STAGE_ORDER.map((s, i) => {
+                const isDone = i < stageIdx;
+                const isActive = i === stageIdx;
+                return (
+                  <View key={s} style={styles.forgeStageRow}>
+                    <View style={[
+                      styles.forgeStageDot,
+                      isDone && { backgroundColor: palette.success, borderColor: palette.success },
+                      isActive && { borderColor: palette.cyan, backgroundColor: "rgba(54,245,255,0.18)" },
+                    ]}>
+                      {isDone ? (
+                        <Check color={palette.success} size={10} />
+                      ) : isActive ? (
+                        <ActivityIndicator color={palette.cyan} size="small" />
+                      ) : null}
+                    </View>
+                    <Text
+                      style={[
+                        styles.forgeStageLabel,
+                        isDone && { color: palette.muted },
+                        isActive && { color: palette.cyan },
+                      ]}
+                    >
+                      {FORGE_STAGE_LABELS[s]}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+            <Text style={styles.forgeStageHint}>
+              This can take up to 60 seconds. Your Neurons are only charged on success.
+            </Text>
           </>
         ) : (
           <>
@@ -380,7 +431,7 @@ export default function ForgeScreen(): JSX.Element {
   const { user } = useAuth();
   const { profile } = useProfile();
   const { total: edgeTotal } = useEdge();
-  const { pending, prepareForge, confirmForge, cancelForge, isGenerating } = useForge();
+  const { pending, prepareForge, confirmForge, cancelForge, isGenerating, stage } = useForge();
   const { eagohs, remaining, canCreate, tier, deleteEagoh, isDeleting } = useEagohs();
   const { height: windowHeight } = useWindowDimensions();
   const { palette: pal } = useAppTheme();
@@ -1071,7 +1122,17 @@ export default function ForgeScreen(): JSX.Element {
     setSheetError(null);
     confirmForge().then((result) => {
       if (!result.ok) {
-        setSheetError(result.error);
+        // Map machine-readable reasons to user-friendly messages.
+        const friendly: Record<string, string> = {
+          balance: "Insufficient Neurons. Visit the Edge Store to get more.",
+          auth: "Your session expired. Please sign in again.",
+          limit: "You've reached your tier's EAGOH limit. Upgrade to forge more.",
+          image: "Image generation failed. Your Neurons were not charged.",
+          persist: "Something went wrong saving your EAGOH. No Neurons were charged.",
+        };
+        const msg = friendly[result.reason] ?? result.error;
+        setSheetError(msg);
+        h.error();
       } else {
         setForgeSuccess(true);
         h.success();
@@ -1082,7 +1143,8 @@ export default function ForgeScreen(): JSX.Element {
         }, 2000);
       }
     }).catch((err: Error) => {
-      setSheetError(err?.message ?? "Forge failed.");
+      setSheetError(err?.message ?? "Forge failed. No Neurons were charged.");
+      h.error();
     });
   }, [confirmForge, cancelForge, h]);
 
@@ -1933,6 +1995,7 @@ export default function ForgeScreen(): JSX.Element {
           canAfford={edgeTotal >= pending.edgeCost}
           sheetError={sheetError}
           forgeSuccess={forgeSuccess}
+          stage={stage}
         />
       ) : null}
 
@@ -2781,6 +2844,28 @@ const styles = StyleSheet.create({
   },
   confirmSuccessTitle: { color: palette.text, fontSize: 22, fontWeight: "900", textAlign: "center" },
   confirmSuccessSub: { color: palette.muted, fontSize: 13, fontWeight: "700", textAlign: "center" },
+
+  // ── Forge loading stages ──────────────────────────────────────────
+  forgeStages: { gap: 14, paddingVertical: 8 },
+  forgeStageRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  forgeStageDot: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: palette.line,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  forgeStageLabel: { color: palette.muted, fontSize: 13, fontWeight: "700" as const },
+  forgeStageHint: {
+    color: palette.muted,
+    fontSize: 11,
+    fontWeight: "600" as const,
+    textAlign: "center",
+    paddingTop: 4,
+    opacity: 0.7,
+  },
 
   // ── EAGOH Picker overlay ────────────────────────────────────────
   pickerOverlay: {

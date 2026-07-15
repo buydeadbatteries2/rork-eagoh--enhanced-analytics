@@ -1,113 +1,121 @@
 /**
- * EAGOH image generation client.
+ * EAGOH image generation — server-side proxy client.
  *
- * Calls the Rork Toolkit V2 proxy which forwards to Vercel AI Gateway
- * for image-only models (`type: "image"`). Returns a base64 data URI
- * that can be used directly in React Native's <Image> component and
- * stored in the EAGOH row.
+ * This module NO LONGER calls the Rork Toolkit or OpenAI directly from the
+ * mobile app. Instead it delegates to the secure Cloudflare Worker route
+ * `/forge/generate` which:
+ *   - Authenticates the user via Supabase JWT
+ *   - Checks tier, EAGOH limit, and Neuron balance
+ *   - Generates the image server-side (OpenAI key never reaches the client)
+ *   - Creates/updates the EAGOH row
+ *   - Deducts Neurons atomically (refunds on failure)
  *
- * Modular and stateless. No persistence, no Edge deduction here — those
- * are orchestrated by `services/forge.ts` and `providers/ForgeProvider.tsx`.
+ * The client only sends the pre-built prompt, draft, mode, and JWT.
  */
 
-const TOOLKIT_URL = process.env.EXPO_PUBLIC_TOOLKIT_URL ?? "";
-const TOOLKIT_SECRET = process.env.EXPO_PUBLIC_RORK_TOOLKIT_SECRET_KEY ?? "";
+import { supabase } from "@/lib/supabase";
+
+const FUNCTIONS_BASE_URL = process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL ?? "";
 
 export type ImageGenSize = "1024x1024" | "1024x1536" | "1536x1024";
-
-export type ImageGenRequest = {
-  prompt: string;
-  /** Portrait by default for full-body EAGOH renders. */
-  size?: ImageGenSize;
-  /** Background mode. EAGOH renders are always transparent. */
-  background?: "transparent" | "opaque";
-};
 
 export type ImageGenResult =
   | { ok: true; imageUrl: string; thumbUrl: string | null; model: string }
   | { ok: false; error: string };
 
 /**
- * Generate a full-body EAGOH render with a transparent background.
- *
- * Uses `openai/gpt-image-1.5` via the Rork proxy — gpt-image-1.5 is the
- * only OpenAI image model that supports transparent (alpha) PNG output.
- * The Vercel AI Gateway v3 image-model endpoint returns base64-encoded
- * images; we wrap them in a data URI for direct use in React Native.
- *
- * Endpoint: POST /v2/vercel/v3/ai/image-model
- * Proxy: ${TOOLKIT_URL}/v2/vercel/v3/ai/image-model
+ * Get the current Supabase access token for authenticating with the worker.
  */
-export async function generateEagohImage(request: ImageGenRequest): Promise<ImageGenResult> {
-  if (!TOOLKIT_URL || !TOOLKIT_SECRET) {
-    return { ok: false, error: "Image generation is not configured. Toolkit key missing." };
+async function getAccessToken(): Promise<string | null> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Request image generation from the secure worker endpoint.
+ *
+ * The worker handles: auth verification, tier check, EAGOH limit check,
+ * OpenAI image generation, EAGOH row create/update, and Neuron deduction.
+ * If any step fails after image generation, the worker rolls back and
+ * no Neurons are charged.
+ */
+export async function generateEagohImage(request: {
+  prompt: string;
+  mode: "initial" | "full_reforge" | "partial_reforge";
+  draft: Record<string, unknown>;
+  eagohId?: string;
+  scope?: string;
+  edgeCost: number;
+  size?: ImageGenSize;
+}): Promise<ImageGenResult> {
+  if (!FUNCTIONS_BASE_URL) {
+    return { ok: false, error: "Forge service is not configured." };
   }
 
   const prompt = request.prompt?.trim();
   if (!prompt) return { ok: false, error: "Prompt is required." };
 
-  const size = request.size ?? "1024x1536";
-  const background = request.background ?? "transparent";
-
-  // gpt-image-1.5 is required for transparent background support.
-  // gpt-image-2 does not support alpha PNG output.
-  const model = background === "transparent" ? "openai/gpt-image-1.5" : "openai/gpt-image-2";
-
-  // Provider-specific options. For transparent backgrounds with OpenAI
-  // models, the background flag lives inside providerOptions.openai.
-  const providerOptions: Record<string, unknown> = {};
-  if (background === "transparent") {
-    providerOptions.openai = { background: "transparent" };
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    return { ok: false, error: "Please sign in again." };
   }
 
   try {
-    const response = await fetch(`${TOOLKIT_URL}/v2/vercel/v3/ai/image-model`, {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 min for image gen
+
+    const response = await fetch(`${FUNCTIONS_BASE_URL}/forge/generate`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${TOOLKIT_SECRET}`,
-        // Vercel AI Gateway v3 required protocol headers
-        "ai-gateway-protocol-version": "0.0.1",
-        "ai-image-model-specification-version": "4",
-        "ai-model-id": model,
+        Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({
-        model,
+        mode: request.mode,
+        scope: request.scope ?? "full",
+        eagohId: request.eagohId,
+        edgeCost: request.edgeCost,
         prompt,
-        n: 1,
-        size,
-        providerOptions,
+        size: request.size ?? "1024x1536",
+        draft: request.draft,
       }),
+      signal: controller.signal,
     });
 
+    clearTimeout(timeoutId);
+
     if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      console.warn("[imageGen] failed", { status: response.status, text: text.slice(0, 240) });
-      return { ok: false, error: `Image service returned ${response.status}.` };
+      const data = (await response.json().catch(() => ({}))) as { error?: string };
+      const msg = data.error ?? `Forge service returned ${response.status}.`;
+      console.warn("[imageGen] worker error", { status: response.status, msg: msg.slice(0, 200) });
+      return { ok: false, error: msg };
     }
 
     const data = (await response.json()) as {
-      images?: string[];
-      warnings?: unknown[];
+      ok: boolean;
+      imageUrl?: string;
+      thumbUrl?: string;
     };
 
-    // The v3 image-model endpoint returns base64 strings in `images[]`.
-    const base64 = data.images?.[0];
-    if (!base64) {
-      return { ok: false, error: "Image service returned no image data." };
+    if (!data.ok || !data.imageUrl) {
+      return { ok: false, error: "Forge service returned no image." };
     }
-
-    // Wrap in a data URI so React Native's <Image> can display it directly.
-    const imageUrl = `data:image/png;base64,${base64}`;
 
     return {
       ok: true,
-      imageUrl,
-      thumbUrl: imageUrl, // same base64 — tiny thumbnail generation would be a separate step
-      model,
+      imageUrl: data.imageUrl,
+      thumbUrl: data.thumbUrl ?? data.imageUrl,
+      model: "gpt-image-1",
     };
   } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      return { ok: false, error: "Image generation timed out. Please try again." };
+    }
     console.warn("[imageGen] error", error instanceof Error ? error.message : "Unknown");
-    return { ok: false, error: "Image generation failed. Try again." };
+    return { ok: false, error: "Image generation failed. Check your connection and try again." };
   }
 }

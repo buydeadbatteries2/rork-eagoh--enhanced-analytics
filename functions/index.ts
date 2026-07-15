@@ -6,6 +6,7 @@
  * Phase 11E — Visual analysis blocks for analyst sessions
  * Phase 11F — Visual fallback generation + timeout optimization
  * Phase 11G — Increased worker timeouts for reliability
+ * Phase 12B — Secure Forge image generation route (/forge/generate)
  * Phase 11D — RPC null-data fallback + diagnostic insert errors)
  * Phase 11E — minimal insert fallback for schema mismatch)
  * Phase 6C — notifications & audit history)
@@ -7294,6 +7295,377 @@ async function handleFactionInvite(request: Request, env: Env): Promise<Response
   return jsonResponse({ ok: true });
 }
 
+// ── Forge: secure image generation (Phase 12B) ───────────────────────────────
+
+/**
+ * Secure server-side EAGOH Forge route.
+ *
+ * Authenticates the user, checks tier/limit/ownership, generates the image
+ * via OpenAI, creates/updates the EAGOH row, and deducts Neurons — all
+ * atomically. If any step fails after image generation, the EAGOH is rolled
+ * back and no Neurons are charged.
+ *
+ * The mobile client never sees the OPENAI_API_KEY. It sends the draft,
+ * pre-built prompt, and JWT; the worker does the rest.
+ */
+type ForgeMode = "initial" | "full_reforge" | "partial_reforge";
+
+const FORGE_EDGE_COSTS_SERVER: Record<ForgeMode, number> = {
+  initial: 250,
+  full_reforge: 500,
+  partial_reforge: 100,
+};
+
+const TIER_EAGOH_LIMITS_SERVER: Record<string, number> = {
+  free: 0,
+  pro: 2,
+  oracle_elite: 3,
+  syndicate: 5,
+};
+
+const DOMAIN_DNA_PREFIX_S = "dom:";
+const DOMAIN_DRAFT_TO_COLUMN_S: Record<string, string> = {
+  musicGenre: "music_genre",
+  musicRole: "music_role",
+  filmTvCategory: "film_tv_category",
+  filmTvGenre: "film_tv_genre",
+  filmTvRole: "film_tv_role",
+  fashionStyleCategory: "fashion_style_category",
+  fashionRole: "fashion_role",
+  educationSubject: "education_subject",
+  educationRole: "education_role",
+  gamingGenre: "gaming_genre",
+  gamingRole: "gaming_role",
+  businessIndustry: "business_industry",
+  businessRole: "business_role",
+  financeFocus: "finance_focus",
+  financeRole: "finance_role",
+  technologyArea: "technology_area",
+  technologyRole: "technology_role",
+  healthFitnessArea: "health_fitness_area",
+  healthFitnessRole: "health_fitness_role",
+};
+
+function encodeDomainDnaServer(draft: Record<string, unknown>): string[] {
+  const entries: string[] = [];
+  for (const [draftKey, dbCol] of Object.entries(DOMAIN_DRAFT_TO_COLUMN_S)) {
+    const value = draft[draftKey];
+    if (typeof value === "string" && value) {
+      entries.push(`${DOMAIN_DNA_PREFIX_S}${dbCol}:${value}`);
+    }
+  }
+  return entries;
+}
+
+function str(val: unknown, fallback = ""): string {
+  return typeof val === "string" ? val : fallback;
+}
+
+async function handleForgeGenerate(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  // ── Parse body ──
+  let payload: {
+    mode?: unknown;
+    scope?: unknown;
+    eagohId?: unknown;
+    edgeCost?: unknown;
+    prompt?: unknown;
+    size?: unknown;
+    draft?: Record<string, unknown>;
+  };
+  try {
+    payload = (await request.json()) as typeof payload;
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request." }, 400);
+  }
+
+  const mode = payload.mode as ForgeMode;
+  if (mode !== "initial" && mode !== "full_reforge" && mode !== "partial_reforge") {
+    return jsonResponse({ ok: false, error: "Invalid forge mode." }, 400);
+  }
+  const prompt = str(payload.prompt).trim();
+  if (!prompt) {
+    return jsonResponse({ ok: false, error: "Prompt is required." }, 400);
+  }
+  const draft = payload.draft;
+  if (!draft || typeof draft !== "object") {
+    return jsonResponse({ ok: false, error: "Draft is required." }, 400);
+  }
+  const size = str(payload.size, "1024x1536");
+  const edgeCost = typeof payload.edgeCost === "number" ? payload.edgeCost : FORGE_EDGE_COSTS_SERVER[mode];
+
+  // ── Authenticate ──
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createAuthedClient(env, jwt);
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) {
+    return jsonResponse({ ok: false, error: "Server configuration error." }, 503);
+  }
+
+  if (!env.OPENAI_API_KEY) {
+    return jsonResponse({ ok: false, error: "Image generation is not configured." }, 503);
+  }
+
+  // ── Fetch profile (tier + balances) ──
+  const { data: profileRow, error: profileErr } = await serviceClient
+    .from("profiles")
+    .select("subscription_tier, edge_subscription, edge_purchased")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (profileErr || !profileRow) {
+    return jsonResponse({ ok: false, error: "Could not verify account." }, 500);
+  }
+
+  const tier = str((profileRow as Record<string, unknown>).subscription_tier, "free");
+  if (tier === "free") {
+    return jsonResponse({ ok: false, error: "Forge requires Pro or higher." }, 403);
+  }
+
+  // ── For initial forge: check EAGOH limit ──
+  if (mode === "initial") {
+    const { count, error: countErr } = await serviceClient
+      .from("eagohs")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("is_default_shell", false);
+    if (countErr) {
+      return jsonResponse({ ok: false, error: "Could not verify EAGOH limit." }, 500);
+    }
+    const limit = TIER_EAGOH_LIMITS_SERVER[tier] ?? 0;
+    if ((count ?? 0) >= limit) {
+      return jsonResponse({ ok: false, error: `Your ${tier} tier allows ${limit} EAGOH${limit === 1 ? "" : "s"}. Upgrade to forge more.` }, 403);
+    }
+  }
+
+  // ── For reforge: verify ownership ──
+  let existingEagohId: string | null = null;
+  if (mode !== "initial") {
+    const eagohId = str(payload.eagohId);
+    if (!eagohId) {
+      return jsonResponse({ ok: false, error: "EAGOH ID is required for reforge." }, 400);
+    }
+    const eagoh = await verifyEagohOwnership(supabase, eagohId, userId);
+    if (!eagoh) {
+      return jsonResponse({ ok: false, error: "EAGOH not found or access denied." }, 404);
+    }
+    existingEagohId = eagohId;
+  }
+
+  // ── Pre-flight balance check ──
+  const sub = (profileRow as { edge_subscription: number | null }).edge_subscription ?? 0;
+  const purch = (profileRow as { edge_purchased: number | null }).edge_purchased ?? 0;
+  const total = sub + purch;
+  if (total < edgeCost) {
+    return jsonResponse({ ok: false, error: `Insufficient Neurons. Need ${edgeCost} (have ${total}).` }, 402);
+  }
+
+  // ── Generate image via OpenAI ──
+  let base64Image: string;
+  try {
+    const imageResponse = await fetch("https://api.openai.com/v1/images/generations", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-image-1",
+        prompt,
+        n: 1,
+        size,
+        background: "transparent",
+      }),
+    });
+
+    if (!imageResponse.ok) {
+      const errText = await imageResponse.text().catch(() => "");
+      console.warn("[forge] image generation failed", { status: imageResponse.status, detail: errText.slice(0, 300) });
+      return jsonResponse({ ok: false, error: "Image generation failed. Please try again." }, 502);
+    }
+
+    const imageData = (await imageResponse.json()) as { data?: Array<{ b64_json?: string }> };
+    base64Image = imageData.data?.[0]?.b64_json ?? "";
+    if (!base64Image) {
+      return jsonResponse({ ok: false, error: "Image service returned no image data." }, 502);
+    }
+  } catch (err) {
+    console.warn("[forge] image generation error", err instanceof Error ? err.message : "unknown");
+    return jsonResponse({ ok: false, error: "Image generation failed. Please try again." }, 502);
+  }
+
+  const imageUrl = `data:image/png;base64,${base64Image}`;
+  const now = new Date().toISOString();
+
+  // ── Create or update EAGOH ──
+  let eagohId: string;
+  let eagohRecord: Record<string, unknown>;
+
+  if (mode === "initial") {
+    const draftDna = Array.isArray(draft.dna) ? (draft.dna as string[]) : [];
+    const domainDnaEntries = encodeDomainDnaServer(draft);
+    const mergedDna = [...draftDna, ...domainDnaEntries];
+
+    const insertPayload = {
+      user_id: userId,
+      name: str(draft.name, "Unnamed EAGOH").trim() || "Unnamed EAGOH",
+      sport: str(draft.sport),
+      gender: str(draft.gender) || null,
+      domain: str(draft.domain) || null,
+      body_type: str(draft.bodyType) || null,
+      style_notes: str(draft.styleNotes) || null,
+      cybernetic_intensity: str(draft.cyberneticIntensity, "moderate"),
+      pose: str(draft.pose, "calm-sentinel"),
+      lab: str(draft.lab, "neon-vault"),
+      dna: mergedDna,
+      image_url: imageUrl,
+      image_thumb_url: imageUrl,
+      image_prompt: prompt,
+      image_generated_at: now,
+      is_default_shell: false,
+      is_user_forged: true,
+      status: "active",
+      team_focus_mode: str(draft.teamFocusMode) || null,
+      pro_team_focus_id: str(draft.proTeamFocusId) || null,
+      pro_team_focus_name: str(draft.proTeamFocusName) || null,
+      college_team_focus_id: str(draft.collegeTeamFocusId) || null,
+      college_team_focus_name: str(draft.collegeTeamFocusName) || null,
+    };
+
+    const { data: created, error: createErr } = await serviceClient
+      .from("eagohs")
+      .insert(insertPayload)
+      .select("*")
+      .single();
+
+    if (createErr || !created) {
+      console.warn("[forge] EAGOH creation failed", createErr?.message);
+      return jsonResponse({ ok: false, error: "Failed to create EAGOH." }, 500);
+    }
+
+    eagohId = (created as { id: string }).id;
+    eagohRecord = created as Record<string, unknown>;
+
+    // Insert customization, teams, labs (best-effort)
+    const appearance = draft.appearance;
+    if (appearance && typeof appearance === "object") {
+      await serviceClient.from("eagoh_customization").insert({ eagoh_id: eagohId, appearance }).then(() => {}).catch(() => {});
+    }
+    const teams = Array.isArray(draft.teams) ? (draft.teams as string[]) : [];
+    if (teams.length > 0) {
+      await serviceClient.from("eagoh_fanatic_teams").insert(teams.map((team_id) => ({ eagoh_id: eagohId, team_id }))).then(() => {}).catch(() => {});
+    }
+    if (str(draft.lab)) {
+      await serviceClient.from("eagoh_labs").insert({ eagoh_id: eagohId, lab_id: draft.lab }).then(() => {}).catch(() => {});
+    }
+  } else {
+    eagohId = existingEagohId!;
+    const { data: updated, error: updateErr } = await serviceClient
+      .from("eagohs")
+      .update({
+        image_url: imageUrl,
+        image_thumb_url: imageUrl,
+        image_prompt: prompt,
+        image_generated_at: now,
+        updated_at: now,
+      })
+      .eq("id", eagohId)
+      .select("*")
+      .single();
+
+    if (updateErr || !updated) {
+      console.warn("[forge] EAGOH image update failed", updateErr?.message);
+      return jsonResponse({ ok: false, error: "Failed to update EAGOH image." }, 500);
+    }
+
+    eagohRecord = updated as Record<string, unknown>;
+
+    // Partial reforge: update customization field (best-effort)
+    const scope = str(payload.scope, "full");
+    if (mode === "partial_reforge" && scope !== "full" && scope !== "pose" && scope !== "cybernetic") {
+      const appearance = draft.appearance;
+      if (appearance && typeof appearance === "object") {
+        const optionId = (appearance as Record<string, string>)[scope];
+        if (optionId) {
+          const { data: row } = await serviceClient.from("eagoh_customization").select("appearance").eq("eagoh_id", eagohId).maybeSingle();
+          const current = ((row as { appearance?: Record<string, string> } | null)?.appearance) ?? {};
+          const next = { ...current, [scope]: optionId };
+          await serviceClient.from("eagoh_customization").upsert({ eagoh_id: eagohId, appearance: next, updated_at: now }).then(() => {}).catch(() => {});
+        }
+      }
+    }
+  }
+
+  // ── Deduct Neurons (server-side, atomic) ──
+  const fromSub = Math.min(sub, edgeCost);
+  const fromPurchased = edgeCost - fromSub;
+  const nextSub = sub - fromSub;
+  const nextPurchased = purch - fromPurchased;
+  const bucket = fromSub > 0 && fromPurchased > 0 ? "mixed" : fromPurchased > 0 ? "purchased" : "subscription";
+
+  const { error: deductErr } = await serviceClient
+    .from("profiles")
+    .update({ edge_subscription: nextSub, edge_purchased: nextPurchased, updated_at: now })
+    .eq("id", userId);
+
+  if (deductErr) {
+    // Rollback: delete EAGOH (initial) or log (reforge — image updated but no charge)
+    if (mode === "initial") {
+      await serviceClient.from("eagohs").delete().eq("id", eagohId);
+    } else {
+      console.warn("[forge] deduction failed for reforge — image updated but no charge", deductErr.message);
+    }
+    return jsonResponse({ ok: false, error: "Neuron deduction failed. No Neurons were charged." }, 500);
+  }
+
+  // ── Log transaction (best-effort) ──
+  const reason = mode === "initial" ? "forge_initial" : mode === "full_reforge" ? "forge_full_reforge" : "forge_partial_reforge";
+  const eagohName = str((eagohRecord as Record<string, unknown>).name, "EAGOH");
+  await serviceClient.from("edge_transactions").insert({
+    user_id: userId,
+    kind: "deduction",
+    reason,
+    amount: edgeCost,
+    bucket,
+    from_subscription: fromSub,
+    from_purchased: fromPurchased,
+    balance_subscription_after: nextSub,
+    balance_purchased_after: nextPurchased,
+    note: `Forge ${mode} · ${eagohName}`,
+  }).then(() => {}).catch(() => {});
+
+  // ── Log image generation (best-effort) ──
+  await serviceClient.from("eagoh_image_generations").insert({
+    eagoh_id: eagohId,
+    user_id: userId,
+    mode,
+    prompt,
+    image_url: imageUrl,
+    thumb_url: imageUrl,
+    edge_cost: edgeCost,
+    meta: { model: "gpt-image-1", scope: str(payload.scope, "full") },
+  }).then(() => {}).catch(() => {});
+
+  return jsonResponse({
+    ok: true,
+    eagoh: eagohRecord,
+    imageUrl,
+    thumbUrl: imageUrl,
+    prompt,
+    edgeCost,
+    balanceAfter: { subscription: nextSub, purchased: nextPurchased },
+  });
+}
+
 // ── Export ───────────────────────────────────────────────────────────────────
 
 export default {
@@ -7420,6 +7792,11 @@ export default {
     // Faction invite by email or username (secure, JWT-authed)
     if (url.pathname === "/factions/invite" && request.method === "POST") {
       return handleFactionInvite(request, env);
+    }
+
+    // Forge: secure image generation (auth + tier + balance + OpenAI + atomic deduction)
+    if (url.pathname === "/forge/generate" && request.method === "POST") {
+      return handleForgeGenerate(request, env);
     }
 
     return jsonResponse({ ok: false, error: "Not found" }, 404);

@@ -10,19 +10,29 @@ import { getForgeCost, type EdgeReason } from "@/services/edge";
 import type { EagohDraft } from "@/services/eagohs";
 
 /**
- * ForgeProvider \u2014 orchestrates the EAGOH image generation flow.
+ * ForgeProvider — orchestrates the EAGOH image generation flow.
  *
- * Confirmation flow (required by the brief):
- *   1. UI calls `prepareForge(draft, mode, scope?)` \u2192 returns a `pending` preview
+ * SECURE FLOW (Phase 12B):
+ *   1. UI calls `prepareForge(draft, mode, scope?)` → returns a `pending` preview
  *      with the final prompt, summary lines, and Edge cost.
  *   2. UI shows the preview + cost and asks the user to confirm.
- *   3. UI calls `confirmForge()` \u2192 Edge deduction + image generation + persistence.
+ *   3. UI calls `confirmForge()` → delegates to secure worker `/forge/generate`:
+ *        - Worker verifies auth, tier, EAGOH limit, Neuron balance
+ *        - Worker generates image server-side (OpenAI key never on client)
+ *        - Worker creates/updates EAGOH row
+ *        - Worker deducts Neurons atomically (refunds on failure)
  *   4. UI calls `cancelForge()` to dismiss the preview safely.
  *
- * The Forge screen UI is intentionally untouched \u2014 wiring is opt-in via this hook.
+ * NO client-side Edge deduction — the worker is the single source of truth.
+ * If image gen fails, the worker rolls back and no Neurons are charged.
  */
 
 export type ForgeMode = RunForgeMode;
+
+/** Loading stage labels surfaced to the UI during generation. */
+export type ForgeStage = "idle" | "authenticating" | "generating" | "persisting" | "done";
+
+const STAGE_FLOW: ForgeStage[] = ["authenticating", "generating", "persisting"];
 
 export type ForgePending = {
   mode: ForgeMode;
@@ -43,11 +53,12 @@ const edgeReasonFor = (mode: ForgeMode): EdgeReason => {
 export const [ForgeProvider, useForge] = createContextHook(() => {
   const { user } = useAuth();
   const { profile, effectiveSubscriptionTier } = useProfile();
-  const { total: edgeTotal, spend, isMutating: isEdgeMutating } = useEdge();
+  const { total: edgeTotal, isMutating: isEdgeMutating } = useEdge();
   const queryClient = useQueryClient();
 
   const [pending, setPending] = useState<ForgePending | null>(null);
   const [lastResult, setLastResult] = useState<RunForgeResult | null>(null);
+  const [stage, setStage] = useState<ForgeStage>("idle");
 
   const prepareForge = useCallback(
     (
@@ -96,6 +107,7 @@ export const [ForgeProvider, useForge] = createContextHook(() => {
 
   const cancelForge = useCallback((): void => {
     setPending(null);
+    setStage("idle");
   }, []);
 
   const confirmMutation = useMutation({
@@ -103,28 +115,37 @@ export const [ForgeProvider, useForge] = createContextHook(() => {
       if (!pending) throw new Error("No forge pending confirmation.");
       if (!user?.id || !profile) throw new Error("Profile not loaded.");
       if (edgeTotal < pending.edgeCost) {
-        return { ok: false, reason: "persist", error: `Insufficient Neurons. Need ${pending.edgeCost}.` };
+        return { ok: false, reason: "balance", error: `Insufficient Neurons. Need ${pending.edgeCost}.` };
       }
 
-      // 1) Deduct Edge first \u2014 if image gen fails downstream, the wallet still
-      //    receives a recorded transaction. Caller can refund via grantSubscription.
+      // Simulate stage progression for UX while the worker does the real work.
+      setStage("authenticating");
+      const stageTimer = setInterval(() => {
+        setStage((prev) => {
+          const idx = STAGE_FLOW.indexOf(prev);
+          if (idx >= 0 && idx < STAGE_FLOW.length - 1) {
+            return STAGE_FLOW[idx + 1];
+          }
+          return prev;
+        });
+      }, 3000);
+
       try {
-        await spend(pending.edgeCost, edgeReasonFor(pending.mode), `Forge ${pending.mode} \u00b7 ${pending.draft.name}`);
-      } catch (error) {
-        return { ok: false, reason: "persist", error: error instanceof Error ? error.message : "Neuron deduction failed." };
+        // Delegate entirely to the secure worker — no client-side Edge deduction.
+        const result = await runForge({
+          userId: user.id,
+          tier: effectiveSubscriptionTier,
+          mode: pending.mode,
+          draft: pending.draft,
+          eagohId: pending.eagohId,
+          scope: pending.scope,
+          edgeCost: pending.edgeCost,
+        });
+        return result;
+      } finally {
+        clearInterval(stageTimer);
+        setStage("done");
       }
-
-      // 2) Run the image gen + persistence pipeline.
-      const result = await runForge({
-        userId: user.id,
-        tier: effectiveSubscriptionTier,
-        mode: pending.mode,
-        draft: pending.draft,
-        eagohId: pending.eagohId,
-        scope: pending.scope,
-        edgeCost: pending.edgeCost,
-      });
-      return result;
     },
     onSuccess: (result) => {
       setLastResult(result);
@@ -134,8 +155,15 @@ export const [ForgeProvider, useForge] = createContextHook(() => {
         if (pending?.eagohId) {
           queryClient.invalidateQueries({ queryKey: ["eagoh", pending.eagohId] });
         }
+        // Invalidate Edge balance since the worker deducted server-side.
+        queryClient.invalidateQueries({ queryKey: ["profile", user?.id ?? "anon"] });
+        queryClient.invalidateQueries({ queryKey: ["edge", "transactions", user?.id ?? "anon"] });
         setPending(null);
+        setStage("idle");
       }
+    },
+    onError: () => {
+      setStage("idle");
     },
   });
 
@@ -151,8 +179,9 @@ export const [ForgeProvider, useForge] = createContextHook(() => {
       isGenerating: confirmMutation.isPending || isEdgeMutating,
       canAfford: pending ? edgeTotal >= pending.edgeCost : true,
       edgeTotal,
+      stage,
     }),
-    [pending, lastResult, prepareForge, cancelForge, confirmForge, confirmMutation.isPending, isEdgeMutating, edgeTotal],
+    [pending, lastResult, prepareForge, cancelForge, confirmForge, confirmMutation.isPending, isEdgeMutating, edgeTotal, stage],
   );
 
   return value;

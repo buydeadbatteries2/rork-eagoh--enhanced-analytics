@@ -429,7 +429,7 @@ export default function ForgeScreen(): JSX.Element {
   const h = useHaptics();
   const router = useRouter();
   const { user } = useAuth();
-  const { profile } = useProfile();
+  const { profile, refetch: refetchProfile } = useProfile();
   const { total: edgeTotal } = useEdge();
   const { pending, prepareForge, confirmForge, cancelForge, isGenerating, stage } = useForge();
   const { eagohs, remaining, canCreate, tier, deleteEagoh, isDeleting } = useEagohs();
@@ -1040,6 +1040,9 @@ export default function ForgeScreen(): JSX.Element {
     setForgeError(null);
     setSheetError(null);
     setForgeSuccess(false);
+    // ── Refetch the profile from Supabase before opening the confirmation
+    // sheet so the displayed Neuron balance matches the live DB value.
+    refetchProfile();
     if (isEditing) {
       // Free users cannot reforge
       if (currentTier === "free") {
@@ -1055,7 +1058,7 @@ export default function ForgeScreen(): JSX.Element {
     } else {
       prepareForge(draft, "initial");
     }
-  }, [domain.length, draft, name, prepareForge, isEditing, selectedEagohId, currentTier, reforgeCost]);
+  }, [domain.length, draft, name, prepareForge, isEditing, selectedEagohId, currentTier, reforgeCost, refetchProfile]);
 
   // ── Keyboard-aware scroll helpers ──────────────────────────────────
 

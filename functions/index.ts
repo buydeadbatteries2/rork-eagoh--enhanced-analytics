@@ -1,5 +1,5 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker (Phase OI-CREATE — atomic OI entry creation)
+ * EAGOH Analyst Chat — Cloudflare Worker (Phase 12D — Forge balance sync + diagnostics)
  * Phase 12A — Social sharing + faction invite by email/username
  * Phase 11C — JWT-authed RLS client + network fix + OI save diagnostics)
  * Phase 11D — Analyst thread save fix + Exchange sharing validation
@@ -7516,12 +7516,38 @@ async function handleForgeGenerate(request: Request, env: Env): Promise<Response
     existingEagohId = eagohId;
   }
 
-  // ── Pre-flight balance check ──
+  // ── Verify the profile row belongs to the authenticated user ──
+  const profileId = (profileRow as { id?: string }).id;
+  if (profileId && profileId !== userId) {
+    console.warn("[forge] profile ID mismatch", { userIdPrefix: userId.slice(0, 8), profileId: String(profileId).slice(0, 8) });
+    return jsonResponse({ ok: false, error: "Account verification failed." }, 403);
+  }
+
+  // ── Pre-flight balance check with diagnostics ──
   const sub = (profileRow as { edge_subscription: number | null }).edge_subscription ?? 0;
   const purch = (profileRow as { edge_purchased: number | null }).edge_purchased ?? 0;
   const total = sub + purch;
+
+  console.log("[forge] balance check", {
+    userIdPrefix: userId.slice(0, 8),
+    edge_subscription: sub,
+    edge_purchased: purch,
+    total,
+    forgeCost: edgeCost,
+    sufficient: total >= edgeCost,
+  });
+
   if (total < edgeCost) {
-    return jsonResponse({ ok: false, error: `Insufficient Neurons. Need ${edgeCost} (have ${total}).` }, 402);
+    return jsonResponse({
+      ok: false,
+      error: "Insufficient Neurons. Visit the Edge Store to get more.",
+      diagnostics: {
+        displayedServerBalance: total,
+        subscriptionBalance: sub,
+        purchasedBalance: purch,
+        forgeCost: edgeCost,
+      },
+    }, 402);
   }
 
   // ── Generate image via OpenAI ──
@@ -7587,9 +7613,6 @@ async function handleForgeGenerate(request: Request, env: Env): Promise<Response
       image_thumb_url: imageUrl,
       image_prompt: prompt,
       image_generated_at: now,
-      is_default_shell: false,
-      is_user_forged: true,
-      status: "active",
       team_focus_mode: str(draft.teamFocusMode) || null,
       pro_team_focus_id: str(draft.proTeamFocusId) || null,
       pro_team_focus_name: str(draft.proTeamFocusName) || null,

@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useAuth } from "@/providers/AuthProvider";
 import { useProfile } from "@/providers/ProfileProvider";
 import { useEdge } from "@/providers/EdgeProvider";
+import { supabase } from "@/lib/supabase";
 import { runForge, type RunForgeMode, type RunForgeResult } from "@/services/forge";
 import { buildForgePrompt, buildForgeSummary, type ForgePromptOptions } from "@/services/imagePrompt";
 import { getForgeCost, type EdgeReason } from "@/services/edge";
@@ -114,8 +115,29 @@ export const [ForgeProvider, useForge] = createContextHook(() => {
     mutationFn: async (): Promise<RunForgeResult> => {
       if (!pending) throw new Error("No forge pending confirmation.");
       if (!user?.id || !profile) throw new Error("Profile not loaded.");
-      if (edgeTotal < pending.edgeCost) {
-        return { ok: false, reason: "balance", error: `Insufficient Neurons. Need ${pending.edgeCost}.` };
+
+      // ── Refresh the profile from Supabase before Forge to ensure the
+      // displayed balance matches the live DB value the worker will check.
+      // The worker is the final source of truth, but we refresh first so
+      // the client-side balance check uses real data, not stale cache.
+      try {
+        const { data: freshProfile } = await supabase
+          .from("profiles")
+          .select("edge_subscription, edge_purchased")
+          .eq("id", user.id)
+          .maybeSingle();
+        if (freshProfile) {
+          const freshSub = (freshProfile as { edge_subscription: number | null }).edge_subscription ?? 0;
+          const freshPurch = (freshProfile as { edge_purchased: number | null }).edge_purchased ?? 0;
+          const freshTotal = freshSub + freshPurch;
+          console.log("[ForgeProvider] pre-forge balance refresh", { freshSub, freshPurch, freshTotal, cost: pending.edgeCost });
+          if (freshTotal < pending.edgeCost) {
+            return { ok: false, reason: "balance", error: `Insufficient Neurons. Need ${pending.edgeCost} (have ${freshTotal}).` };
+          }
+        }
+      } catch (refreshErr) {
+        // If refresh fails, proceed to worker — the worker does its own balance check.
+        console.warn("[ForgeProvider] pre-forge refresh failed, proceeding to worker:", refreshErr instanceof Error ? refreshErr.message : String(refreshErr));
       }
 
       // Simulate stage progression for UX while the worker does the real work.
@@ -155,11 +177,18 @@ export const [ForgeProvider, useForge] = createContextHook(() => {
         if (pending?.eagohId) {
           queryClient.invalidateQueries({ queryKey: ["eagoh", pending.eagohId] });
         }
-        // Invalidate Edge balance since the worker deducted server-side.
+        // ── Invalidate and refetch the profile from Supabase so the
+        // displayed Neuron balance reflects the worker's atomic deduction.
         queryClient.invalidateQueries({ queryKey: ["profile", user?.id ?? "anon"] });
+        queryClient.refetchQueries({ queryKey: ["profile", user?.id ?? "anon"] });
         queryClient.invalidateQueries({ queryKey: ["edge", "transactions", user?.id ?? "anon"] });
         setPending(null);
         setStage("idle");
+      } else if (result.reason === "balance") {
+        // Balance check failed — invalidate and refetch the profile cache
+        // so the UI refreshes with the real DB balance.
+        queryClient.invalidateQueries({ queryKey: ["profile", user?.id ?? "anon"] });
+        queryClient.refetchQueries({ queryKey: ["profile", user?.id ?? "anon"] });
       }
     },
     onError: () => {

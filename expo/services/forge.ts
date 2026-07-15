@@ -88,10 +88,10 @@ export async function runForge(input: RunForgeInput): Promise<RunForgeResult> {
     // Classify the error reason from the worker's error message.
     const msg = gen.error;
     let reason: ForgeErrorReason = "image";
-    if (/insufficient|balance|neurons/i.test(msg)) reason = "balance";
-    else if (/auth|sign in|session/i.test(msg)) reason = "auth";
-    else if (/limit|upgrade|tier/i.test(msg)) reason = "limit";
-    else if (/create|persist|update|eagoh/i.test(msg)) reason = "persist";
+    if (/insufficient|balance|neurons|edge store/i.test(msg)) reason = "balance";
+    else if (/forge requires|pro or higher|limit|upgrade|tier/i.test(msg)) reason = "limit";
+    else if (/auth|sign in|session|expired/i.test(msg)) reason = "auth";
+    else if (/create|persist|update|eagoh|save/i.test(msg)) reason = "persist";
     return { ok: false, reason, error: msg };
   }
 

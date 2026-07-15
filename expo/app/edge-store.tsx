@@ -542,12 +542,28 @@ export default function EdgeStoreScreen(): JSX.Element {
         setConfirmPack(null);
         setConfirmRcPkg(null);
       } else if (isMockPurchaseAllowed()) {
-        // Mock purchase: RevenueCat not available in dev — use direct Supabase credit
+        // Mock purchase: RevenueCat not available in dev — use direct Supabase credit.
+        // The creditEdge mutation calls addPurchasedEdge which updates profiles.edge_purchased
+        // in Supabase. If the DB update fails, the mutation throws and we catch it below —
+        // the UI balance is NOT updated unless the DB write succeeds.
         console.log("[NeuronStore] Using mock purchase for:", productId, "|", neuronAmount, "Neurons");
-        await creditEdge(neuronAmount, `Mock Neuron purchase: ${confirmPack.label} (${productId})`);
-        setConfirmPack(null);
-        setConfirmRcPkg(null);
-        Alert.alert("Test Purchase", `${neuronAmount.toLocaleString()} Neurons added to your wallet (mock).`);
+        try {
+          const updatedProfile = await creditEdge(neuronAmount, `Mock Neuron purchase: ${confirmPack.label} (${productId})`);
+          // Verify the Supabase profile was actually updated — the mutation returns the updated row.
+          if (!updatedProfile || typeof updatedProfile.edge_purchased !== "number") {
+            throw new Error("Supabase profile update returned no data.");
+          }
+          console.log("[NeuronStore] Mock purchase succeeded — edge_purchased is now:", updatedProfile.edge_purchased);
+          setConfirmPack(null);
+          setConfirmRcPkg(null);
+          Alert.alert("Test Purchase", `${neuronAmount.toLocaleString()} Neurons added to your wallet (mock).`);
+        } catch (mockErr) {
+          // DB update failed — do NOT update the displayed balance.
+          console.error("[NeuronStore] Mock purchase DB update failed:", mockErr instanceof Error ? mockErr.message : String(mockErr));
+          setConfirmPack(null);
+          setConfirmRcPkg(null);
+          Alert.alert("Purchase Failed", "Test Neurons could not be added.");
+        }
       } else {
         // RC not configured and mock not allowed — determine the actual reason
         const isNative = Platform.OS === "ios" || Platform.OS === "android";

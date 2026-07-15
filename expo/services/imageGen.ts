@@ -49,7 +49,6 @@ export async function generateEagohImage(request: {
   draft: Record<string, unknown>;
   eagohId?: string;
   scope?: string;
-  edgeCost: number;
   size?: ImageGenSize;
 }): Promise<ImageGenResult> {
   if (!FUNCTIONS_BASE_URL) {
@@ -78,7 +77,6 @@ export async function generateEagohImage(request: {
         mode: request.mode,
         scope: request.scope ?? "full",
         eagohId: request.eagohId,
-        edgeCost: request.edgeCost,
         prompt,
         size: request.size ?? "1024x1536",
         draft: request.draft,

@@ -9,9 +9,43 @@
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { supabase } from "@/lib/supabase";
 import type { SubscriptionTier } from "@/services/profile";
 
 const keyFor = (userId: string): string => `eagoh_test_subscription_${userId}`;
+
+/**
+ * Sync a dev test tier to the server-side dev_test_subscriptions table.
+ * The secure Forge worker reads this table to recognise dev test subscriptions.
+ * Only works in __DEV__ — Supabase RLS policies require auth.uid() = user_id.
+ */
+async function syncTestTierToServer(userId: string, tier: SubscriptionTier): Promise<void> {
+  try {
+    await supabase
+      .from("dev_test_subscriptions")
+      .upsert({
+        user_id: userId,
+        test_tier: tier,
+        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      });
+  } catch {
+    // Best-effort — AsyncStorage is the local fallback
+  }
+}
+
+/**
+ * Remove the dev test tier from the server-side table.
+ */
+async function clearTestTierOnServer(userId: string): Promise<void> {
+  try {
+    await supabase
+      .from("dev_test_subscriptions")
+      .delete()
+      .eq("user_id", userId);
+  } catch {
+    // Best-effort
+  }
+}
 
 /**
  * Read the persisted test subscription tier for a user.
@@ -34,14 +68,18 @@ export async function getTestSubscriptionTier(userId: string): Promise<Subscript
 
 /**
  * Persist a test subscription tier for a user (development only).
+ * Also syncs to the server-side dev_test_subscriptions table so the secure
+ * Forge worker can recognise the test tier without trusting client input.
  */
 export async function setTestSubscriptionTier(userId: string, tier: SubscriptionTier): Promise<void> {
   if (!__DEV__) return;
   await AsyncStorage.setItem(keyFor(userId), tier);
+  await syncTestTierToServer(userId, tier);
 }
 
 /**
  * Remove the persisted test subscription tier for a user.
+ * Also removes it from the server-side table.
  */
 export async function clearTestSubscriptionTier(userId: string): Promise<void> {
   if (!__DEV__) return;
@@ -50,4 +88,5 @@ export async function clearTestSubscriptionTier(userId: string): Promise<void> {
   } catch {
     // Best-effort
   }
+  await clearTestTierOnServer(userId);
 }

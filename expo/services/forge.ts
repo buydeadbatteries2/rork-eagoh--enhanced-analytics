@@ -74,13 +74,13 @@ export async function runForge(input: RunForgeInput): Promise<RunForgeResult> {
   });
 
   // Delegate entirely to the secure worker endpoint.
+  // edgeCost is NOT sent — the worker enforces the cost server-side.
   const gen = await generateEagohImage({
     prompt,
     mode: input.mode,
     draft: input.draft as unknown as Record<string, unknown>,
     eagohId: input.eagohId,
     scope: input.mode === "partial_reforge" ? input.scope ?? "full" : "full",
-    edgeCost: input.edgeCost,
     size: input.size ?? "1024x1536",
   });
 

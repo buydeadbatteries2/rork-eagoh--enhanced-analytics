@@ -153,6 +153,33 @@ alter table public.eagohs add column if not exists status text default 'active';
 create index if not exists eagohs_user_id_idx on public.eagohs(user_id);
 create index if not exists eagohs_user_default_shell_idx on public.eagohs(user_id, is_default_shell);
 
+-- ── Dev test subscriptions (Expo Go / Rork development only) ─────────────────
+-- Stores per-user development test tiers so the secure Cloudflare Worker can
+-- recognise them without trusting a client-supplied tier. The worker only
+-- reads this table when ENABLE_DEV_TEST_SUBSCRIPTIONS env flag is "true".
+-- Never used in production / TestFlight.
+create table if not exists public.dev_test_subscriptions (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  test_tier text not null check (test_tier in ('free','pro','oracle_elite','syndicate')),
+  expires_at timestamptz default (now() + interval '30 days'),
+  created_at timestamptz default now()
+);
+
+alter table public.dev_test_subscriptions enable row level security;
+
+drop policy if exists "dev_test_subscriptions_self_select" on public.dev_test_subscriptions;
+drop policy if exists "dev_test_subscriptions_self_upsert" on public.dev_test_subscriptions;
+drop policy if exists "dev_test_subscriptions_self_delete" on public.dev_test_subscriptions;
+
+create policy "dev_test_subscriptions_self_select" on public.dev_test_subscriptions
+  for select using (auth.uid() = user_id);
+create policy "dev_test_subscriptions_self_upsert" on public.dev_test_subscriptions
+  for insert with check (auth.uid() = user_id);
+create policy "dev_test_subscriptions_self_update" on public.dev_test_subscriptions
+  for update using (auth.uid() = user_id);
+create policy "dev_test_subscriptions_self_delete" on public.dev_test_subscriptions
+  for delete using (auth.uid() = user_id);
+
 alter table public.eagohs enable row level security;
 
 drop policy if exists "eagohs_self_select" on public.eagohs;

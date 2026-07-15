@@ -7,6 +7,7 @@
  * Phase 11F — Visual fallback generation + timeout optimization
  * Phase 11G — Increased worker timeouts for reliability
  * Phase 12B — Secure Forge image generation route (/forge/generate)
+ * Phase 12C — Server-side dev test subscriptions, enforce server cost, remove is_default_shell
  * Phase 11D — RPC null-data fallback + diagnostic insert errors)
  * Phase 11E — minimal insert fallback for schema mismatch)
  * Phase 6C — notifications & audit history)
@@ -59,6 +60,7 @@
  * Phase 5A — Intelligence Usage Auditing and Source Provenance (deployed).
  * Phase 5B — Human Intelligence Quality, Validation, and Reputation (deployed).
  * Phase 5B Security — Locked down feedback, disputes, reputation, versions, rate-limits to server-only.
+ * Phase 12C — Server-side dev test subs, enforce server cost, remove is_default_shell from forge limit.
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
@@ -70,6 +72,8 @@ type Env = {
   SUPABASE_URL?: string;
   SUPABASE_ANON_KEY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
+  /** When "true", the worker honours dev_test_subscriptions rows for Expo Go/Rork testing. Never set in production. */
+  ENABLE_DEV_TEST_SUBSCRIPTIONS?: string;
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -7395,7 +7399,8 @@ async function handleForgeGenerate(request: Request, env: Env): Promise<Response
     return jsonResponse({ ok: false, error: "Draft is required." }, 400);
   }
   const size = str(payload.size, "1024x1536");
-  const edgeCost = typeof payload.edgeCost === "number" ? payload.edgeCost : FORGE_EDGE_COSTS_SERVER[mode];
+  // ── Forge cost is always server-controlled — client-supplied edgeCost is ignored ──
+  const edgeCost = FORGE_EDGE_COSTS_SERVER[mode];
 
   // ── Authenticate ──
   const authHeader = request.headers.get("Authorization") ?? "";
@@ -7423,27 +7428,77 @@ async function handleForgeGenerate(request: Request, env: Env): Promise<Response
     .maybeSingle();
 
   if (profileErr || !profileRow) {
+    console.warn("[forge] profile fetch failed", { userIdPrefix: userId.slice(0, 8), error: profileErr?.message ?? "no row" });
     return jsonResponse({ ok: false, error: "Could not verify account." }, 500);
   }
 
-  const tier = str((profileRow as Record<string, unknown>).subscription_tier, "free");
-  if (tier === "free") {
+  const realTier = str((profileRow as Record<string, unknown>).subscription_tier, "free");
+
+  // ── Dev test subscription resolution (server-side, secure) ──
+  // Only active when the private worker env flag ENABLE_DEV_TEST_SUBSCRIPTIONS=true.
+  // The worker loads the test tier from the dev_test_subscriptions table — never
+  // trusts a client-supplied tier. In production the flag is absent and this
+  // entire block is skipped.
+  const devFlag = str(env.ENABLE_DEV_TEST_SUBSCRIPTIONS).toLowerCase() === "true";
+  let devTestTier: string | null = null;
+  if (devFlag) {
+    const { data: devRow } = await serviceClient
+      .from("dev_test_subscriptions")
+      .select("test_tier, expires_at")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (devRow) {
+      const expiresAt = (devRow as { expires_at?: string }).expires_at;
+      if (!expiresAt || new Date(expiresAt) > new Date()) {
+        devTestTier = str((devRow as Record<string, unknown>).test_tier);
+      }
+    }
+  }
+
+  // Effective tier: real paid subscription always wins; dev test tier only
+  // applies when the real tier is free and the dev flag is on.
+  const tierPriority: Record<string, number> = { free: 0, pro: 1, oracle_elite: 2, syndicate: 3 };
+  let effectiveTier = realTier;
+  if (devTestTier && (tierPriority[devTestTier] ?? 0) > (tierPriority[realTier] ?? 0)) {
+    effectiveTier = devTestTier;
+  }
+
+  console.log("[forge] tier resolved", {
+    userIdPrefix: userId.slice(0, 8),
+    mode,
+    realTier,
+    devTestTier: devFlag ? devTestTier : "disabled",
+    effectiveTier,
+  });
+
+  if (effectiveTier === "free") {
     return jsonResponse({ ok: false, error: "Forge requires Pro or higher." }, 403);
   }
 
   // ── For initial forge: check EAGOH limit ──
+  // Count all EAGOH rows owned by the user. We do NOT filter on is_default_shell
+  // or any other column that may not exist in the live schema — just user_id.
   if (mode === "initial") {
     const { count, error: countErr } = await serviceClient
       .from("eagohs")
       .select("id", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .eq("is_default_shell", false);
+      .eq("user_id", userId);
+
     if (countErr) {
-      return jsonResponse({ ok: false, error: "Could not verify EAGOH limit." }, 500);
+      console.warn("[forge] EAGOH count failed", {
+        userIdPrefix: userId.slice(0, 8),
+        code: countErr.code,
+        message: countErr.message,
+      });
+      return jsonResponse({ ok: false, error: "Could not verify your EAGOH limit." }, 500);
     }
-    const limit = TIER_EAGOH_LIMITS_SERVER[tier] ?? 0;
-    if ((count ?? 0) >= limit) {
-      return jsonResponse({ ok: false, error: `Your ${tier} tier allows ${limit} EAGOH${limit === 1 ? "" : "s"}. Upgrade to forge more.` }, 403);
+
+    const eagohCount = count ?? 0;
+    const limit = TIER_EAGOH_LIMITS_SERVER[effectiveTier] ?? 0;
+    console.log("[forge] limit check", { userIdPrefix: userId.slice(0, 8), eagohCount, limit, effectiveTier });
+
+    if (eagohCount >= limit) {
+      return jsonResponse({ ok: false, error: "You have reached your EAGOH limit." }, 403);
     }
   }
 
@@ -7489,18 +7544,19 @@ async function handleForgeGenerate(request: Request, env: Env): Promise<Response
 
     if (!imageResponse.ok) {
       const errText = await imageResponse.text().catch(() => "");
-      console.warn("[forge] image generation failed", { status: imageResponse.status, detail: errText.slice(0, 300) });
-      return jsonResponse({ ok: false, error: "Image generation failed. Please try again." }, 502);
+      console.warn("[forge] image generation failed", { userIdPrefix: userId.slice(0, 8), status: imageResponse.status, detail: errText.slice(0, 300) });
+      return jsonResponse({ ok: false, error: "Image generation could not be completed." }, 502);
     }
 
     const imageData = (await imageResponse.json()) as { data?: Array<{ b64_json?: string }> };
     base64Image = imageData.data?.[0]?.b64_json ?? "";
     if (!base64Image) {
-      return jsonResponse({ ok: false, error: "Image service returned no image data." }, 502);
+      console.warn("[forge] no image data in response", { userIdPrefix: userId.slice(0, 8) });
+      return jsonResponse({ ok: false, error: "Image generation could not be completed." }, 502);
     }
   } catch (err) {
-    console.warn("[forge] image generation error", err instanceof Error ? err.message : "unknown");
-    return jsonResponse({ ok: false, error: "Image generation failed. Please try again." }, 502);
+    console.warn("[forge] image generation error", { userIdPrefix: userId.slice(0, 8), message: err instanceof Error ? err.message : "unknown" });
+    return jsonResponse({ ok: false, error: "Image generation could not be completed." }, 502);
   }
 
   const imageUrl = `data:image/png;base64,${base64Image}`;
@@ -7548,8 +7604,8 @@ async function handleForgeGenerate(request: Request, env: Env): Promise<Response
       .single();
 
     if (createErr || !created) {
-      console.warn("[forge] EAGOH creation failed", createErr?.message);
-      return jsonResponse({ ok: false, error: "Failed to create EAGOH." }, 500);
+      console.warn("[forge] EAGOH creation failed", { userIdPrefix: userId.slice(0, 8), error: createErr?.message });
+      return jsonResponse({ ok: false, error: "Could not save your EAGOH. No Neurons were charged." }, 500);
     }
 
     eagohId = (created as { id: string }).id;
@@ -7583,8 +7639,8 @@ async function handleForgeGenerate(request: Request, env: Env): Promise<Response
       .single();
 
     if (updateErr || !updated) {
-      console.warn("[forge] EAGOH image update failed", updateErr?.message);
-      return jsonResponse({ ok: false, error: "Failed to update EAGOH image." }, 500);
+      console.warn("[forge] EAGOH image update failed", { userIdPrefix: userId.slice(0, 8), error: updateErr?.message });
+      return jsonResponse({ ok: false, error: "Could not update your EAGOH. No Neurons were charged." }, 500);
     }
 
     eagohRecord = updated as Record<string, unknown>;
@@ -7621,8 +7677,9 @@ async function handleForgeGenerate(request: Request, env: Env): Promise<Response
     // Rollback: delete EAGOH (initial) or log (reforge — image updated but no charge)
     if (mode === "initial") {
       await serviceClient.from("eagohs").delete().eq("id", eagohId);
+      console.log("[forge] rolled back EAGOH creation after deduction failure", { userIdPrefix: userId.slice(0, 8), eagohId });
     } else {
-      console.warn("[forge] deduction failed for reforge — image updated but no charge", deductErr.message);
+      console.warn("[forge] deduction failed for reforge — image updated but no charge", { userIdPrefix: userId.slice(0, 8), error: deductErr.message });
     }
     return jsonResponse({ ok: false, error: "Neuron deduction failed. No Neurons were charged." }, 500);
   }
@@ -7654,6 +7711,18 @@ async function handleForgeGenerate(request: Request, env: Env): Promise<Response
     edge_cost: edgeCost,
     meta: { model: "gpt-image-1", scope: str(payload.scope, "full") },
   }).then(() => {}).catch(() => {});
+
+  console.log("[forge] completed successfully", {
+    userIdPrefix: userId.slice(0, 8),
+    mode,
+    effectiveTier,
+    eagohId,
+    edgeCost,
+    fromSub,
+    fromPurchased,
+    nextSub,
+    nextPurchased,
+  });
 
   return jsonResponse({
     ok: true,

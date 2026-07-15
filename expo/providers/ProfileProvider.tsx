@@ -88,6 +88,15 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
 
   const profile: UserProfile | null = profileQuery.data ?? null;
 
+  // ── Effective tier: test tier override takes precedence in __DEV__ only ──
+  // In production, testTier is always null and this falls through to the DB tier.
+  // Computed early so all mutations and effects below use the correct tier.
+  const dbEffectiveTier = getEffectiveSubscriptionTier(profile);
+  const effectiveSubscriptionTier: SubscriptionTier = __DEV__ && testTier ? testTier : dbEffectiveTier;
+
+  // Loading state: profile not yet fetched OR test tier not yet loaded from AsyncStorage
+  const isTierLoading: boolean = profileQuery.isLoading || (!testTierLoaded && !!userId);
+
   const invalidate = useCallback((): void => {
     queryClient.invalidateQueries({ queryKey: profileKey(userId) });
   }, [queryClient, userId]);
@@ -155,7 +164,7 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
   const spendEdgeMutation = useMutation({
     mutationFn: (amount: number): Promise<UserProfile> => {
       if (!userId || !profile) throw new Error("Profile not loaded");
-      return spendEdgeService(userId, profile, amount, "manual");
+      return spendEdgeService(userId, profile, amount, "manual", undefined, effectiveSubscriptionTier);
     },
     onSuccess: (next) => queryClient.setQueryData(profileKey(userId), next),
   });
@@ -164,20 +173,24 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     mutationFn: (capPct?: number): Promise<UserProfile> => {
       if (!userId || !profile) throw new Error("Profile not loaded");
       void capPct;
-      return applyMonthlyRolloverService(userId, profile, getEffectiveSubscriptionTier(profile));
+      return applyMonthlyRolloverService(userId, profile, effectiveSubscriptionTier);
     },
     onSuccess: (next) => queryClient.setQueryData(profileKey(userId), next),
   });
 
   const balances = profile ? getBalances(profile) : { subscription: 0, purchased: 0, total: 0 };
 
-  // ── Auto-allocation: grant free tier Neurons on first login and monthly thereafter ──
+  // ── Auto-allocation: grant Neurons on first login and monthly thereafter ──
+  // Wait for test tier to load so dev test subscriptions get the correct allocation.
   const allocRanRef = useRef(false);
   useEffect(() => {
     if (!profile || !userId) return;
     if (allocRanRef.current) return;
-    const tier = getEffectiveSubscriptionTier(profile);
-    if (tier !== "free") return;
+    // Don't run until the test tier has been loaded from AsyncStorage
+    // (in __DEV__) so we use the correct effective tier for allocation.
+    if (!testTierLoaded) return;
+
+    const tier = effectiveSubscriptionTier;
 
     // Only grant if the user hasn't received allocation this calendar month.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -191,13 +204,17 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
       console.warn("[ProfileProvider] auto-allocation failed:", (err as Error).message);
       allocRanRef.current = false; // retry next mount
     });
-  }, [profile, userId, queryClient]);
+  }, [profile, userId, queryClient, testTierLoaded, effectiveSubscriptionTier]);
 
-  // ── Upgrade allocation: trigger rollover when tier changes from free → paid ──
+  // ── Upgrade allocation: trigger rollover when effective tier changes from free → paid ──
+  // Uses effectiveSubscriptionTier so dev test tier upgrades also trigger allocation.
   const prevTierRef = useRef<SubscriptionTier | null>(null);
   useEffect(() => {
     if (!profile || !userId) return;
-    const tier = getEffectiveSubscriptionTier(profile);
+    // Don't track until test tier has loaded to avoid false upgrade detection.
+    if (!testTierLoaded) return;
+
+    const tier = effectiveSubscriptionTier;
     const prevTier = prevTierRef.current;
     prevTierRef.current = tier;
 
@@ -215,15 +232,7 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     }).catch((err) => {
       console.warn("[ProfileProvider] upgrade allocation failed:", (err as Error).message);
     });
-  }, [profile, userId, queryClient]);
-
-  // ── Effective tier: test tier override takes precedence in __DEV__ only ──
-  // In production, testTier is always null and this falls through to the DB tier.
-  const dbEffectiveTier = getEffectiveSubscriptionTier(profile);
-  const effectiveSubscriptionTier: SubscriptionTier = __DEV__ && testTier ? testTier : dbEffectiveTier;
-
-  // Loading state: profile not yet fetched OR test tier not yet loaded from AsyncStorage
-  const isTierLoading: boolean = profileQuery.isLoading || (!testTierLoaded && !!userId);
+  }, [profile, userId, queryClient, testTierLoaded, effectiveSubscriptionTier]);
 
   const isAdminOverrideActive: boolean = hasActiveAdminOverride(profile);
 

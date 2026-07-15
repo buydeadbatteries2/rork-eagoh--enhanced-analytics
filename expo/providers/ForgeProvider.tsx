@@ -91,7 +91,7 @@ export const [ForgeProvider, useForge] = createContextHook(() => {
       setPending(next);
       return next;
     },
-    [],
+    [effectiveSubscriptionTier],
   );
 
   const cancelForge = useCallback((): void => {

@@ -453,7 +453,14 @@ export default function SubscriptionScreen(): JSX.Element {
   const router = useRouter();
   const h = useHaptics();
   const { user } = useAuth();
-  const { effectiveSubscriptionTier, profile, setSubscriptionTier, applyMonthlyRollover, invalidate: invalidateProfile } = useProfile();
+  const {
+    effectiveSubscriptionTier,
+    profile,
+    setTestSubscription,
+    clearTestSubscription,
+    testTier,
+    isTierLoading,
+  } = useProfile();
   const {
     configured: rcConfigured,
     subscriptionPackages: rcSubPkgs,
@@ -504,6 +511,53 @@ export default function SubscriptionScreen(): JSX.Element {
 
   /** True while offerings or customer info are still being fetched from RevenueCat. */
   const stillLoading: boolean = isOfferingsLoading || isCustomerInfoLoading;
+
+  const handleTestSubscribe = useCallback(
+    async (tier: Exclude<SubscriptionTier, "free">): Promise<void> => {
+      if (!user?.id) {
+        Alert.alert("Sign In Required", "Please sign in before testing a subscription.");
+        return;
+      }
+      h.heavy();
+      setPurchasingTier(tier);
+      setPurchaseSuccess(false);
+
+      try {
+        // Set the test tier — persisted to AsyncStorage, immediately reflected
+        // in effectiveSubscriptionTier across all screens via ProfileProvider.
+        await setTestSubscription(tier);
+
+        setPurchaseSuccess(true);
+        const tierLabel = TIER_LABELS[tier];
+        Alert.alert(
+          "Dev Tier Activated",
+          `${tierLabel} tier is now active. All paid features are unlocked.\n\nThis test subscription is stored on this device only and will persist across app restarts.\n\nTo test real purchases, install via TestFlight.`,
+        );
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        Alert.alert("Error", "Failed to set test subscription: " + msg);
+      } finally {
+        setPurchasingTier(null);
+      }
+    },
+    [user?.id, h, setTestSubscription],
+  );
+
+  const handleResetTestSubscription = useCallback(async (): Promise<void> => {
+    if (!user?.id) return;
+    h.medium();
+    try {
+      await clearTestSubscription();
+      setPurchaseSuccess(false);
+      Alert.alert(
+        "Test Subscription Reset",
+        "Your subscription tier has been reset to Free. All paid features are now locked.",
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      Alert.alert("Error", "Failed to reset test subscription: " + msg);
+    }
+  }, [user?.id, h, clearTestSubscription]);
 
   const handleSubscribe = useCallback(
     async (pkg: PurchasesPackage | null, tier: Exclude<SubscriptionTier, "free">): Promise<void> => {
@@ -566,40 +620,9 @@ export default function SubscriptionScreen(): JSX.Element {
           );
         } else if (__DEV__) {
           // ── Dev test subscription (Expo Go / Rork preview) ──────────
-          // RevenueCat is not available — set the tier directly for testing.
+          // RevenueCat is not available — use the test tier override.
           // This only works in __DEV__ and never in production.
-          const tierLabel = TIER_LABELS[tier];
-          Alert.alert(
-            "Dev Test Subscription",
-            `${tierLabel} subscription activated for testing.\n\nTo test real purchases, install via TestFlight.`,
-            [
-              { text: "Cancel", style: "cancel" },
-              {
-                text: `Activate ${tierLabel}`,
-                onPress: async () => {
-                  try {
-                    // Update tier in DB + React Query cache
-                    await setSubscriptionTier(tier);
-                    // Grant monthly Neuron allocation
-                    try {
-                      await applyMonthlyRollover();
-                    } catch (rolloverErr) {
-                      console.warn("[Subscription] Rollover failed (non-fatal):", rolloverErr);
-                    }
-                    invalidateProfile();
-                    setPurchaseSuccess(true);
-                    Alert.alert(
-                      "Dev Tier Activated",
-                      `${tierLabel} tier is now active. Your Neuron allocation and EAGOH slots have been updated.`,
-                    );
-                  } catch (tierErr: unknown) {
-                    const msg = tierErr instanceof Error ? tierErr.message : "Unknown error";
-                    Alert.alert("Error", "Failed to update subscription tier: " + msg);
-                  }
-                },
-              },
-            ],
-          );
+          await handleTestSubscribe(tier);
         } else {
           Alert.alert(
             "Purchases Unavailable",
@@ -622,47 +645,7 @@ export default function SubscriptionScreen(): JSX.Element {
         setPurchasingTier(null);
       }
     },
-    [user?.id, rcPurchase, rcConfigured, h, setSubscriptionTier, applyMonthlyRollover, invalidateProfile],
-  );
-
-  const handleTestSubscribe = useCallback(
-    async (tier: Exclude<SubscriptionTier, "free">): Promise<void> => {
-      if (!user?.id) {
-        Alert.alert("Sign In Required", "Please sign in before testing a subscription.");
-        return;
-      }
-      h.heavy();
-      setPurchasingTier(tier);
-      setPurchaseSuccess(false);
-
-      try {
-        // 1. Update subscription tier in DB + React Query cache
-        await setSubscriptionTier(tier);
-
-        // 2. Grant the tier's monthly Neuron allocation
-        try {
-          await applyMonthlyRollover();
-        } catch (rolloverErr) {
-          console.warn("[Subscription] Rollover failed (non-fatal):", rolloverErr);
-        }
-
-        // 3. Refresh profile cache to reflect new tier + balance everywhere
-        invalidateProfile();
-
-        setPurchaseSuccess(true);
-        const tierLabel = TIER_LABELS[tier];
-        Alert.alert(
-          "Dev Tier Activated",
-          `${tierLabel} tier is now active.\n\nYour Neuron allocation and EAGOH slots have been updated.\n\nTo test real purchases, install via TestFlight.`,
-        );
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        Alert.alert("Error", "Failed to update subscription tier: " + msg);
-      } finally {
-        setPurchasingTier(null);
-      }
-    },
-    [user?.id, h, setSubscriptionTier, applyMonthlyRollover, invalidateProfile],
+    [user?.id, rcPurchase, rcConfigured, h, handleTestSubscribe],
   );
 
   const handleRestore = useCallback(async (): Promise<void> => {
@@ -738,22 +721,55 @@ export default function SubscriptionScreen(): JSX.Element {
               </View>
             </View>
 
-            {/* Preview tier cards (disabled) */}
-            <PreviewTierCard
-              tier="pro"
-              onTestSubscribe={__DEV__ ? handleTestSubscribe : undefined}
-              isSubscribing={isPurchasing && purchasingTier === "pro"}
-            />
-            <PreviewTierCard
-              tier="oracle_elite"
-              onTestSubscribe={__DEV__ ? handleTestSubscribe : undefined}
-              isSubscribing={isPurchasing && purchasingTier === "oracle_elite"}
-            />
-            <PreviewTierCard
-              tier="syndicate"
-              onTestSubscribe={__DEV__ ? handleTestSubscribe : undefined}
-              isSubscribing={isPurchasing && purchasingTier === "syndicate"}
-            />
+            {/* Loading state while test tier is being read from AsyncStorage */}
+            {isTierLoading ? (
+              <View style={styles.statusCenter}>
+                <ActivityIndicator color={palette.cyan} size="large" />
+                <Text style={styles.statusSubtitle}>Checking subscription…</Text>
+              </View>
+            ) : null}
+
+            {/* Active test tier banner */}
+            {!isTierLoading && testTier && testTier !== "free" ? (
+              <View style={styles.successBanner}>
+                <BadgeCheck color={palette.success} size={18} />
+                <Text style={styles.successText}>
+                  Test tier active: {TIER_LABELS[testTier]}. All paid features are unlocked.
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Preview tier cards */}
+            {!isTierLoading ? (
+              <>
+                <PreviewTierCard
+                  tier="pro"
+                  onTestSubscribe={__DEV__ ? handleTestSubscribe : undefined}
+                  isSubscribing={isPurchasing && purchasingTier === "pro"}
+                />
+                <PreviewTierCard
+                  tier="oracle_elite"
+                  onTestSubscribe={__DEV__ ? handleTestSubscribe : undefined}
+                  isSubscribing={isPurchasing && purchasingTier === "oracle_elite"}
+                />
+                <PreviewTierCard
+                  tier="syndicate"
+                  onTestSubscribe={__DEV__ ? handleTestSubscribe : undefined}
+                  isSubscribing={isPurchasing && purchasingTier === "syndicate"}
+                />
+
+                {/* Dev-only: Reset Test Subscription */}
+                {__DEV__ && testTier && testTier !== "free" ? (
+                  <Pressable
+                    onPress={handleResetTestSubscription}
+                    style={({ pressed }) => [styles.restoreBtn, pressed && { opacity: 0.7 }]}
+                  >
+                    <RefreshCw color={palette.muted} size={16} />
+                    <Text style={styles.restoreBtnText}>Reset Test Subscription</Text>
+                  </Pressable>
+                ) : null}
+              </>
+            ) : null}
           </ScrollView>
         ) : (
           <View style={styles.statusCenter}>

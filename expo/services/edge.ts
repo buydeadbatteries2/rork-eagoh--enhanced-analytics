@@ -150,12 +150,15 @@ export async function spendEdge(
   amount: number,
   reason: EdgeReason,
   note?: string,
+  effectiveTier?: SubscriptionTier,
 ): Promise<UserProfile> {
   const cost = Math.max(0, Math.floor(amount));
   if (cost === 0) return profile;
 
-  // Free tier may only spend on Quick Check. Effective tier respects admin overrides.
-  if (getEffectiveSubscriptionTier(profile) === "free" && reason !== "quick_check") {
+  // Use the provided effective tier (which may include a dev test override),
+  // otherwise fall back to computing from the raw DB profile.
+  const tier = effectiveTier ?? getEffectiveSubscriptionTier(profile);
+  if (tier === "free" && reason !== "quick_check") {
     throw new Error("Upgrade to Pro or higher to use this feature.");
   }
 
@@ -189,17 +192,36 @@ export async function spendEdge(
 }
 
 /** Convenience deduction helpers for the standard action surfaces. */
-export const deductForQuickCheck = (userId: string, profile: UserProfile, prompt: string, note?: string) =>
-  spendEdge(userId, profile, getQuickCheckCost(prompt), "quick_check", note);
+export const deductForQuickCheck = (
+  userId: string,
+  profile: UserProfile,
+  prompt: string,
+  note?: string,
+  effectiveTier?: SubscriptionTier,
+) => spendEdge(userId, profile, getQuickCheckCost(prompt), "quick_check", note, effectiveTier);
 
-export const deductForObservation = (userId: string, profile: UserProfile, note?: string) =>
-  spendEdge(userId, profile, EDGE_COSTS.observation, "observation", note);
+export const deductForObservation = (
+  userId: string,
+  profile: UserProfile,
+  note?: string,
+  effectiveTier?: SubscriptionTier,
+) => spendEdge(userId, profile, EDGE_COSTS.observation, "observation", note, effectiveTier);
 
-export const deductForMarketplace = (userId: string, profile: UserProfile, amount?: number, note?: string) =>
-  spendEdge(userId, profile, amount ?? EDGE_COSTS.marketplace, "marketplace", note);
+export const deductForMarketplace = (
+  userId: string,
+  profile: UserProfile,
+  amount?: number,
+  note?: string,
+  effectiveTier?: SubscriptionTier,
+) => spendEdge(userId, profile, amount ?? EDGE_COSTS.marketplace, "marketplace", note, effectiveTier);
 
-export const deductForCustomization = (userId: string, profile: UserProfile, amount?: number, note?: string) =>
-  spendEdge(userId, profile, amount ?? EDGE_COSTS.customization, "customization", note);
+export const deductForCustomization = (
+  userId: string,
+  profile: UserProfile,
+  amount?: number,
+  note?: string,
+  effectiveTier?: SubscriptionTier,
+) => spendEdge(userId, profile, amount ?? EDGE_COSTS.customization, "customization", note, effectiveTier);
 
 /** Add purchased Edge (mock purchase). Logs a `purchase` transaction. */
 export async function addPurchasedEdge(

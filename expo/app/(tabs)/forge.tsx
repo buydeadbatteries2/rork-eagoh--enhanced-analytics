@@ -612,11 +612,22 @@ export default function ForgeScreen(): JSX.Element {
     };
   }, []);
 
-  const { effectiveSubscriptionTier } = useProfile();
+  const { effectiveSubscriptionTier, isTierLoading } = useProfile();
   const currentTier = effectiveSubscriptionTier;
 
   // ── Free-tier lock ──────────────────────────────────────────────
   const canForge = canUseForge(currentTier);
+
+  if (isTierLoading) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top"]}>
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 14 }}>
+          <ActivityIndicator color={palette.cyan} size="large" />
+          <Text style={{ color: palette.muted, fontSize: 13, fontWeight: "700" }}>Checking subscription…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (!canForge) {
     return (

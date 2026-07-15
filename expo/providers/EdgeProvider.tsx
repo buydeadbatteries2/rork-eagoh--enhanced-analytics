@@ -4,9 +4,6 @@ import { useCallback, useMemo } from "react";
 import { useAuth } from "@/providers/AuthProvider";
 import { useProfile } from "@/providers/ProfileProvider";
 import {
-  getEffectiveSubscriptionTier,
-} from "@/services/profile";
-import {
   EDGE_COSTS,
   TIER_MONTHLY_ALLOCATION,
   addPurchasedEdge as addPurchasedEdgeService,
@@ -40,7 +37,7 @@ const txKey = (userId: string | null | undefined): readonly unknown[] =>
 
 export const [EdgeProvider, useEdge] = createContextHook(() => {
   const { user } = useAuth();
-  const { profile } = useProfile();
+  const { profile, effectiveSubscriptionTier } = useProfile();
   const userId = user?.id ?? null;
   const queryClient = useQueryClient();
 
@@ -71,7 +68,7 @@ export const [EdgeProvider, useEdge] = createContextHook(() => {
   const spendMutation = useMutation({
     mutationFn: ({ amount, reason, note }: { amount: number; reason: EdgeReason; note?: string }) => {
       const { uid, p } = requireCtx();
-      return spendEdgeService(uid, p, amount, reason, note);
+      return spendEdgeService(uid, p, amount, reason, note, effectiveSubscriptionTier);
     },
     onSuccess: writeBack,
   });
@@ -79,7 +76,7 @@ export const [EdgeProvider, useEdge] = createContextHook(() => {
   const quickCheckMutation = useMutation({
     mutationFn: ({ prompt, note }: { prompt: string; note?: string }) => {
       const { uid, p } = requireCtx();
-      return deductForQuickCheck(uid, p, prompt, note);
+      return deductForQuickCheck(uid, p, prompt, note, effectiveSubscriptionTier);
     },
     onSuccess: writeBack,
   });
@@ -87,7 +84,7 @@ export const [EdgeProvider, useEdge] = createContextHook(() => {
   const observationMutation = useMutation({
     mutationFn: (note?: string) => {
       const { uid, p } = requireCtx();
-      return deductForObservation(uid, p, note);
+      return deductForObservation(uid, p, note, effectiveSubscriptionTier);
     },
     onSuccess: writeBack,
   });
@@ -95,7 +92,7 @@ export const [EdgeProvider, useEdge] = createContextHook(() => {
   const marketplaceMutation = useMutation({
     mutationFn: ({ amount, note }: { amount?: number; note?: string } = {}) => {
       const { uid, p } = requireCtx();
-      return deductForMarketplace(uid, p, amount, note);
+      return deductForMarketplace(uid, p, amount, note, effectiveSubscriptionTier);
     },
     onSuccess: writeBack,
   });
@@ -103,7 +100,7 @@ export const [EdgeProvider, useEdge] = createContextHook(() => {
   const customizationMutation = useMutation({
     mutationFn: ({ amount, note }: { amount?: number; note?: string } = {}) => {
       const { uid, p } = requireCtx();
-      return deductForCustomization(uid, p, amount, note);
+      return deductForCustomization(uid, p, amount, note, effectiveSubscriptionTier);
     },
     onSuccess: writeBack,
   });
@@ -127,14 +124,14 @@ export const [EdgeProvider, useEdge] = createContextHook(() => {
   const rolloverMutation = useMutation({
     mutationFn: () => {
       const { uid, p } = requireCtx();
-      return applyMonthlyRolloverService(uid, p, getEffectiveSubscriptionTier(p));
+      return applyMonthlyRolloverService(uid, p, effectiveSubscriptionTier);
     },
     onSuccess: writeBack,
   });
 
   const canAfford = useCallback((cost: number): boolean => balances.total >= Math.max(0, cost), [balances.total]);
 
-  const tier = getEffectiveSubscriptionTier(profile);
+  const tier = effectiveSubscriptionTier;
   const monthlyAllocation = TIER_MONTHLY_ALLOCATION[tier] ?? 0;
 
   return {

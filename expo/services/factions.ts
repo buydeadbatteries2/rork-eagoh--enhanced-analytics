@@ -237,6 +237,7 @@ export type CreateFactionInput = {
   fanaticTeamFocus?: string;
   emblem?: string;
   intelligence_domain: string;
+  effectiveTier?: SubscriptionTier;
 };
 
 export type CreateFactionResult =
@@ -244,7 +245,7 @@ export type CreateFactionResult =
   | { ok: false; error: string };
 
 export async function createFaction(input: CreateFactionInput): Promise<CreateFactionResult> {
-  const tier = getEffectiveSubscriptionTier(input.profile);
+  const tier = input.effectiveTier ?? getEffectiveSubscriptionTier(input.profile);
   const limits = getFactionLimit(tier);
 
   if (!limits.canCreate) {
@@ -382,8 +383,9 @@ export async function joinFaction(
   userId: string,
   profile: UserProfile,
   factionId: string,
+  effectiveTier?: SubscriptionTier,
 ): Promise<JoinFactionResult> {
-  const tier = getEffectiveSubscriptionTier(profile);
+  const tier = effectiveTier ?? getEffectiveSubscriptionTier(profile);
   const limits = getFactionLimit(tier);
   if (!limits.canJoin) {
     return { ok: false, error: "Free users cannot join Factions. Upgrade to a paid tier to become an Analyst." };
@@ -843,8 +845,9 @@ export async function acceptInvite(
   inviteId: string,
   userId: string,
   profile: UserProfile,
+  effectiveTier?: SubscriptionTier,
 ): Promise<JoinFactionResult> {
-  const tier = getEffectiveSubscriptionTier(profile);
+  const tier = effectiveTier ?? getEffectiveSubscriptionTier(profile);
   const limits = getFactionLimit(tier);
   if (!limits.canJoin) {
     return { ok: false, error: "Free users cannot join Factions." };

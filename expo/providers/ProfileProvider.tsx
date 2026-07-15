@@ -1,6 +1,6 @@
 import createContextHook from "@nkzw/create-context-hook";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/providers/AuthProvider";
 import {
   ensureProfile,
@@ -24,6 +24,11 @@ import {
   spendEdge as spendEdgeService,
   type EdgeReason,
 } from "@/services/edge";
+import {
+  getTestSubscriptionTier,
+  setTestSubscriptionTier as setTestTierAsync,
+  clearTestSubscriptionTier as clearTestTierAsync,
+} from "@/services/testSubscription";
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -51,6 +56,26 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
   const userId = user?.id ?? null;
   const username = (user?.user_metadata as { username?: string } | undefined)?.username ?? null;
   const queryClient = useQueryClient();
+
+  // ── Test subscription tier (dev-only, per-user, persisted in AsyncStorage) ──
+  const [testTier, setTestTier] = useState<SubscriptionTier | null>(null);
+  const [testTierLoaded, setTestTierLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!userId) {
+      setTestTier(null);
+      setTestTierLoaded(true);
+      return;
+    }
+    setTestTierLoaded(false);
+    getTestSubscriptionTier(userId).then((tier) => {
+      setTestTier(tier);
+      setTestTierLoaded(true);
+    }).catch(() => {
+      setTestTier(null);
+      setTestTierLoaded(true);
+    });
+  }, [userId]);
 
   const profileQuery = useQuery<UserProfile | null>({
     queryKey: profileKey(userId),
@@ -192,8 +217,34 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     });
   }, [profile, userId, queryClient]);
 
-  const effectiveSubscriptionTier: SubscriptionTier = getEffectiveSubscriptionTier(profile);
+  // ── Effective tier: test tier override takes precedence in __DEV__ only ──
+  // In production, testTier is always null and this falls through to the DB tier.
+  const dbEffectiveTier = getEffectiveSubscriptionTier(profile);
+  const effectiveSubscriptionTier: SubscriptionTier = __DEV__ && testTier ? testTier : dbEffectiveTier;
+
+  // Loading state: profile not yet fetched OR test tier not yet loaded from AsyncStorage
+  const isTierLoading: boolean = profileQuery.isLoading || (!testTierLoaded && !!userId);
+
   const isAdminOverrideActive: boolean = hasActiveAdminOverride(profile);
+
+  // ── Test subscription helpers (dev-only) ──────────────────────────────
+  const setTestSubscription = useCallback(
+    async (tier: SubscriptionTier): Promise<void> => {
+      if (!userId) return;
+      await setTestTierAsync(userId, tier);
+      setTestTier(tier);
+    },
+    [userId],
+  );
+
+  const clearTestSubscription = useCallback(
+    async (): Promise<void> => {
+      if (!userId) return;
+      await clearTestTierAsync(userId);
+      setTestTier(null);
+    },
+    [userId],
+  );
 
   return {
     profile,
@@ -201,9 +252,17 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     effectiveSubscriptionTier,
     isAdminOverrideActive,
     isLoading: profileQuery.isLoading,
+    isTierLoading,
     error: profileQuery.error as Error | null,
     refetch: profileQuery.refetch,
     invalidate,
+
+    /** Dev-only: active test subscription tier, or null. */
+    testTier: __DEV__ ? testTier : null,
+    /** Dev-only: set a test subscription tier (persists to AsyncStorage). */
+    setTestSubscription,
+    /** Dev-only: clear the test subscription tier. */
+    clearTestSubscription,
 
     updateProfile: (patch: ProfileUpdate) => updateMutation.mutateAsync(patch),
     setSubscriptionTier: (tier: SubscriptionTier) => setTierMutation.mutateAsync(tier),

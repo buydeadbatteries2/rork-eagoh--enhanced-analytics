@@ -1209,6 +1209,7 @@ export default function FactionsScreen(): JSX.Element {
         motto: input.motto || undefined,
         fanaticTeamFocus: input.fanaticTeamFocus || undefined,
         intelligence_domain: input.domain,
+        effectiveTier: tier,
       });
     },
     onSuccess: (result) => {
@@ -1227,7 +1228,7 @@ export default function FactionsScreen(): JSX.Element {
   const acceptMutation = useMutation({
     mutationFn: async (inviteId: string) => {
       if (!userId || !profile) throw new Error("Not signed in");
-      return acceptInvite(inviteId, userId, profile);
+      return acceptInvite(inviteId, userId, profile, tier);
     },
     onSuccess: (result) => {
       if (result.ok) {
@@ -1301,7 +1302,7 @@ export default function FactionsScreen(): JSX.Element {
     async (factionId: string) => {
       if (!userId || !profile) return;
       try {
-        const result = await joinFaction(userId, profile, factionId);
+        const result = await joinFaction(userId, profile, factionId, tier);
         if (result.ok) {
           queryClient.invalidateQueries({ queryKey: ["factions", "user", userId] });
           queryClient.invalidateQueries({ queryKey: ["factions", "all"] });

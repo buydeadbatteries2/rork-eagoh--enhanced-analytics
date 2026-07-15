@@ -2215,8 +2215,7 @@ export default function SessionsScreen(): JSX.Element {
   const h = useHaptics();
   const router = useRouter();
   const { eagohs } = useEagohs();
-  const { profile } = useProfile();
-  const { effectiveSubscriptionTier: userTier } = useProfile();
+  const { profile, effectiveSubscriptionTier: userTier, isTierLoading } = useProfile();
   const { palette: pal } = useAppTheme();
   const queryClient = useQueryClient();
   const [selectedEagohId, setSelectedEagohId] = useState<string>(eagohs[0]?.id ?? "");
@@ -2560,22 +2559,29 @@ export default function SessionsScreen(): JSX.Element {
 
           {/* Session type cards */}
           <Text style={styles.sectionLabel}>SESSION TYPES</Text>
-          <View style={styles.sessionList}>
-            {sessionTypes.map((session) => {
-              const isFreeBlocked = userTier === "free" && !canUseSessionType(userTier, session.id as "quick-check" | "quick-analysis" | "standard" | "oracle" | "premium-event" | "open-intelligence" | "faction-network" | "my-rankings");
-              return (
-                <SessionCard
-                  key={session.id}
-                  session={isFreeBlocked ? { ...session, active: false } : session}
-                  onPress={() => handleSessionPress(session)}
-                  disabled={isFreeBlocked || (eagohs.length === 0 && session.id !== "quick-check")}
-                />
-              );
-            })}
-          </View>
+          {isTierLoading ? (
+            <View style={{ alignItems: "center", paddingVertical: 20, gap: 10 }}>
+              <ActivityIndicator color={palette.cyan} size="small" />
+              <Text style={{ color: palette.muted, fontSize: 12, fontWeight: "700" }}>Checking subscription…</Text>
+            </View>
+          ) : (
+            <View style={styles.sessionList}>
+              {sessionTypes.map((session) => {
+                const isFreeBlocked = userTier === "free" && !canUseSessionType(userTier, session.id as "quick-check" | "quick-analysis" | "standard" | "oracle" | "premium-event" | "open-intelligence" | "faction-network" | "my-rankings");
+                return (
+                  <SessionCard
+                    key={session.id}
+                    session={isFreeBlocked ? { ...session, active: false } : session}
+                    onPress={() => handleSessionPress(session)}
+                    disabled={isFreeBlocked || (eagohs.length === 0 && session.id !== "quick-check")}
+                  />
+                );
+              })}
+            </View>
+          )}
 
           {/* Free-tier upgrade prompt — shown after Quick Check card */}
-          {userTier === "free" ? (
+          {!isTierLoading && userTier === "free" ? (
             <View style={styles.upgradeBanner}>
               <LinearGradient colors={["rgba(255,184,77,0.06)", "rgba(10,18,30,0.85)"]} style={StyleSheet.absoluteFill} />
               <Crown color={palette.gold} size={20} />

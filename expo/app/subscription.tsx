@@ -26,7 +26,7 @@ import {
   type SubscriptionTier,
 } from "@/services/tiers";
 import { getOfferings as getRcOfferings } from "@/services/revenuecat";
-import { supabase } from "@/lib/supabase";
+
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeBack } from "@/hooks/useSafeBack";
 import { useRouter } from "expo-router";
@@ -453,7 +453,7 @@ export default function SubscriptionScreen(): JSX.Element {
   const router = useRouter();
   const h = useHaptics();
   const { user } = useAuth();
-  const { effectiveSubscriptionTier, profile } = useProfile();
+  const { effectiveSubscriptionTier, profile, setSubscriptionTier, applyMonthlyRollover, invalidate: invalidateProfile } = useProfile();
   const {
     configured: rcConfigured,
     subscriptionPackages: rcSubPkgs,
@@ -577,16 +577,24 @@ export default function SubscriptionScreen(): JSX.Element {
               {
                 text: `Activate ${tierLabel}`,
                 onPress: async () => {
-                  // Directly update Supabase profile tier for testing
-                  const { error } = await supabase
-                    .from("profiles")
-                    .update({ subscription_tier: tier, updated_at: new Date().toISOString() })
-                    .eq("id", user.id);
-                  if (error) {
-                    Alert.alert("Error", "Failed to update subscription tier: " + error.message);
-                  } else {
+                  try {
+                    // Update tier in DB + React Query cache
+                    await setSubscriptionTier(tier);
+                    // Grant monthly Neuron allocation
+                    try {
+                      await applyMonthlyRollover();
+                    } catch (rolloverErr) {
+                      console.warn("[Subscription] Rollover failed (non-fatal):", rolloverErr);
+                    }
+                    invalidateProfile();
                     setPurchaseSuccess(true);
-                    Alert.alert("Dev Tier Set", `${tierLabel} tier activated (test mode).`);
+                    Alert.alert(
+                      "Dev Tier Activated",
+                      `${tierLabel} tier is now active. Your Neuron allocation and EAGOH slots have been updated.`,
+                    );
+                  } catch (tierErr: unknown) {
+                    const msg = tierErr instanceof Error ? tierErr.message : "Unknown error";
+                    Alert.alert("Error", "Failed to update subscription tier: " + msg);
                   }
                 },
               },
@@ -614,7 +622,7 @@ export default function SubscriptionScreen(): JSX.Element {
         setPurchasingTier(null);
       }
     },
-    [user?.id, rcPurchase, rcConfigured, h],
+    [user?.id, rcPurchase, rcConfigured, h, setSubscriptionTier, applyMonthlyRollover, invalidateProfile],
   );
 
   const handleTestSubscribe = useCallback(
@@ -628,25 +636,33 @@ export default function SubscriptionScreen(): JSX.Element {
       setPurchaseSuccess(false);
 
       try {
-        const { error } = await supabase
-          .from("profiles")
-          .update({ subscription_tier: tier, updated_at: new Date().toISOString() })
-          .eq("id", user.id);
-        if (error) {
-          Alert.alert("Error", "Failed to update subscription tier: " + error.message);
-        } else {
-          setPurchaseSuccess(true);
-          const tierLabel = TIER_LABELS[tier];
-          Alert.alert("Dev Tier Set", `${tierLabel} tier has been activated for testing.\n\nTo test real purchases, install via TestFlight.`);
+        // 1. Update subscription tier in DB + React Query cache
+        await setSubscriptionTier(tier);
+
+        // 2. Grant the tier's monthly Neuron allocation
+        try {
+          await applyMonthlyRollover();
+        } catch (rolloverErr) {
+          console.warn("[Subscription] Rollover failed (non-fatal):", rolloverErr);
         }
+
+        // 3. Refresh profile cache to reflect new tier + balance everywhere
+        invalidateProfile();
+
+        setPurchaseSuccess(true);
+        const tierLabel = TIER_LABELS[tier];
+        Alert.alert(
+          "Dev Tier Activated",
+          `${tierLabel} tier is now active.\n\nYour Neuron allocation and EAGOH slots have been updated.\n\nTo test real purchases, install via TestFlight.`,
+        );
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Unknown error";
-        Alert.alert("Error", msg);
+        Alert.alert("Error", "Failed to update subscription tier: " + msg);
       } finally {
         setPurchasingTier(null);
       }
     },
-    [user?.id, h],
+    [user?.id, h, setSubscriptionTier, applyMonthlyRollover, invalidateProfile],
   );
 
   const handleRestore = useCallback(async (): Promise<void> => {

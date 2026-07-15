@@ -48,6 +48,7 @@ import { TECHNOLOGY_AREAS, TECHNOLOGY_ROLES, getTechnologyArea, getTechnologyRol
 import { HEALTH_FITNESS_AREAS, HEALTH_FITNESS_ROLES, getHealthFitnessArea, getHealthFitnessRole } from "@/data/healthFitness";
 import { LinearGradient } from "expo-linear-gradient";
 import {
+  AlertCircle,
   AlertTriangle,
   BadgeCheck,
   BookOpen,
@@ -302,6 +303,8 @@ function ConfirmationSheet({
   onGetEdge,
   isGenerating,
   canAfford,
+  sheetError,
+  forgeSuccess,
 }: {
   pending: ForgePending;
   onConfirm: () => void;
@@ -309,43 +312,63 @@ function ConfirmationSheet({
   onGetEdge: () => void;
   isGenerating: boolean;
   canAfford: boolean;
+  sheetError: string | null;
+  forgeSuccess: boolean;
 }): JSX.Element {
   return (
     <View style={styles.confirmOverlay}>
-      <Pressable style={StyleSheet.absoluteFill} onPress={onCancel} />
+      <Pressable style={StyleSheet.absoluteFill} onPress={isGenerating ? undefined : onCancel} />
       <View style={styles.confirmCard}>
         <LinearGradient colors={["rgba(16,27,42,0.98)", "rgba(8,15,26,0.98)"]} style={StyleSheet.absoluteFill} />
-        <Text style={styles.confirmHeader}>CONFIRM FORGE</Text>
-        <Text style={styles.confirmName}>{pending.draft.name || "Unnamed EAGOH"}</Text>
-        <View style={styles.confirmDetails}>
-          {pending.summary.map((line, i) => (
-            <Text key={`${line}-${i}`} style={styles.confirmLine}>{line}</Text>
-          ))}
-        </View>
-        <View style={styles.confirmEdgeRow}>
-          <Zap color={palette.gold} size={18} />
-          <Text style={styles.confirmEdgeCost}>{pending.edgeCost} Neurons</Text>
-        </View>
-        {!canAfford ? (
-          <View style={{ gap: 8 }}>
-            <Text style={styles.confirmError}>Insufficient Neuron balance.</Text>
-            <Pressable onPress={onGetEdge} style={({ pressed }) => [styles.getEdgeBtn, pressed && { opacity: 0.8 }]}>
-              <Text style={styles.getEdgeBtnText}>Get Neurons</Text>
-            </Pressable>
-          </View>
-        ) : null}
-        <View style={styles.confirmActions}>
-          <Pressable onPress={onCancel} disabled={isGenerating} style={({ pressed }) => [styles.confirmCancel, pressed && styles.pressed]}>
-            <Text style={styles.confirmCancelText}>Cancel</Text>
-          </Pressable>
-          <Pressable
-            onPress={onConfirm}
-            disabled={isGenerating || !canAfford}
-            style={({ pressed }) => [styles.confirmForge, !canAfford && styles.disabledButton, pressed && styles.pressed]}
-          >
-            {isGenerating ? <ActivityIndicator color={palette.void} /> : <Text style={styles.confirmForgeText}>Generate EAGOH</Text>}
-          </Pressable>
-        </View>
+        {forgeSuccess ? (
+          <>
+            <View style={styles.confirmSuccessIcon}>
+              <Check color={palette.success} size={32} />
+            </View>
+            <Text style={styles.confirmSuccessTitle}>EAGOH Forged!</Text>
+            <Text style={styles.confirmSuccessSub}>Your new intelligence unit is ready.</Text>
+          </>
+        ) : (
+          <>
+            <Text style={styles.confirmHeader}>CONFIRM FORGE</Text>
+            <Text style={styles.confirmName}>{pending.draft.name || "Unnamed EAGOH"}</Text>
+            <View style={styles.confirmDetails}>
+              {pending.summary.map((line, i) => (
+                <Text key={`${line}-${i}`} style={styles.confirmLine}>{line}</Text>
+              ))}
+            </View>
+            <View style={styles.confirmEdgeRow}>
+              <Zap color={palette.gold} size={18} />
+              <Text style={styles.confirmEdgeCost}>{pending.edgeCost} Neurons</Text>
+            </View>
+            {!canAfford ? (
+              <View style={{ gap: 8 }}>
+                <Text style={styles.confirmError}>Insufficient Neuron balance.</Text>
+                <Pressable onPress={onGetEdge} style={({ pressed }) => [styles.getEdgeBtn, pressed && { opacity: 0.8 }]}>
+                  <Text style={styles.getEdgeBtnText}>Get Neurons</Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {sheetError ? (
+              <View style={styles.confirmErrorBox}>
+                <AlertCircle color={palette.ember} size={14} />
+                <Text style={styles.confirmErrorText}>{sheetError}</Text>
+              </View>
+            ) : null}
+            <View style={styles.confirmActions}>
+              <Pressable onPress={onCancel} disabled={isGenerating} style={({ pressed }) => [styles.confirmCancel, pressed && styles.pressed]}>
+                <Text style={styles.confirmCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={onConfirm}
+                disabled={isGenerating || !canAfford}
+                style={({ pressed }) => [styles.confirmForge, !canAfford && styles.disabledButton, pressed && styles.pressed]}
+              >
+                {isGenerating ? <ActivityIndicator color={palette.void} /> : <Text style={styles.confirmForgeText}>Generate EAGOH</Text>}
+              </Pressable>
+            </View>
+          </>
+        )}
       </View>
     </View>
   );
@@ -400,6 +423,8 @@ export default function ForgeScreen(): JSX.Element {
   const [lab, setLab] = useState<string>("neon-vault");
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
   const [forgeError, setForgeError] = useState<string | null>(null);
+  const [sheetError, setSheetError] = useState<string | null>(null);
+  const [forgeSuccess, setForgeSuccess] = useState<boolean>(false);
   const [keyboardHeight, setKeyboardHeight] = useState<number>(0);
 
   // ── EAGOH selection for editing ──────────────────────────────────
@@ -951,6 +976,8 @@ export default function ForgeScreen(): JSX.Element {
       return;
     }
     setForgeError(null);
+    setSheetError(null);
+    setForgeSuccess(false);
     if (isEditing) {
       // Free users cannot reforge
       if (currentTier === "free") {
@@ -1030,15 +1057,28 @@ export default function ForgeScreen(): JSX.Element {
   }, [goNext, handleForge, isLastStep]);
 
   const handleConfirm = useCallback((): void => {
+    setSheetError(null);
     confirmForge().then((result) => {
-      if (!result.ok) setForgeError(result.error);
+      if (!result.ok) {
+        setSheetError(result.error);
+      } else {
+        setForgeSuccess(true);
+        h.success();
+        setTimeout(() => {
+          cancelForge();
+          setForgeSuccess(false);
+          setSheetError(null);
+        }, 2000);
+      }
     }).catch((err: Error) => {
-      setForgeError(err?.message ?? "Forge failed.");
+      setSheetError(err?.message ?? "Forge failed.");
     });
-  }, [confirmForge]);
+  }, [confirmForge, cancelForge, h]);
 
   const handleCancel = useCallback((): void => {
     cancelForge();
+    setSheetError(null);
+    setForgeSuccess(false);
   }, [cancelForge]);
 
   const handleGetEdge = useCallback((): void => {
@@ -1880,6 +1920,8 @@ export default function ForgeScreen(): JSX.Element {
           onGetEdge={handleGetEdge}
           isGenerating={isGenerating}
           canAfford={edgeTotal >= pending.edgeCost}
+          sheetError={sheetError}
+          forgeSuccess={forgeSuccess}
         />
       ) : null}
 
@@ -2703,6 +2745,31 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
   },
   confirmForgeText: { color: palette.void, fontWeight: "900", fontSize: 14 },
+  confirmErrorBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    padding: 10,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.25)",
+    backgroundColor: "rgba(239,68,68,0.08)",
+  },
+  confirmErrorText: { color: palette.ember, fontSize: 11, fontWeight: "700", flex: 1, flexWrap: "wrap" },
+  confirmSuccessIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 2,
+    borderColor: palette.success,
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "center",
+    backgroundColor: "rgba(34,197,94,0.12)",
+    marginBottom: 4,
+  },
+  confirmSuccessTitle: { color: palette.text, fontSize: 22, fontWeight: "900", textAlign: "center" },
+  confirmSuccessSub: { color: palette.muted, fontSize: 13, fontWeight: "700", textAlign: "center" },
 
   // ── EAGOH Picker overlay ────────────────────────────────────────
   pickerOverlay: {

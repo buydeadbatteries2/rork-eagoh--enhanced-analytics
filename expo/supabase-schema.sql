@@ -3665,6 +3665,7 @@ begin
                oi.tag,
                oi.selected_category,
                oi.quality_score,
+               oi.influence_score,
                oi.confidence_level,
                oi.validation_status,
                oi.created_at,

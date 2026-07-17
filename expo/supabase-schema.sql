@@ -1124,6 +1124,77 @@ create table if not exists public.analyst_context_usage (
   used_at timestamptz not null default now()
 );
 
+-- ── COLUMN MIGRATION: add columns that may be absent from older live tables ──
+-- CREATE TABLE IF NOT EXISTS does not add new columns to an existing table.
+-- This block guarantees every column referenced by indexes below exists.
+-- Idempotent: ADD COLUMN IF NOT EXISTS is a no-op for columns already present.
+alter table public.analyst_context_usage
+  add column if not exists analyst_thread_id uuid,
+  add column if not exists analyst_message_id uuid,
+  add column if not exists selected_eagoh_id uuid,
+  add column if not exists source_type text,
+  add column if not exists source_entry_id uuid,
+  add column if not exists source_owner_id uuid,
+  add column if not exists source_eagoh_id uuid,
+  add column if not exists faction_id uuid,
+  add column if not exists exchange_purchase_id uuid,
+  add column if not exists relevance_score numeric,
+  add column if not exists source_rank integer,
+  add column if not exists sync_percentage integer,
+  add column if not exists source_created_at timestamptz,
+  add column if not exists source_category text,
+  add column if not exists source_validation_status text,
+  add column if not exists source_quality_score numeric,
+  add column if not exists source_confidence_level text,
+  add column if not exists external_url_hash text,
+  add column if not exists external_publisher text;
+
+-- ── CONSTRAINT MIGRATION: upgrade source_type CHECK to include retained_exchange ──
+-- The inline constraint from CREATE TABLE gets an auto-generated name. On older
+-- live tables the constraint may only allow ('personal','faction','exchange').
+-- This DO block drops and recreates the constraint only if 'retained_exchange'
+-- is not already present in its definition. Safe to rerun.
+do $$
+declare
+  v_constraint_name text;
+  v_definition text;
+begin
+  -- Find the check constraint on source_type (auto-named by PostgreSQL)
+  select con.conname
+    into v_constraint_name
+    from pg_constraint con
+    join pg_class rel on rel.oid = con.conrelid
+    join pg_namespace nsp on nsp.oid = rel.relnamespace
+    join pg_attribute att on att.attrelid = rel.oid and att.attnum = any(con.conkey)
+   where nsp.nspname = 'public'
+     and rel.relname = 'analyst_context_usage'
+     and att.attname = 'source_type'
+     and con.contype = 'c';
+
+  if v_constraint_name is not null then
+    -- Get the constraint expression text
+    select pg_get_constraintdef(con.oid)
+      into v_definition
+      from pg_constraint con
+     where con.conname = v_constraint_name
+       and con.conrelid = 'public.analyst_context_usage'::regclass;
+
+    -- Only drop+recreate if 'retained_exchange' is NOT already in the definition
+    if v_definition is not null and v_definition not ilike '%retained_exchange%' then
+      execute format('alter table public.analyst_context_usage drop constraint %I', v_constraint_name);
+      execute 'alter table public.analyst_context_usage
+        add constraint analyst_context_usage_source_type_check
+        check (source_type in (''personal'', ''faction'', ''exchange'', ''retained_exchange'', ''external_research''))';
+    end if;
+  else
+    -- No constraint exists at all — add it
+    execute 'alter table public.analyst_context_usage
+      add constraint analyst_context_usage_source_type_check
+      check (source_type in (''personal'', ''faction'', ''exchange'', ''retained_exchange'', ''external_research''))';
+  end if;
+end
+$$;
+
 -- Indexes for query patterns
 -- Duplicate protection: one row per (execution_id, source_type, source_entry_id, exchange_purchase_id)
 -- Expressions (coalesce) are not allowed in inline table constraints, so use a unique index instead.
@@ -1181,6 +1252,21 @@ create table if not exists public.analyst_response_audits (
   audit_status text not null default 'complete' check (audit_status in ('complete', 'partial', 'failed')),
   created_at timestamptz not null default now()
 );
+
+-- ── COLUMN MIGRATION: add columns that may be absent from older live tables ──
+alter table public.analyst_response_audits
+  add column if not exists analyst_thread_id uuid,
+  add column if not exists analyst_message_id uuid,
+  add column if not exists selected_eagoh_id uuid,
+  add column if not exists personal_count integer not null default 0,
+  add column if not exists faction_count integer not null default 0,
+  add column if not exists exchange_count integer not null default 0,
+  add column if not exists external_source_count integer not null default 0,
+  add column if not exists external_search_used boolean not null default false,
+  add column if not exists model text,
+  add column if not exists confidence numeric,
+  add column if not exists audit_status text not null default 'complete',
+  add column if not exists retained_exchange_count integer not null default 0;
 
 create index if not exists ara_requesting_user_idx on public.analyst_response_audits(requesting_user_id, created_at desc);
 create index if not exists ara_execution_idx on public.analyst_response_audits(execution_id);
@@ -3465,13 +3551,9 @@ create policy "retained_self_select" on public.retained_exchange_intelligence
 -- No client insert, update, or delete policies.
 -- Only service_role (bypasses RLS) or the security-definer RPCs may write.
 
--- ── Update analyst_context_usage to support retained_exchange source type ──
-alter table public.analyst_context_usage drop constraint if exists analyst_context_usage_source_type_check;
-alter table public.analyst_context_usage add constraint analyst_context_usage_source_type_check
-  check (source_type in ('personal', 'faction', 'exchange', 'retained_exchange', 'external_research'));
-
--- ── Add retained_exchange_count to analyst_response_audits ──
-alter table public.analyst_response_audits add column if not exists retained_exchange_count integer not null default 0;
+-- ── analyst_context_usage source_type constraint and analyst_response_audits.retained_exchange_count ──
+-- were migrated inline above (idempotent DO block + ADD COLUMN IF NOT EXISTS).
+-- No additional constraint or column migration needed here.
 
 -- =============================================================================
 -- SECURE DB FUNCTION: create_retained_exchange_intelligence

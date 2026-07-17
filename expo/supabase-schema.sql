@@ -3485,6 +3485,7 @@ declare
   v_newly_retain integer;
   v_capacity integer;
   v_actual_inserted integer;
+  v_inserted_rows integer;
   v_cap_reached boolean;
   v_entry record;
   v_validation_rank jsonb := '{"externally_supported":3,"community_supported":2,"pending_review":1,"disputed":0,"rejected":-1,"withdrawn":-1}'::jsonb;
@@ -3561,7 +3562,7 @@ begin
     where id = v_purchase.vendor_id;
 
   -- 7. Count the TOTAL eligible vendor EAGOH entries (before percentage)
-  --    This is the denominator for the 25% cumulative retention cap.
+  --    This is the denominator for both the purchased cohort and the 25% cap.
   select count(*) into v_total_eligible
     from public.open_intelligence
     where user_id = v_purchase.vendor_id
@@ -3569,32 +3570,36 @@ begin
       and exchange_share_enabled = true
       and validation_status in ('pending_review', 'community_supported', 'externally_supported', 'disputed', 'validated');
 
-  -- 8. Calculate the 25% cumulative retention cap
+  -- 8. Calculate the purchased cohort count (percentage applied to total eligible)
+  --    This is the number of entries the buyer actually purchased access to.
+  v_purchased_cohort_count := ceil(v_total_eligible * v_pct / 100.0);
+
+  -- 9. Calculate the 25% cumulative retention cap
   v_max_retained := ceil(v_total_eligible * 0.25);
   if v_max_retained < 1 and v_total_eligible > 0 then
     v_max_retained := 1;
   end if;
 
-  -- 9. Count buyer's existing ACTIVE retained entries for this vendor EAGOH
-  --    (across all purchases, not just this one)
+  -- 10. Count buyer's existing ACTIVE retained entries for this vendor EAGOH
+  --     (across all purchases, not just this one)
   select count(*) into v_existing_retained
     from public.retained_exchange_intelligence
     where buyer_id = v_purchase.buyer_id
       and vendor_eagoh_id = v_purchase.eagoh_id
       and active = true;
 
-  -- 10. Check for existing retained rows for THIS purchase (idempotency)
+  -- 11. Check for existing retained rows for THIS purchase (idempotency)
   select count(*) into v_existing_for_purchase
     from public.retained_exchange_intelligence
     where purchase_id = p_purchase_id and active = true;
 
   if v_existing_for_purchase > 0 then
-    -- Already processed — return full cap info for transparency
+    -- Already processed — return the ACTUAL purchased cohort size, not the retained count.
     return jsonb_build_object(
       'ok', true,
       'already_processed', true,
       'purchase_id', p_purchase_id,
-      'purchased_cohort_count', v_existing_for_purchase,
+      'purchased_cohort_count', v_purchased_cohort_count,
       'retained_count', v_existing_for_purchase,
       'total_vendor_eligible_entries', v_total_eligible,
       'maximum_retained_entries', v_max_retained,
@@ -3605,9 +3610,6 @@ begin
       'cap_reached', v_existing_retained >= v_max_retained
     );
   end if;
-
-  -- 11. Calculate the purchased cohort count (percentage applied to total eligible)
-  v_purchased_cohort_count := ceil(v_total_eligible * v_pct / 100.0);
 
   if v_purchased_cohort_count = 0 then
     return jsonb_build_object(
@@ -3626,7 +3628,7 @@ begin
     );
   end if;
 
-  -- 12. Calculate the normal 2% retention amount
+  -- 12. Calculate the normal 2% retention amount (from the purchased cohort)
   v_requested_retain := ceil(v_purchased_cohort_count * 0.02);
   if v_requested_retain < 1 then
     v_requested_retain := 1;
@@ -3643,37 +3645,60 @@ begin
     v_cap_reached := (v_existing_retained + v_newly_retain) >= v_max_retained;
   end if;
 
-  -- 14. Select and insert retained entries (only if capacity allows)
-  --    Exclude entries the buyer already has ACTIVE retained rows for (this vendor EAGOH).
-  --    Deactivated entries (active = false) are available for re-retention.
-  --    Deterministic ordering: same stableCohortOrder as the worker.
+  -- 14. Select and insert retained entries FROM THE PURCHASED COHORT ONLY.
+  --     Step A: Build the full deterministic ordered eligible cohort (same stableCohortOrder
+  --            as the worker: quality DESC, validation rank DESC, influence DESC,
+  --            confidence rank DESC, created_at DESC, id ASC).
+  --     Step B: Apply LIMIT v_purchased_cohort_count to get the purchased cohort.
+  --     Step C: From within that purchased cohort, exclude entries the buyer already
+  --            has ACTIVE retained rows for (this vendor EAGOH).
+  --     Step D: Take the top v_newly_retain entries from the remaining set.
+  --     A buyer must NEVER retain an entry that was outside the purchased cohort.
   v_actual_inserted := 0;
 
   if v_newly_retain > 0 then
     for v_entry in
-      select oi.*,
-             (v_validation_rank ->> oi.validation_status)::int as val_rank,
-             (v_confidence_rank ->> oi.confidence_level)::int as conf_rank
-        from public.open_intelligence oi
-        where oi.user_id = v_purchase.vendor_id
-          and oi.eagoh_id = v_purchase.eagoh_id
-          and oi.exchange_share_enabled = true
-          and oi.validation_status in ('pending_review', 'community_supported', 'externally_supported', 'disputed', 'validated')
-          and not exists (
-            select 1 from public.retained_exchange_intelligence rei
-            where rei.buyer_id = v_purchase.buyer_id
-              and rei.vendor_eagoh_id = v_purchase.eagoh_id
-              and rei.source_entry_id = oi.id
-              and rei.active = true
-          )
-        order by
-          oi.quality_score desc,
-          (v_validation_rank ->> oi.validation_status)::int desc,
-          oi.influence_score desc,
-          (v_confidence_rank ->> oi.confidence_level)::int desc,
-          oi.created_at desc,
-          oi.id asc
-        limit v_newly_retain
+      select sub.* from (
+        select oi.id,
+               oi.content,
+               oi.entry_type,
+               oi.tag,
+               oi.selected_category,
+               oi.quality_score,
+               oi.confidence_level,
+               oi.validation_status,
+               oi.created_at,
+               (v_validation_rank ->> oi.validation_status)::int as val_rank,
+               (v_confidence_rank ->> oi.confidence_level)::int as conf_rank
+          from public.open_intelligence oi
+          where oi.user_id = v_purchase.vendor_id
+            and oi.eagoh_id = v_purchase.eagoh_id
+            and oi.exchange_share_enabled = true
+            and oi.validation_status in ('pending_review', 'community_supported', 'externally_supported', 'disputed', 'validated')
+          order by
+            oi.quality_score desc,
+            (v_validation_rank ->> oi.validation_status)::int desc,
+            oi.influence_score desc,
+            (v_confidence_rank ->> oi.confidence_level)::int desc,
+            oi.created_at desc,
+            oi.id asc
+          limit v_purchased_cohort_count
+      ) sub
+      where not exists (
+        select 1 from public.retained_exchange_intelligence rei
+        where rei.buyer_id = v_purchase.buyer_id
+          and rei.vendor_eagoh_id = v_purchase.eagoh_id
+          and rei.source_entry_id = sub.id
+          and rei.active = true
+      )
+      order by
+        sub.quality_score desc,
+        sub.val_rank desc,
+        sub.influence_score desc,
+        sub.conf_rank desc,
+        sub.created_at desc,
+        sub.id asc
+      limit v_newly_retain
     loop
       insert into public.retained_exchange_intelligence (
         buyer_id, vendor_id, vendor_eagoh_id, source_entry_id, purchase_id, listing_id,
@@ -3692,7 +3717,9 @@ begin
       )
       on conflict do nothing;
 
-      v_actual_inserted := v_actual_inserted + 1;
+      -- Use GET DIAGNOSTICS to count only rows actually inserted (not skipped by ON CONFLICT)
+      get diagnostics v_inserted_rows = row_count;
+      v_actual_inserted := v_actual_inserted + v_inserted_rows;
     end loop;
   end if;
 
@@ -3764,3 +3791,52 @@ revoke execute on function public.deactivate_retained_exchange_intelligence(uuid
 revoke execute on function public.deactivate_retained_exchange_intelligence(uuid, text) from anon;
 revoke execute on function public.deactivate_retained_exchange_intelligence(uuid, text) from authenticated;
 grant execute on function public.deactivate_retained_exchange_intelligence(uuid, text) to service_role;
+
+-- =============================================================================
+-- AUTOMATIC TRIGGER: auto_create_retained_exchange on purchase insert
+-- =============================================================================
+-- Fires AFTER INSERT on marketplace_sync_purchases when active = true.
+-- Calls create_retained_exchange_intelligence(NEW.id) automatically so retention
+-- happens even if the mobile client's triggerRetention call fails.
+-- Best-effort: errors are swallowed (NOTICE only) so the purchase insert is
+-- never rolled back. The worker's /exchange/retention/create endpoint remains
+-- as an idempotent retry fallback.
+
+create or replace function public.auto_create_retained_exchange()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_result jsonb;
+begin
+  -- Only fire for active purchases (refunds/revocations insert with active=false)
+  if NEW.active = false then
+    return NEW;
+  end if;
+
+  -- Call the retention RPC (best-effort: errors are swallowed)
+  begin
+    v_result := public.create_retained_exchange_intelligence(NEW.id);
+  exception when others then
+    -- Swallow errors so the purchase insert is never rolled back.
+    -- The mobile client's retry endpoint or a periodic worker job can retry later.
+    raise notice 'auto_create_retained_exchange: retention deferred for purchase %', NEW.id;
+  end;
+
+  return NEW;
+end;
+$$;
+
+-- Lock the trigger function to prevent direct execution by non-superusers.
+revoke execute on function public.auto_create_retained_exchange() from public;
+revoke execute on function public.auto_create_retained_exchange() from anon;
+revoke execute on function public.auto_create_retained_exchange() from authenticated;
+
+-- Attach the trigger to marketplace_sync_purchases.
+drop trigger if exists trg_auto_create_retained_exchange on public.marketplace_sync_purchases;
+create trigger trg_auto_create_retained_exchange
+  after insert on public.marketplace_sync_purchases
+  for each row
+  execute function public.auto_create_retained_exchange();

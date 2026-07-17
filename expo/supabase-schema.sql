@@ -3367,3 +3367,332 @@ revoke execute on function public.refund_oi_entry(uuid, text, text) from public;
 revoke execute on function public.refund_oi_entry(uuid, text, text) from anon;
 revoke execute on function public.refund_oi_entry(uuid, text, text) from authenticated;
 grant execute on function public.refund_oi_entry(uuid, text, text) to service_role;
+
+-- =============================================================================
+-- PHASE RETAINED-OI-1: RETAINED EXCHANGE INTELLIGENCE
+-- =============================================================================
+-- Buyers retain a 2% snapshot of the Exchange cohort they purchased, as a
+-- permanent read-only private library. Retained entries are:
+--   - Read-only (no client insert/update/delete)
+--   - Buyer-private (vendors cannot access)
+--   - Never listed on Exchange, never shared with Factions, never resold
+--   - Never copied into the buyer's open_intelligence table
+--
+-- Retention is created by a security-definer RPC after every successful
+-- purchase, and deactivated (not deleted) on refund/reversal/dispute.
+-- Only the service-role worker or secure DB function may create or deactivate.
+
+create table if not exists public.retained_exchange_intelligence (
+  id uuid primary key default gen_random_uuid(),
+  buyer_id uuid not null references auth.users(id) on delete cascade,
+  vendor_id uuid not null references auth.users(id) on delete cascade,
+  vendor_eagoh_id uuid not null references public.eagohs(id) on delete cascade,
+  source_entry_id uuid not null references public.open_intelligence(id) on delete cascade,
+  purchase_id uuid not null references public.marketplace_sync_purchases(id) on delete cascade,
+  listing_id uuid references public.marketplace_listings(id) on delete set null,
+  purchased_percentage integer not null,
+  retention_percentage numeric not null default 2,
+  retained_content_snapshot text not null,
+  source_entry_type text,
+  source_tag text,
+  source_category text,
+  source_quality_score numeric,
+  source_confidence_level text,
+  source_validation_status text,
+  source_created_at timestamptz,
+  vendor_display_name text,
+  vendor_eagoh_name text,
+  active boolean not null default true,
+  deactivated_reason text,
+  deactivated_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+-- Unique constraint: one retained row per (purchase_id, source_entry_id)
+drop index if exists retained_exchange_purchase_entry_uniq;
+create unique index if not exists retained_exchange_purchase_entry_uniq
+  on public.retained_exchange_intelligence(purchase_id, source_entry_id)
+  where active = true;
+
+create index if not exists retained_buyer_active_idx
+  on public.retained_exchange_intelligence(buyer_id, active, created_at desc);
+create index if not exists retained_purchase_idx
+  on public.retained_exchange_intelligence(purchase_id);
+create index if not exists retained_vendor_eagoh_idx
+  on public.retained_exchange_intelligence(vendor_eagoh_id);
+
+alter table public.retained_exchange_intelligence enable row level security;
+
+drop policy if exists "retained_self_select" on public.retained_exchange_intelligence;
+drop policy if exists "retained_self_insert" on public.retained_exchange_intelligence;
+drop policy if exists "retained_self_update" on public.retained_exchange_intelligence;
+drop policy if exists "retained_self_delete" on public.retained_exchange_intelligence;
+
+-- Buyers may only read their own ACTIVE retained entries.
+create policy "retained_self_select" on public.retained_exchange_intelligence
+  for select using (auth.uid() = buyer_id and active = true);
+
+-- No client insert, update, or delete policies.
+-- Only service_role (bypasses RLS) or the security-definer RPCs may write.
+
+-- ── Update analyst_context_usage to support retained_exchange source type ──
+alter table public.analyst_context_usage drop constraint if exists analyst_context_usage_source_type_check;
+alter table public.analyst_context_usage add constraint analyst_context_usage_source_type_check
+  check (source_type in ('personal', 'faction', 'exchange', 'retained_exchange', 'external_research'));
+
+-- ── Add retained_exchange_count to analyst_response_audits ──
+alter table public.analyst_response_audits add column if not exists retained_exchange_count integer not null default 0;
+
+-- =============================================================================
+-- SECURE DB FUNCTION: create_retained_exchange_intelligence
+-- =============================================================================
+-- Called by the worker AFTER a successful purchase is verified server-side.
+-- Reconstructs the exact eligible Exchange cohort, applies the purchased
+-- percentage, retains ceil(cohort * 0.02) entries deterministically.
+-- Idempotent: returns already_processed = true if rows already exist.
+
+create or replace function public.create_retained_exchange_intelligence(
+  p_purchase_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_purchase record;
+  v_listing record;
+  v_vendor_eagoh record;
+  v_vendor_profile record;
+  v_pct integer;
+  v_existing_count integer;
+  v_cohort_count integer;
+  v_retain_count integer;
+  v_entry record;
+  v_rows_to_insert jsonb[] := '{}';
+  v_validation_rank jsonb := '{"externally_supported":3,"community_supported":2,"pending_review":1,"disputed":0,"rejected":-1,"withdrawn":-1}'::jsonb;
+  v_confidence_rank jsonb := '{"verified_observation":3,"strong_confidence":2,"moderate_confidence":1,"weak_suspicion":0}'::jsonb;
+begin
+  -- 1. Lock and verify the purchase
+  select id, listing_id, buyer_id, vendor_id, eagoh_id, sync_level, active, started_at, expires_at
+    into v_purchase
+    from public.marketplace_sync_purchases
+    where id = p_purchase_id
+    for update;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'purchase_not_found');
+  end if;
+
+  -- 2. Confirm it is successful and active
+  if v_purchase.active = false then
+    return jsonb_build_object('ok', false, 'error', 'purchase_inactive');
+  end if;
+
+  if v_purchase.expires_at <= now() then
+    return jsonb_build_object('ok', false, 'error', 'purchase_expired');
+  end if;
+
+  -- 3. Parse purchased percentage (25, 50, 75, 100)
+  v_pct := case
+    when v_purchase.sync_level = '25%' then 25
+    when v_purchase.sync_level = '50%' then 50
+    when v_purchase.sync_level = '75%' then 75
+    when v_purchase.sync_level = '100%' then 100
+    else null
+  end;
+
+  if v_pct is null then
+    return jsonb_build_object('ok', false, 'error', 'invalid_sync_level');
+  end if;
+
+  -- 4. Verify listing relationships
+  select id, vendor_id, eagoh_id, active
+    into v_listing
+    from public.marketplace_listings
+    where id = v_purchase.listing_id;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'listing_not_found');
+  end if;
+
+  if v_listing.vendor_id != v_purchase.vendor_id then
+    return jsonb_build_object('ok', false, 'error', 'vendor_mismatch');
+  end if;
+
+  if v_listing.eagoh_id != v_purchase.eagoh_id then
+    return jsonb_build_object('ok', false, 'error', 'eagoh_mismatch');
+  end if;
+
+  -- 5. Verify vendor EAGOH exists and belongs to vendor
+  select id, user_id, name
+    into v_vendor_eagoh
+    from public.eagohs
+    where id = v_purchase.eagoh_id;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'eagoh_not_found');
+  end if;
+
+  if v_vendor_eagoh.user_id != v_purchase.vendor_id then
+    return jsonb_build_object('ok', false, 'error', 'eagoh_owner_mismatch');
+  end if;
+
+  -- 6. Get vendor display name
+  select username into v_vendor_profile
+    from public.profiles
+    where id = v_purchase.vendor_id;
+
+  -- 7. Check for existing retained rows (idempotency)
+  select count(*) into v_existing_count
+    from public.retained_exchange_intelligence
+    where purchase_id = p_purchase_id and active = true;
+
+  if v_existing_count > 0 then
+    return jsonb_build_object(
+      'ok', true,
+      'already_processed', true,
+      'purchase_id', p_purchase_id,
+      'purchased_cohort_count', v_existing_count,
+      'retained_count', v_existing_count
+    );
+  end if;
+
+  -- 8. Reconstruct the exact eligible Exchange cohort (same filters as worker)
+  --    and apply stable cohort ordering + percentage to get the purchased cohort.
+  --    Then retain ceil(purchased_cohort_count * 0.02) entries from the top.
+  --    Deterministic: same ordering every retry.
+
+  -- Count the full eligible set for this vendor EAGOH
+  select count(*) into v_cohort_count
+    from public.open_intelligence
+    where user_id = v_purchase.vendor_id
+      and eagoh_id = v_purchase.eagoh_id
+      and exchange_share_enabled = true
+      and validation_status in ('pending_review', 'community_supported', 'externally_supported', 'disputed', 'validated');
+
+  -- Apply purchased percentage to get accessible cohort count
+  v_cohort_count := ceil(v_cohort_count * v_pct / 100.0);
+
+  if v_cohort_count = 0 then
+    return jsonb_build_object(
+      'ok', true,
+      'already_processed', false,
+      'purchase_id', p_purchase_id,
+      'purchased_cohort_count', 0,
+      'retained_count', 0
+    );
+  end if;
+
+  -- Calculate retained count: ceil(cohort * 0.02), minimum 1
+  v_retain_count := ceil(v_cohort_count * 0.02);
+  if v_retain_count < 1 then
+    v_retain_count := 1;
+  end if;
+
+  -- 9. Select retained entries deterministically using the same stable ordering
+  --    as the worker's stableCohortOrder: quality DESC, validation rank DESC,
+  --    influence DESC, confidence rank DESC, created_at DESC, id ASC.
+  --    Take the top v_retain_count entries from the purchased cohort.
+  for v_entry in
+    select oi.*,
+           (v_validation_rank ->> oi.validation_status)::int as val_rank,
+           (v_confidence_rank ->> oi.confidence_level)::int as conf_rank
+      from public.open_intelligence oi
+      where oi.user_id = v_purchase.vendor_id
+        and oi.eagoh_id = v_purchase.eagoh_id
+        and oi.exchange_share_enabled = true
+        and oi.validation_status in ('pending_review', 'community_supported', 'externally_supported', 'disputed', 'validated')
+      order by
+        oi.quality_score desc,
+        (v_validation_rank ->> oi.validation_status)::int desc,
+        oi.influence_score desc,
+        (v_confidence_rank ->> oi.confidence_level)::int desc,
+        oi.created_at desc,
+        oi.id asc
+      limit v_retain_count
+  loop
+    insert into public.retained_exchange_intelligence (
+      buyer_id, vendor_id, vendor_eagoh_id, source_entry_id, purchase_id, listing_id,
+      purchased_percentage, retention_percentage, retained_content_snapshot,
+      source_entry_type, source_tag, source_category, source_quality_score,
+      source_confidence_level, source_validation_status, source_created_at,
+      vendor_display_name, vendor_eagoh_name, active
+    ) values (
+      v_purchase.buyer_id, v_purchase.vendor_id, v_purchase.eagoh_id, v_entry.id,
+      p_purchase_id, v_purchase.listing_id,
+      v_pct, 2, v_entry.content,
+      v_entry.entry_type, v_entry.tag, v_entry.selected_category,
+      v_entry.quality_score, v_entry.confidence_level, v_entry.validation_status,
+      v_entry.created_at,
+      v_vendor_profile.username, v_vendor_eagoh.name, true
+    )
+    on conflict (purchase_id, source_entry_id) where active = true
+    do nothing;
+  end loop;
+
+  -- 10. Return result
+  select count(*) into v_retain_count
+    from public.retained_exchange_intelligence
+    where purchase_id = p_purchase_id and active = true;
+
+  return jsonb_build_object(
+    'ok', true,
+    'already_processed', false,
+    'purchase_id', p_purchase_id,
+    'purchased_cohort_count', v_cohort_count,
+    'retained_count', v_retain_count
+  );
+end;
+$$;
+
+-- =============================================================================
+-- SECURE DB FUNCTION: deactivate_retained_exchange_intelligence
+-- =============================================================================
+-- Called when the original purchase becomes inactive (refund, reversal,
+-- dispute, cancellation, administrative revocation). Sets all retained
+-- records from that purchase to active = false. Does NOT delete rows.
+
+create or replace function public.deactivate_retained_exchange_intelligence(
+  p_purchase_id uuid,
+  p_reason text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_deactivated_count integer;
+begin
+  if p_reason is null or btrim(p_reason) = '' then
+    return jsonb_build_object('ok', false, 'error', 'missing_reason');
+  end if;
+
+  update public.retained_exchange_intelligence
+    set active = false,
+        deactivated_reason = p_reason,
+        deactivated_at = now()
+    where purchase_id = p_purchase_id
+      and active = true;
+
+  get diagnostics v_deactivated_count = row_count;
+
+  return jsonb_build_object(
+    'ok', true,
+    'purchase_id', p_purchase_id,
+    'deactivated_count', v_deactivated_count
+  );
+end;
+$$;
+
+-- Lock both retained exchange RPCs to service_role only.
+revoke execute on function public.create_retained_exchange_intelligence(uuid) from public;
+revoke execute on function public.create_retained_exchange_intelligence(uuid) from anon;
+revoke execute on function public.create_retained_exchange_intelligence(uuid) from authenticated;
+grant execute on function public.create_retained_exchange_intelligence(uuid) to service_role;
+
+revoke execute on function public.deactivate_retained_exchange_intelligence(uuid, text) from public;
+revoke execute on function public.deactivate_retained_exchange_intelligence(uuid, text) from anon;
+revoke execute on function public.deactivate_retained_exchange_intelligence(uuid, text) from authenticated;
+grant execute on function public.deactivate_retained_exchange_intelligence(uuid, text) to service_role;

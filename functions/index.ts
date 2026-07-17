@@ -1,5 +1,5 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker (Phase 12D — Forge balance sync + diagnostics)
+ * EAGOH Analyst Chat — Cloudflare Worker (Phase RETAINED-OI-1 — Retained Exchange Intelligence + Forge balance sync)
  * Phase 12A — Social sharing + faction invite by email/username
  * Phase 11C — JWT-authed RLS client + network fix + OI save diagnostics)
  * Phase 11D — Analyst thread save fix + Exchange sharing validation
@@ -122,12 +122,66 @@ type PersonalGrounding = {
   factionIntelligenceCount: number;
   exchangeIntelligenceUsed: boolean;
   exchangeIntelligenceCount: number;
+  retainedExchangeIntelligenceUsed: boolean;
+  retainedExchangeIntelligenceCount: number;
   externalSearchUsed: boolean;
   sourceCount: number;
   exchangeAccess?: {
     activeSyncCount: number;
     vendorEagohCount: number;
   };
+};
+
+/** A retained Exchange intelligence row — buyer's permanent read-only library. */
+type RetainedExchangeRow = {
+  id: string;
+  buyer_id: string;
+  vendor_id: string;
+  vendor_eagoh_id: string;
+  source_entry_id: string;
+  purchase_id: string;
+  listing_id: string | null;
+  purchased_percentage: number;
+  retention_percentage: number;
+  retained_content_snapshot: string;
+  source_entry_type: string | null;
+  source_tag: string | null;
+  source_category: string | null;
+  source_quality_score: number | null;
+  source_confidence_level: string | null;
+  source_validation_status: string | null;
+  source_created_at: string | null;
+  vendor_display_name: string | null;
+  vendor_eagoh_name: string | null;
+  active: boolean;
+  created_at: string;
+};
+
+/** Result of retained Exchange intelligence retrieval. */
+type RetainedExchangeResult = {
+  used: boolean;
+  entries: RetainedExchangeRow[];
+};
+
+/** A single Open Intelligence reference — only entries actually supplied to the AI context. */
+type OpenIntelligenceReference = {
+  referenceNumber: number;
+  sourceType: "personal" | "faction" | "exchange" | "retained_exchange";
+  entryId: string;
+  sourceOwnerId: string | null;
+  sourceEagohId: string | null;
+  vendorName: string | null;
+  eagohName: string | null;
+  tag: string | null;
+  entryType: string | null;
+  category: string | null;
+  createdAt: string | null;
+  validationStatus: string | null;
+  qualityScore: number | null;
+  confidenceLevel: string | null;
+  exchangePurchaseId: string | null;
+  retained: boolean;
+  readOnly: boolean;
 };
 
 type AnalystResponse =
@@ -139,6 +193,7 @@ type AnalystResponse =
       confidence: number;
       grounding: PersonalGrounding;
       sources: Source[];
+      openIntelligenceReferences: OpenIntelligenceReference[];
     }
   | {
       ok: false;
@@ -252,7 +307,7 @@ type FactionOIEntry = OpenIntelligenceRow & {
 type AuditEntryRecord = {
   execution_id: string;
   requesting_user_id: string;
-  source_type: "personal" | "faction" | "exchange" | "external_research";
+  source_type: "personal" | "faction" | "exchange" | "retained_exchange" | "external_research";
   source_entry_id: string | null;
   source_owner_id: string | null;
   source_eagoh_id: string | null;
@@ -1383,6 +1438,130 @@ ${blocks.join("\n\n")}`;
   return { text, count: result.entries.length };
 }
 
+// ── Retained Exchange Intelligence Retrieval (Phase RETAINED-OI-1) ───────────
+
+/**
+ * Retrieve Retained Exchange Intelligence for the authenticated buyer.
+ *
+ * These are permanent read-only snapshots from past Exchange purchases.
+ * They are separate from temporary Exchange syncs and are always available
+ * to the buyer regardless of whether the original sync purchase has expired.
+ *
+ * Flow:
+ *   1. Query active retained rows where buyer_id matches the authenticated user
+ *   2. Rank against the current question (simplified — content snapshot only)
+ *   3. Apply session entry limits
+ *   4. Return entries for context injection and audit tracking
+ */
+async function retrieveRetainedExchangeIntelligence(
+  serviceClient: SupabaseClient,
+  userId: string,
+  query: string,
+  sessionType: SessionType,
+): Promise<RetainedExchangeResult> {
+  const { data, error } = await serviceClient
+    .from("retained_exchange_intelligence")
+    .select("*")
+    .eq("buyer_id", userId)
+    .eq("active", true)
+    .order("source_quality_score", { ascending: false })
+    .order("source_created_at", { ascending: false })
+    .limit(100);
+
+  if (error || !data || data.length === 0) {
+    if (error) console.warn("[analyst:diag] retained exchange query failed", error.message);
+    console.log("[analyst:diag] retained exchange entries: 0");
+    return { used: false, entries: [] };
+  }
+
+  const allRows = data as RetainedExchangeRow[];
+  console.log("[analyst:diag] retained exchange entries found:", allRows.length);
+
+  // Rank against the query using content snapshot + tags
+  const queryTokens = tokenize(query);
+  let ranked: RetainedExchangeRow[];
+
+  if (queryTokens.length === 0) {
+    ranked = allRows;
+  } else {
+    const scored = allRows
+      .map((entry) => {
+        const text = `${entry.source_tag ?? ""} ${entry.source_category ?? ""} ${entry.retained_content_snapshot}`.toLowerCase();
+        let score = 0;
+        for (const token of queryTokens) {
+          if (text.includes(token)) score += 1;
+        }
+        // Boost by quality score (0-100 range → 0-2 boost)
+        score += (entry.source_quality_score ?? 0) / 50;
+        return { entry, score };
+      })
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score);
+    ranked = scored.map(({ entry }) => entry);
+  }
+
+  // Apply session limit — retained entries share the exchange limit budget
+  const limit = sessionExchangeOILimit(sessionType);
+  const finalEntries = ranked.slice(0, Math.min(limit, ranked.length));
+
+  console.log("[analyst:diag] final retained exchange entries selected:", finalEntries.length);
+
+  return {
+    used: finalEntries.length > 0,
+    entries: finalEntries,
+  };
+}
+
+/**
+ * Format Retained Exchange Intelligence entries into a clearly labeled
+ * context block, separate from temporary Exchange and Personal sources.
+ */
+function formatRetainedExchangeOIContext(
+  entries: RetainedExchangeRow[],
+  tokenBudget: number,
+): { text: string; count: number } {
+  if (entries.length === 0) return { text: "", count: 0 };
+
+  const blocks = entries.map((entry, i) => {
+    const confidenceLabel = (entry.source_confidence_level ?? "moderate_confidence").replace(/_/g, " ");
+    const quality = entry.source_quality_score ?? 0;
+    const date = entry.source_created_at
+      ? new Date(entry.source_created_at).toLocaleDateString("en-US", {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        })
+      : "Unknown";
+
+    const maxContentChars = Math.max(80, Math.floor(tokenBudget / entries.length / 4) * 4);
+    const content = entry.retained_content_snapshot.length > maxContentChars
+      ? entry.retained_content_snapshot.slice(0, maxContentChars) + "..."
+      : entry.retained_content_snapshot;
+
+    const tagLine = entry.source_tag ?? entry.source_category ?? "General";
+    const validationLabel = formatValidationLabel(entry.source_validation_status ?? "pending_review");
+    const vendorLabel = entry.vendor_display_name ?? "Unknown vendor";
+    const eagohLabel = entry.vendor_eagoh_name ?? "Unknown EAGOH";
+
+    return `[Retained Exchange Entry ${i + 1}]
+Vendor: ${vendorLabel} — EAGOH: ${eagohLabel}
+Category: ${entry.source_category ?? "General"}
+Tags: ${tagLine}
+Confidence: ${confidenceLabel}
+Quality: ${quality}/100
+Validation: ${validationLabel}
+Created: ${date}
+Content: ${content}`;
+  });
+
+  const text = `RETAINED EXCHANGE INTELLIGENCE — PERMANENT LICENSED KNOWLEDGE (${entries.length} entries)
+Retained Exchange Intelligence contains human-provided knowledge permanently retained from past Exchange purchases. Treat it as valuable experience, not automatically verified fact. Do not imply ownership by the buyer. Distinguish between community-supported, externally supported, disputed, and unverified experiential knowledge. Do not call an entry "verified fact" unless its validation status truly supports that wording.
+
+${blocks.join("\n\n")}`;
+
+  return { text, count: entries.length };
+}
+
 // ── Faction OI Formatting ────────────────────────────────────────────────────
 
 /**
@@ -1838,6 +2017,7 @@ async function writeAuditRecords(
     const personalCount = params.auditEntries.filter((e) => e.source_type === "personal").length;
     const factionCount = params.auditEntries.filter((e) => e.source_type === "faction").length;
     const exchangeCount = params.auditEntries.filter((e) => e.source_type === "exchange").length;
+    const retainedExchangeCount = params.auditEntries.filter((e) => e.source_type === "retained_exchange").length;
     const externalCount = params.auditEntries.filter((e) => e.source_type === "external_research").length;
 
     // 1. Write the response-level audit summary
@@ -1853,6 +2033,7 @@ async function writeAuditRecords(
         personal_count: personalCount,
         faction_count: factionCount,
         exchange_count: exchangeCount,
+        retained_exchange_count: retainedExchangeCount,
         external_source_count: externalCount,
         external_search_used: params.externalSearchUsed,
         model: params.model,
@@ -2247,6 +2428,7 @@ function buildSystemPrompt(params: {
   hasOI: boolean;
   hasFactionOI: boolean;
   hasExchangeOI: boolean;
+  hasRetainedExchangeOI: boolean;
   hasExternalResearch: boolean;
 }): string {
   const sections: string[] = [];
@@ -2298,7 +2480,7 @@ function buildSystemPrompt(params: {
   }
 
   // 4. Source handling instructions — covers all combinations of OI, Faction, Exchange, and External
-  const sourceCount = [params.hasOI, params.hasFactionOI, params.hasExchangeOI, params.hasExternalResearch].filter(Boolean).length;
+  const sourceCount = [params.hasOI, params.hasFactionOI, params.hasExchangeOI, params.hasRetainedExchangeOI, params.hasExternalResearch].filter(Boolean).length;
 
   if (sourceCount >= 2) {
     // Multi-source: provide comprehensive conflict-resolution instructions
@@ -2306,6 +2488,7 @@ function buildSystemPrompt(params: {
     if (params.hasOI) lines.push("- Personal Open Intelligence is private user-provided knowledge — potentially valuable but not automatically verified.");
     if (params.hasFactionOI) lines.push("- Faction Intelligence is human-provided knowledge shared by authorized faction members — valuable experience but not automatically verified.");
     if (params.hasExchangeOI) lines.push("- Exchange Intelligence is licensed human knowledge temporarily accessed through Exchange synchronization — valuable but not automatically verified.");
+    if (params.hasRetainedExchangeOI) lines.push("- Retained Exchange Intelligence is permanently retained knowledge from past Exchange purchases — valuable experience, not automatically verified fact.");
     if (params.hasExternalResearch) lines.push("- Current External Research comes from web sources — it may also contain errors or conflicting reports.");
     lines.push(
       "- When sources conflict, identify the conflict explicitly rather than silently choosing one.",
@@ -2354,6 +2537,7 @@ function buildMessages(params: {
   externalResearchContext: string;
   factionOIContext?: string;
   exchangeOIContext?: string;
+  retainedExchangeOIContext?: string;
   conversationContext: ConversationMessage[];
   prompt: string;
 }): Array<{ role: "system" | "user" | "assistant"; content: string }> {
@@ -2369,6 +2553,10 @@ function buildMessages(params: {
 
   if (params.exchangeOIContext) {
     systemParts.push(params.exchangeOIContext);
+  }
+
+  if (params.retainedExchangeOIContext) {
+    systemParts.push(params.retainedExchangeOIContext);
   }
 
   if (params.externalResearchContext) {
@@ -5393,6 +5581,37 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
     console.log("[analyst] Exchange OI retrieval skipped — free user");
   }
 
+  // ── Retained Exchange Intelligence retrieval (Phase RETAINED-OI-1) ──────
+  // These are permanent read-only snapshots from past Exchange purchases.
+  // Available to all users (free + paid) — they are the buyer's private library.
+  // Safe-failure: any retained exchange error continues the session.
+  let retainedExchangeOIContext = "";
+  let retainedExchangeOICount = 0;
+  let rankedRetainedExchangeEntries: RetainedExchangeRow[] = [];
+
+  try {
+    const serviceClient = getServiceRoleClient(env);
+    if (serviceClient) {
+      const retainedResult = await retrieveRetainedExchangeIntelligence(serviceClient, userId, prompt, sessionType);
+      if (retainedResult.used && retainedResult.entries.length > 0) {
+        const retainedTokenBudget = sessionOITokenBudget(sessionType);
+        const retainedFormatted = formatRetainedExchangeOIContext(retainedResult.entries, retainedTokenBudget);
+        retainedExchangeOIContext = retainedFormatted.text;
+        retainedExchangeOICount = retainedFormatted.count;
+        rankedRetainedExchangeEntries = retainedResult.entries;
+        console.log("[analyst:diag] retained exchange count:", retainedExchangeOICount);
+      } else {
+        console.log("[analyst:diag] retained exchange: no entries found");
+      }
+    }
+  } catch (retainedErr) {
+    const msg = retainedErr instanceof Error ? retainedErr.message : "unknown";
+    console.warn("[analyst] Retained Exchange OI retrieval failed safely", {
+      errorCode: "retained_exchange_retrieval_error",
+      error: msg.slice(0, 200),
+    });
+  }
+
   // ── External web search ──────────────────────────────────────────────────
   let externalResearchResult: ExternalResearchResult = {
     used: false,
@@ -5429,6 +5648,7 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
     hasOI: oiCount > 0,
     hasFactionOI: factionOICount > 0,
     hasExchangeOI: exchangeOICount > 0,
+    hasRetainedExchangeOI: retainedExchangeOICount > 0,
     hasExternalResearch: externalResearchResult.used,
   });
 
@@ -5438,6 +5658,7 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
     externalResearchContext,
     factionOIContext,
     exchangeOIContext,
+    retainedExchangeOIContext,
     conversationContext: payload.conversationContext ?? [],
     prompt: safePrompt,
   });
@@ -5564,6 +5785,8 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
         factionIntelligenceCount: factionOICount,
         exchangeIntelligenceUsed: exchangeOICount > 0,
         exchangeIntelligenceCount: exchangeOICount,
+        retainedExchangeIntelligenceUsed: retainedExchangeOICount > 0,
+        retainedExchangeIntelligenceCount: retainedExchangeOICount,
         externalSearchUsed: externalResearchResult.used,
         sourceCount: externalResearchResult.sources.length,
         exchangeAccess: exchangeSyncCount > 0 ? {
@@ -5571,6 +5794,107 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
           vendorEagohCount: exchangeVendorEagohCount,
         } : undefined,
       };
+
+      // ── Build OpenIntelligenceReferences (only entries actually supplied to the AI) ──
+      const openIntelligenceReferences: OpenIntelligenceReference[] = [];
+      let refNum = 0;
+
+      // Personal OI references
+      for (const e of rankedPersonalEntries) {
+        refNum += 1;
+        openIntelligenceReferences.push({
+          referenceNumber: refNum,
+          sourceType: "personal",
+          entryId: e.id,
+          sourceOwnerId: e.user_id,
+          sourceEagohId: e.eagoh_id,
+          vendorName: null,
+          eagohName: eagohMeta?.name ?? null,
+          tag: e.tag,
+          entryType: e.entry_type,
+          category: e.selected_category ?? null,
+          createdAt: e.created_at,
+          validationStatus: e.validation_status,
+          qualityScore: e.quality_score,
+          confidenceLevel: e.confidence_level,
+          exchangePurchaseId: null,
+          retained: false,
+          readOnly: false,
+        });
+      }
+
+      // Faction OI references
+      for (const e of rankedFactionEntries) {
+        refNum += 1;
+        openIntelligenceReferences.push({
+          referenceNumber: refNum,
+          sourceType: "faction",
+          entryId: e.id,
+          sourceOwnerId: e.contributor_user_id,
+          sourceEagohId: e.eagoh_id,
+          vendorName: null,
+          eagohName: null,
+          tag: e.tag,
+          entryType: e.entry_type,
+          category: e.selected_category ?? null,
+          createdAt: e.created_at,
+          validationStatus: e.validation_status,
+          qualityScore: e.quality_score,
+          confidenceLevel: e.confidence_level,
+          exchangePurchaseId: null,
+          retained: false,
+          readOnly: false,
+        });
+      }
+
+      // Exchange OI references
+      for (const e of rankedExchangeEntries) {
+        refNum += 1;
+        const purchaseInfo = exchangePurchaseMap.get(e.id);
+        openIntelligenceReferences.push({
+          referenceNumber: refNum,
+          sourceType: "exchange",
+          entryId: e.id,
+          sourceOwnerId: e.user_id,
+          sourceEagohId: e.eagoh_id,
+          vendorName: null,
+          eagohName: null,
+          tag: e.tag,
+          entryType: e.entry_type,
+          category: e.selected_category ?? null,
+          createdAt: e.created_at,
+          validationStatus: e.validation_status,
+          qualityScore: e.quality_score,
+          confidenceLevel: e.confidence_level,
+          exchangePurchaseId: purchaseInfo?.purchaseId ?? null,
+          retained: false,
+          readOnly: false,
+        });
+      }
+
+      // Retained Exchange OI references
+      for (const e of rankedRetainedExchangeEntries) {
+        refNum += 1;
+        openIntelligenceReferences.push({
+          referenceNumber: refNum,
+          sourceType: "retained_exchange",
+          entryId: e.source_entry_id,
+          sourceOwnerId: e.vendor_id,
+          sourceEagohId: e.vendor_eagoh_id,
+          vendorName: e.vendor_display_name,
+          eagohName: e.vendor_eagoh_name,
+          tag: e.source_tag,
+          entryType: e.source_entry_type,
+          category: e.source_category,
+          createdAt: e.source_created_at,
+          validationStatus: e.source_validation_status,
+          qualityScore: e.source_quality_score,
+          confidenceLevel: e.source_confidence_level,
+          exchangePurchaseId: e.purchase_id,
+          retained: true,
+          readOnly: true,
+        });
+      }
 
       console.log("[analyst] success", {
         replyLen: reply.length,
@@ -5580,8 +5904,11 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
         factionOICount: grounding.factionIntelligenceCount,
         exchangeOIUsed: grounding.exchangeIntelligenceUsed,
         exchangeOICount: grounding.exchangeIntelligenceCount,
+        retainedExchangeOIUsed: grounding.retainedExchangeIntelligenceUsed,
+        retainedExchangeOICount: grounding.retainedExchangeIntelligenceCount,
         externalSearchUsed: grounding.externalSearchUsed,
         sourceCount: grounding.sourceCount,
+        referenceCount: openIntelligenceReferences.length,
         hasEagoh: !!payload.eagohId,
       });
 
@@ -5679,6 +6006,35 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
           });
         }
 
+        // Retained Exchange OI entries
+        for (let i = 0; i < rankedRetainedExchangeEntries.length; i++) {
+          const e = rankedRetainedExchangeEntries[i];
+          auditEntries.push({
+            execution_id: executionId,
+            requesting_user_id: userId,
+            source_type: "retained_exchange",
+            source_entry_id: e.source_entry_id,
+            source_owner_id: e.vendor_id,
+            source_eagoh_id: e.vendor_eagoh_id,
+            faction_id: null,
+            exchange_purchase_id: e.purchase_id,
+            relevance_score: null,
+            source_rank: i + 1,
+            sync_percentage: e.purchased_percentage,
+            source_created_at: e.source_created_at,
+            source_category: e.source_category,
+            source_validation_status: e.source_validation_status,
+            source_quality_score: e.source_quality_score,
+            source_confidence_level: e.source_confidence_level,
+            external_url_hash: null,
+            external_publisher: null,
+            session_type: sessionType,
+            selected_eagoh_id: payload.eagohId ?? null,
+            analyst_thread_id: threadId,
+            analyst_message_id: messageId,
+          });
+        }
+
         // External research sources
         for (let i = 0; i < externalResearchResult.sources.length; i++) {
           const src = externalResearchResult.sources[i];
@@ -5730,6 +6086,7 @@ async function handleAnalystChat(request: Request, env: Env): Promise<Response> 
         confidence: confidenceMap[sessionType],
         grounding,
         sources: externalResearchResult.sources,
+        openIntelligenceReferences,
         visualBlocks: visualBlocks ?? undefined,
       });
     } catch (error) {
@@ -7365,6 +7722,232 @@ function str(val: unknown, fallback = ""): string {
   return typeof val === "string" ? val : fallback;
 }
 
+// ── Phase RETAINED-OI-1: Retained Exchange Intelligence Triggers ─────────────
+
+/**
+ * POST /exchange/retention/create
+ *
+ * Triggers retained exchange intelligence creation after a verified purchase.
+ * Calls the security-definer RPC `create_retained_exchange_intelligence`
+ * which locks the purchase, reconstructs the cohort, and stores snapshots.
+ *
+ * This endpoint is called by the worker internally after purchase completion,
+ * and can also be called by the mobile app to retry retention if the initial
+ * post-purchase trigger failed (e.g. transient DB error). The purchase_id
+ * must belong to the authenticated buyer.
+ */
+async function handleExchangeRetentionCreate(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createAuthedClient(env, jwt);
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  let payload: { purchaseId?: unknown };
+  try {
+    payload = (await request.json()) as typeof payload;
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request." }, 400);
+  }
+
+  const purchaseId = str(payload.purchaseId).trim();
+  if (!purchaseId) return jsonResponse({ ok: false, error: "purchaseId is required." }, 400);
+
+  // ── Verify the purchase belongs to the authenticated buyer (defense in depth) ──
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) {
+    return jsonResponse({ ok: false, error: "Service not configured." }, 503);
+  }
+
+  const { data: purchase, error: purchaseErr } = await serviceClient
+    .from("marketplace_sync_purchases")
+    .select("id, buyer_id, active")
+    .eq("id", purchaseId)
+    .maybeSingle();
+
+  if (purchaseErr || !purchase) {
+    console.warn("[retention] purchase not found", { purchaseId: purchaseId.slice(0, 8) });
+    return jsonResponse({ ok: false, error: "Purchase not found." }, 404);
+  }
+
+  const purchaseRow = purchase as { id: string; buyer_id: string; active: boolean };
+  if (purchaseRow.buyer_id !== userId) {
+    console.warn("[retention] buyer mismatch", { userIdPrefix: userId.slice(0, 8), purchaseBuyer: purchaseRow.buyer_id.slice(0, 8) });
+    return jsonResponse({ ok: false, error: "Purchase does not belong to this account." }, 403);
+  }
+
+  if (!purchaseRow.active) {
+    return jsonResponse({ ok: false, error: "Purchase is no longer active." }, 409);
+  }
+
+  // ── Call the security-definer RPC ──
+  const { data: rpcResult, error: rpcErr } = await serviceClient
+    .rpc("create_retained_exchange_intelligence", { p_purchase_id: purchaseId });
+
+  if (rpcErr) {
+    console.warn("[retention] RPC failed", { purchaseId: purchaseId.slice(0, 8), error: rpcErr.message });
+    return jsonResponse({ ok: false, error: "Retention could not be created. Please try again." }, 500);
+  }
+
+  const result = rpcResult as { ok?: boolean; already_processed?: boolean; purchased_cohort_count?: number; retained_count?: number; error?: string };
+  if (!result?.ok) {
+    console.warn("[retention] RPC returned error", { purchaseId: purchaseId.slice(0, 8), error: result?.error });
+    return jsonResponse({ ok: false, error: "Retention could not be created." }, 500);
+  }
+
+  console.log("[retention] success", {
+    userIdPrefix: userId.slice(0, 8),
+    purchaseId: purchaseId.slice(0, 8),
+    alreadyProcessed: result.already_processed,
+    purchasedCohortCount: result.purchased_cohort_count,
+    retainedCount: result.retained_count,
+  });
+
+  return jsonResponse({
+    ok: true,
+    purchaseId,
+    alreadyProcessed: result.already_processed ?? false,
+    purchasedCohortCount: result.purchased_cohort_count ?? 0,
+    retainedCount: result.retained_count ?? 0,
+  });
+}
+
+/**
+ * POST /exchange/retention/deactivate
+ *
+ * Deactivates retained exchange intelligence when the original purchase
+ * becomes inactive (refund, reversal, dispute, cancellation, revocation, expiration).
+ * Calls the security-definer RPC `deactivate_retained_exchange_intelligence`.
+ *
+ * Accepts JWT auth — the buyer may trigger deactivation for their own
+ * expired/inactive purchases. The worker verifies the purchase belongs to
+ * the authenticated user and is actually inactive before calling the RPC.
+ * For administrative revocations, the worker calls the RPC internally
+ * via service-role without a client request.
+ */
+async function handleExchangeRetentionDeactivate(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createAuthedClient(env, jwt);
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  let payload: { purchaseId?: unknown; reason?: unknown };
+  try {
+    payload = (await request.json()) as typeof payload;
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request." }, 400);
+  }
+
+  const purchaseId = str(payload.purchaseId).trim();
+  if (!purchaseId) return jsonResponse({ ok: false, error: "purchaseId is required." }, 400);
+  const reason = str(payload.reason).trim();
+  if (!reason) return jsonResponse({ ok: false, error: "reason is required." }, 400);
+
+  // ── Verify the purchase belongs to the authenticated buyer and is inactive ──
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) {
+    return jsonResponse({ ok: false, error: "Service not configured." }, 503);
+  }
+
+  const { data: purchase, error: purchaseErr } = await serviceClient
+    .from("marketplace_sync_purchases")
+    .select("id, buyer_id, active, expires_at")
+    .eq("id", purchaseId)
+    .maybeSingle();
+
+  if (purchaseErr || !purchase) {
+    return jsonResponse({ ok: false, error: "Purchase not found." }, 404);
+  }
+
+  const purchaseRow = purchase as { id: string; buyer_id: string; active: boolean; expires_at: string };
+  if (purchaseRow.buyer_id !== userId) {
+    return jsonResponse({ ok: false, error: "Purchase does not belong to this account." }, 403);
+  }
+
+  // Only allow deactivation if the purchase is actually inactive or expired
+  const now = new Date().toISOString();
+  if (purchaseRow.active && purchaseRow.expires_at > now) {
+    return jsonResponse({ ok: false, error: "Purchase is still active. Retained intelligence cannot be deactivated while the purchase is active." }, 409);
+  }
+
+  // ── Call the security-definer RPC ──
+  const { data: rpcResult, error: rpcErr } = await serviceClient
+    .rpc("deactivate_retained_exchange_intelligence", { p_purchase_id: purchaseId, p_reason: reason });
+
+  if (rpcErr) {
+    console.warn("[retention:deactivate] RPC failed", { purchaseId: purchaseId.slice(0, 8), error: rpcErr.message });
+    return jsonResponse({ ok: false, error: "Deactivation could not be completed." }, 500);
+  }
+
+  const result = rpcResult as { ok?: boolean; deactivated_count?: number; error?: string };
+  if (!result?.ok) {
+    console.warn("[retention:deactivate] RPC returned error", { purchaseId: purchaseId.slice(0, 8), error: result?.error });
+    return jsonResponse({ ok: false, error: "Deactivation could not be completed." }, 500);
+  }
+
+  console.log("[retention:deactivate] success", {
+    userIdPrefix: userId.slice(0, 8),
+    purchaseId: purchaseId.slice(0, 8),
+    reason,
+    deactivatedCount: result.deactivated_count,
+  });
+
+  return jsonResponse({
+    ok: true,
+    purchaseId,
+    deactivatedCount: result.deactivated_count ?? 0,
+  });
+}
+
+/**
+ * GET /exchange/retained
+ *
+ * Returns the authenticated buyer's active retained exchange intelligence
+ * entries. These are permanent read-only snapshots from past purchases.
+ * The buyer can browse their retained library at any time.
+ */
+async function handleGetRetainedExchange(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createAuthedClient(env, jwt);
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  // RLS ensures the buyer can only see their own active entries.
+  const { data, error } = await supabase
+    .from("retained_exchange_intelligence")
+    .select("*")
+    .eq("buyer_id", userId)
+    .eq("active", true)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.warn("[retained] query failed", { userIdPrefix: userId.slice(0, 8), error: error.message });
+    return jsonResponse({ ok: false, error: "Could not load retained intelligence." }, 500);
+  }
+
+  return jsonResponse({ ok: true, entries: data ?? [] });
+}
+
 async function handleForgeGenerate(request: Request, env: Env): Promise<Response> {
   if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
     return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
@@ -7889,6 +8472,21 @@ export default {
     // Forge: secure image generation (auth + tier + balance + OpenAI + atomic deduction)
     if (url.pathname === "/forge/generate" && request.method === "POST") {
       return handleForgeGenerate(request, env);
+    }
+
+    // Phase RETAINED-OI-1: Create retained exchange intelligence after verified purchase
+    if (url.pathname === "/exchange/retention/create" && request.method === "POST") {
+      return handleExchangeRetentionCreate(request, env);
+    }
+
+    // Phase RETAINED-OI-1: Deactivate retained exchange intelligence (refund/reversal/dispute)
+    if (url.pathname === "/exchange/retention/deactivate" && request.method === "POST") {
+      return handleExchangeRetentionDeactivate(request, env);
+    }
+
+    // Phase RETAINED-OI-1: Get buyer's active retained exchange intelligence library
+    if (url.pathname === "/exchange/retained" && request.method === "GET") {
+      return handleGetRetainedExchange(request, env);
     }
 
     return jsonResponse({ ok: false, error: "Not found" }, 404);

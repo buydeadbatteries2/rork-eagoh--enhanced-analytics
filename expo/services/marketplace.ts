@@ -6,6 +6,55 @@ import { getTeamById } from "@/data/teams";
 import { getBulkEagohHasCredentials } from "@/services/eagohCredentials";
 import { getBulkVerificationStatus } from "@/services/socialVerification";
 
+const FUNCTIONS_BASE_URL = process.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL ?? "";
+
+/**
+ * Trigger retained exchange intelligence creation via the secure worker.
+ * Called after a successful purchase. Best-effort — never fails the purchase
+ * if retention fails. The worker re-verifies everything server-side.
+ */
+async function triggerRetention(purchaseId: string): Promise<void> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const jwt = data.session?.access_token;
+    if (!jwt || !FUNCTIONS_BASE_URL) return;
+
+    await fetch(`${FUNCTIONS_BASE_URL}/exchange/retention/create`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${jwt}`,
+      },
+      body: JSON.stringify({ purchaseId }),
+    });
+  } catch (err) {
+    console.warn("[marketplace] retention trigger failed (non-fatal)", err instanceof Error ? err.message : "unknown");
+  }
+}
+
+/**
+ * Deactivate retained exchange intelligence for expired purchases via the worker.
+ * Best-effort — never fails the expiration flow if deactivation fails.
+ */
+async function triggerDeactivation(purchaseId: string, reason: string): Promise<void> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const jwt = data.session?.access_token;
+    if (!jwt || !FUNCTIONS_BASE_URL) return;
+
+    await fetch(`${FUNCTIONS_BASE_URL}/exchange/retention/deactivate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${jwt}`,
+      },
+      body: JSON.stringify({ purchaseId, reason }),
+    });
+  } catch (err) {
+    console.warn("[marketplace] deactivation trigger failed (non-fatal)", err instanceof Error ? err.message : "unknown");
+  }
+}
+
 /** Looks up a domain specialization value from an EAGOH's dna array. */
 function getDomainDnaValue(dna: string[] | undefined | null, columnName: string): string | null {
   if (!dna || dna.length === 0) return null;
@@ -887,7 +936,12 @@ export async function purchaseSync(
   // Update vendor stats
   await recalculateVendorStats(listingRow.vendor_id);
 
-  return { ok: true, purchase: purchase as SyncPurchaseRow };
+  // ── Trigger retained exchange intelligence creation (best-effort, non-fatal) ──
+  // The worker re-verifies the purchase server-side before creating retained rows.
+  const completedPurchase = purchase as SyncPurchaseRow;
+  void triggerRetention(completedPurchase.id);
+
+  return { ok: true, purchase: completedPurchase };
 }
 
 /**
@@ -915,6 +969,11 @@ export async function expireSyncs(buyerId: string): Promise<number> {
     .update({ active: false })
     .in("id", ids);
   if (ue) console.warn("[marketplace] expire update failed", ue.message);
+
+  // ── Deactivate retained intelligence for expired purchases (best-effort) ──
+  for (const id of ids) {
+    void triggerDeactivation(id, "sync_expired");
+  }
 
   return ids.length;
 }

@@ -731,6 +731,14 @@ function PurchaseModal({
             {selectedLevel} sync × {selectedDays} day{selectedDays > 1 ? "s" : ""}
           </Text>
 
+          {/* Retention short notice */}
+          <View style={styles.retentionNoticeRow}>
+            <Info color={palette.muted} size={11} />
+            <Text style={styles.retentionNoticeText}>
+              Retained Intelligence is limited to 25% per vendor EAGOH.
+            </Text>
+          </View>
+
           {/* Confirm */}
           <Pressable
             onPress={() => onConfirm(selectedLevel, selectedDays)}
@@ -897,6 +905,21 @@ function PurchaseModal({
                 {(credentials || listing.has_credentials || loadingCredentials) && (
                   <View style={styles.infoDivider} />
                 )}
+
+                {/* Retained Intelligence Disclaimer */}
+                <View style={styles.infoDivider} />
+                <View style={styles.retentionDisclaimerSection}>
+                  <View style={styles.retentionDisclaimerHeader}>
+                    <Sparkles color={palette.cyan} size={13} />
+                    <Text style={styles.retentionDisclaimerTitle}>Retained Exchange Intelligence</Text>
+                  </View>
+                  <Text style={styles.retentionDisclaimerBody}>
+                    Each completed purchase may permanently add a limited selection of the purchased EAGOH's Open Intelligence to your private Retained Exchange Intelligence library. The retained amount is approximately 2% of the intelligence included with each purchase. You may retain no more than 25% of any individual vendor EAGOH's eligible Open Intelligence. Once that limit is reached, future purchases will still provide the purchased temporary access but will not add more retained entries.
+                  </Text>
+                  <Text style={styles.retentionDisclaimerFootnote}>
+                    Retained entries are read-only, vendor-attributed, private, and cannot be resold, shared with Factions, or listed on the Exchange.
+                  </Text>
+                </View>
 
                 {/* Source Credentials */}
                 {(credentials || listing.has_credentials || loadingCredentials) && (
@@ -3230,6 +3253,15 @@ const styles = StyleSheet.create({
   },
   confirmButtonDisabled: { backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: palette.line },
   confirmButtonText: { color: palette.void, fontSize: 14, fontWeight: "900" },
+
+  // Retention disclaimer
+  retentionNoticeRow: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 2, marginTop: 8, marginBottom: 4 },
+  retentionNoticeText: { color: palette.muted, fontSize: 10, fontWeight: "700" },
+  retentionDisclaimerSection: { paddingHorizontal: 2, paddingVertical: 6 },
+  retentionDisclaimerHeader: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
+  retentionDisclaimerTitle: { color: palette.cyan, fontSize: 12, fontWeight: "900" },
+  retentionDisclaimerBody: { color: palette.text, fontSize: 11, fontWeight: "600", lineHeight: 16, marginBottom: 4 },
+  retentionDisclaimerFootnote: { color: palette.muted, fontSize: 10, fontWeight: "700", lineHeight: 14 },
 
   // Create listing specific
   priceGrid: { flexDirection: "row", gap: 8, flexWrap: "wrap" },

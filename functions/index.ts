@@ -1,5 +1,5 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker (Phase RETAINED-OI-1 — Retained Exchange Intelligence + Forge balance sync)
+ * EAGOH Analyst Chat — Cloudflare Worker (Phase RETAINED-OI-1 + Cap — Retained Exchange Intelligence + 25% Cumulative Cap)
  * Phase 12A — Social sharing + faction invite by email/username
  * Phase 11C — JWT-authed RLS client + network fix + OI save diagnostics)
  * Phase 11D — Analyst thread save fix + Exchange sharing validation
@@ -7795,7 +7795,20 @@ async function handleExchangeRetentionCreate(request: Request, env: Env): Promis
     return jsonResponse({ ok: false, error: "Retention could not be created. Please try again." }, 500);
   }
 
-  const result = rpcResult as { ok?: boolean; already_processed?: boolean; purchased_cohort_count?: number; retained_count?: number; error?: string };
+  const result = rpcResult as {
+    ok?: boolean;
+    already_processed?: boolean;
+    purchased_cohort_count?: number;
+    retained_count?: number;
+    total_vendor_eligible_entries?: number;
+    maximum_retained_entries?: number;
+    existing_retained_count?: number;
+    requested_retained_count?: number;
+    newly_retained_count?: number;
+    remaining_retention_capacity?: number;
+    cap_reached?: boolean;
+    error?: string;
+  };
   if (!result?.ok) {
     console.warn("[retention] RPC returned error", { purchaseId: purchaseId.slice(0, 8), error: result?.error });
     return jsonResponse({ ok: false, error: "Retention could not be created." }, 500);
@@ -7807,6 +7820,13 @@ async function handleExchangeRetentionCreate(request: Request, env: Env): Promis
     alreadyProcessed: result.already_processed,
     purchasedCohortCount: result.purchased_cohort_count,
     retainedCount: result.retained_count,
+    totalVendorEligible: result.total_vendor_eligible_entries,
+    maxRetained: result.maximum_retained_entries,
+    existingRetained: result.existing_retained_count,
+    requestedRetained: result.requested_retained_count,
+    newlyRetained: result.newly_retained_count,
+    remainingCapacity: result.remaining_retention_capacity,
+    capReached: result.cap_reached,
   });
 
   return jsonResponse({
@@ -7815,6 +7835,13 @@ async function handleExchangeRetentionCreate(request: Request, env: Env): Promis
     alreadyProcessed: result.already_processed ?? false,
     purchasedCohortCount: result.purchased_cohort_count ?? 0,
     retainedCount: result.retained_count ?? 0,
+    totalVendorEligibleEntries: result.total_vendor_eligible_entries ?? 0,
+    maximumRetainedEntries: result.maximum_retained_entries ?? 0,
+    existingRetainedCount: result.existing_retained_count ?? 0,
+    requestedRetainedCount: result.requested_retained_count ?? 0,
+    newlyRetainedCount: result.newly_retained_count ?? 0,
+    remainingRetentionCapacity: result.remaining_retention_capacity ?? 0,
+    capReached: result.cap_reached ?? false,
   });
 }
 

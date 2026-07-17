@@ -3408,10 +3408,19 @@ create table if not exists public.retained_exchange_intelligence (
   created_at timestamptz not null default now()
 );
 
--- Unique constraint: one retained row per (purchase_id, source_entry_id)
+-- Unique constraint: one retained row per (purchase_id, source_entry_id) where active
 drop index if exists retained_exchange_purchase_entry_uniq;
 create unique index if not exists retained_exchange_purchase_entry_uniq
   on public.retained_exchange_intelligence(purchase_id, source_entry_id)
+  where active = true;
+
+-- Unique constraint: one ACTIVE retained row per (buyer_id, vendor_eagoh_id, source_entry_id)
+-- Prevents duplicate active ownership of the same source entry across multiple purchases.
+-- When a retained row is deactivated (active = false), the source entry becomes available
+-- for re-retention through a later successful purchase.
+drop index if exists retained_exchange_buyer_eagoh_entry_uniq;
+create unique index if not exists retained_exchange_buyer_eagoh_entry_uniq
+  on public.retained_exchange_intelligence(buyer_id, vendor_eagoh_id, source_entry_id)
   where active = true;
 
 create index if not exists retained_buyer_active_idx
@@ -3420,6 +3429,8 @@ create index if not exists retained_purchase_idx
   on public.retained_exchange_intelligence(purchase_id);
 create index if not exists retained_vendor_eagoh_idx
   on public.retained_exchange_intelligence(vendor_eagoh_id);
+create index if not exists retained_buyer_eagoh_active_idx
+  on public.retained_exchange_intelligence(buyer_id, vendor_eagoh_id, active);
 
 alter table public.retained_exchange_intelligence enable row level security;
 
@@ -3465,11 +3476,17 @@ declare
   v_vendor_eagoh record;
   v_vendor_profile record;
   v_pct integer;
-  v_existing_count integer;
-  v_cohort_count integer;
-  v_retain_count integer;
+  v_existing_for_purchase integer;
+  v_total_eligible integer;
+  v_purchased_cohort_count integer;
+  v_max_retained integer;
+  v_existing_retained integer;
+  v_requested_retain integer;
+  v_newly_retain integer;
+  v_capacity integer;
+  v_actual_inserted integer;
+  v_cap_reached boolean;
   v_entry record;
-  v_rows_to_insert jsonb[] := '{}';
   v_validation_rank jsonb := '{"externally_supported":3,"community_supported":2,"pending_review":1,"disputed":0,"rejected":-1,"withdrawn":-1}'::jsonb;
   v_confidence_rank jsonb := '{"verified_observation":3,"strong_confidence":2,"moderate_confidence":1,"weak_suspicion":0}'::jsonb;
 begin
@@ -3543,105 +3560,156 @@ begin
     from public.profiles
     where id = v_purchase.vendor_id;
 
-  -- 7. Check for existing retained rows (idempotency)
-  select count(*) into v_existing_count
-    from public.retained_exchange_intelligence
-    where purchase_id = p_purchase_id and active = true;
-
-  if v_existing_count > 0 then
-    return jsonb_build_object(
-      'ok', true,
-      'already_processed', true,
-      'purchase_id', p_purchase_id,
-      'purchased_cohort_count', v_existing_count,
-      'retained_count', v_existing_count
-    );
-  end if;
-
-  -- 8. Reconstruct the exact eligible Exchange cohort (same filters as worker)
-  --    and apply stable cohort ordering + percentage to get the purchased cohort.
-  --    Then retain ceil(purchased_cohort_count * 0.02) entries from the top.
-  --    Deterministic: same ordering every retry.
-
-  -- Count the full eligible set for this vendor EAGOH
-  select count(*) into v_cohort_count
+  -- 7. Count the TOTAL eligible vendor EAGOH entries (before percentage)
+  --    This is the denominator for the 25% cumulative retention cap.
+  select count(*) into v_total_eligible
     from public.open_intelligence
     where user_id = v_purchase.vendor_id
       and eagoh_id = v_purchase.eagoh_id
       and exchange_share_enabled = true
       and validation_status in ('pending_review', 'community_supported', 'externally_supported', 'disputed', 'validated');
 
-  -- Apply purchased percentage to get accessible cohort count
-  v_cohort_count := ceil(v_cohort_count * v_pct / 100.0);
+  -- 8. Calculate the 25% cumulative retention cap
+  v_max_retained := ceil(v_total_eligible * 0.25);
+  if v_max_retained < 1 and v_total_eligible > 0 then
+    v_max_retained := 1;
+  end if;
 
-  if v_cohort_count = 0 then
+  -- 9. Count buyer's existing ACTIVE retained entries for this vendor EAGOH
+  --    (across all purchases, not just this one)
+  select count(*) into v_existing_retained
+    from public.retained_exchange_intelligence
+    where buyer_id = v_purchase.buyer_id
+      and vendor_eagoh_id = v_purchase.eagoh_id
+      and active = true;
+
+  -- 10. Check for existing retained rows for THIS purchase (idempotency)
+  select count(*) into v_existing_for_purchase
+    from public.retained_exchange_intelligence
+    where purchase_id = p_purchase_id and active = true;
+
+  if v_existing_for_purchase > 0 then
+    -- Already processed — return full cap info for transparency
+    return jsonb_build_object(
+      'ok', true,
+      'already_processed', true,
+      'purchase_id', p_purchase_id,
+      'purchased_cohort_count', v_existing_for_purchase,
+      'retained_count', v_existing_for_purchase,
+      'total_vendor_eligible_entries', v_total_eligible,
+      'maximum_retained_entries', v_max_retained,
+      'existing_retained_count', v_existing_retained,
+      'requested_retained_count', v_existing_for_purchase,
+      'newly_retained_count', 0,
+      'remaining_retention_capacity', greatest(v_max_retained - v_existing_retained, 0),
+      'cap_reached', v_existing_retained >= v_max_retained
+    );
+  end if;
+
+  -- 11. Calculate the purchased cohort count (percentage applied to total eligible)
+  v_purchased_cohort_count := ceil(v_total_eligible * v_pct / 100.0);
+
+  if v_purchased_cohort_count = 0 then
     return jsonb_build_object(
       'ok', true,
       'already_processed', false,
       'purchase_id', p_purchase_id,
       'purchased_cohort_count', 0,
-      'retained_count', 0
+      'retained_count', 0,
+      'total_vendor_eligible_entries', v_total_eligible,
+      'maximum_retained_entries', v_max_retained,
+      'existing_retained_count', v_existing_retained,
+      'requested_retained_count', 0,
+      'newly_retained_count', 0,
+      'remaining_retention_capacity', greatest(v_max_retained - v_existing_retained, 0),
+      'cap_reached', v_existing_retained >= v_max_retained
     );
   end if;
 
-  -- Calculate retained count: ceil(cohort * 0.02), minimum 1
-  v_retain_count := ceil(v_cohort_count * 0.02);
-  if v_retain_count < 1 then
-    v_retain_count := 1;
+  -- 12. Calculate the normal 2% retention amount
+  v_requested_retain := ceil(v_purchased_cohort_count * 0.02);
+  if v_requested_retain < 1 then
+    v_requested_retain := 1;
   end if;
 
-  -- 9. Select retained entries deterministically using the same stable ordering
-  --    as the worker's stableCohortOrder: quality DESC, validation rank DESC,
-  --    influence DESC, confidence rank DESC, created_at DESC, id ASC.
-  --    Take the top v_retain_count entries from the purchased cohort.
-  for v_entry in
-    select oi.*,
-           (v_validation_rank ->> oi.validation_status)::int as val_rank,
-           (v_confidence_rank ->> oi.confidence_level)::int as conf_rank
-      from public.open_intelligence oi
-      where oi.user_id = v_purchase.vendor_id
-        and oi.eagoh_id = v_purchase.eagoh_id
-        and oi.exchange_share_enabled = true
-        and oi.validation_status in ('pending_review', 'community_supported', 'externally_supported', 'disputed', 'validated')
-      order by
-        oi.quality_score desc,
-        (v_validation_rank ->> oi.validation_status)::int desc,
-        oi.influence_score desc,
-        (v_confidence_rank ->> oi.confidence_level)::int desc,
-        oi.created_at desc,
-        oi.id asc
-      limit v_retain_count
-  loop
-    insert into public.retained_exchange_intelligence (
-      buyer_id, vendor_id, vendor_eagoh_id, source_entry_id, purchase_id, listing_id,
-      purchased_percentage, retention_percentage, retained_content_snapshot,
-      source_entry_type, source_tag, source_category, source_quality_score,
-      source_confidence_level, source_validation_status, source_created_at,
-      vendor_display_name, vendor_eagoh_name, active
-    ) values (
-      v_purchase.buyer_id, v_purchase.vendor_id, v_purchase.eagoh_id, v_entry.id,
-      p_purchase_id, v_purchase.listing_id,
-      v_pct, 2, v_entry.content,
-      v_entry.entry_type, v_entry.tag, v_entry.selected_category,
-      v_entry.quality_score, v_entry.confidence_level, v_entry.validation_status,
-      v_entry.created_at,
-      v_vendor_profile.username, v_vendor_eagoh.name, true
-    )
-    on conflict (purchase_id, source_entry_id) where active = true
-    do nothing;
-  end loop;
+  -- 13. Apply the 25% cumulative retention cap
+  v_capacity := v_max_retained - v_existing_retained;
+  if v_capacity <= 0 then
+    -- Cap already reached: purchase proceeds normally but zero new retained entries
+    v_newly_retain := 0;
+    v_cap_reached := true;
+  else
+    v_newly_retain := least(v_requested_retain, v_capacity);
+    v_cap_reached := (v_existing_retained + v_newly_retain) >= v_max_retained;
+  end if;
 
-  -- 10. Return result
-  select count(*) into v_retain_count
-    from public.retained_exchange_intelligence
-    where purchase_id = p_purchase_id and active = true;
+  -- 14. Select and insert retained entries (only if capacity allows)
+  --    Exclude entries the buyer already has ACTIVE retained rows for (this vendor EAGOH).
+  --    Deactivated entries (active = false) are available for re-retention.
+  --    Deterministic ordering: same stableCohortOrder as the worker.
+  v_actual_inserted := 0;
 
+  if v_newly_retain > 0 then
+    for v_entry in
+      select oi.*,
+             (v_validation_rank ->> oi.validation_status)::int as val_rank,
+             (v_confidence_rank ->> oi.confidence_level)::int as conf_rank
+        from public.open_intelligence oi
+        where oi.user_id = v_purchase.vendor_id
+          and oi.eagoh_id = v_purchase.eagoh_id
+          and oi.exchange_share_enabled = true
+          and oi.validation_status in ('pending_review', 'community_supported', 'externally_supported', 'disputed', 'validated')
+          and not exists (
+            select 1 from public.retained_exchange_intelligence rei
+            where rei.buyer_id = v_purchase.buyer_id
+              and rei.vendor_eagoh_id = v_purchase.eagoh_id
+              and rei.source_entry_id = oi.id
+              and rei.active = true
+          )
+        order by
+          oi.quality_score desc,
+          (v_validation_rank ->> oi.validation_status)::int desc,
+          oi.influence_score desc,
+          (v_confidence_rank ->> oi.confidence_level)::int desc,
+          oi.created_at desc,
+          oi.id asc
+        limit v_newly_retain
+    loop
+      insert into public.retained_exchange_intelligence (
+        buyer_id, vendor_id, vendor_eagoh_id, source_entry_id, purchase_id, listing_id,
+        purchased_percentage, retention_percentage, retained_content_snapshot,
+        source_entry_type, source_tag, source_category, source_quality_score,
+        source_confidence_level, source_validation_status, source_created_at,
+        vendor_display_name, vendor_eagoh_name, active
+      ) values (
+        v_purchase.buyer_id, v_purchase.vendor_id, v_purchase.eagoh_id, v_entry.id,
+        p_purchase_id, v_purchase.listing_id,
+        v_pct, 2, v_entry.content,
+        v_entry.entry_type, v_entry.tag, v_entry.selected_category,
+        v_entry.quality_score, v_entry.confidence_level, v_entry.validation_status,
+        v_entry.created_at,
+        v_vendor_profile.username, v_vendor_eagoh.name, true
+      )
+      on conflict do nothing;
+
+      v_actual_inserted := v_actual_inserted + 1;
+    end loop;
+  end if;
+
+  -- 15. Return result with full cap information
   return jsonb_build_object(
     'ok', true,
     'already_processed', false,
     'purchase_id', p_purchase_id,
-    'purchased_cohort_count', v_cohort_count,
-    'retained_count', v_retain_count
+    'purchased_cohort_count', v_purchased_cohort_count,
+    'retained_count', v_actual_inserted,
+    'total_vendor_eligible_entries', v_total_eligible,
+    'maximum_retained_entries', v_max_retained,
+    'existing_retained_count', v_existing_retained,
+    'requested_retained_count', v_requested_retain,
+    'newly_retained_count', v_actual_inserted,
+    'remaining_retention_capacity', greatest(v_max_retained - v_existing_retained - v_actual_inserted, 0),
+    'cap_reached', v_cap_reached
   );
 end;
 $$;

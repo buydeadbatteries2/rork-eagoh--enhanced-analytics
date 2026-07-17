@@ -175,6 +175,7 @@ create policy "dev_test_subscriptions_self_select" on public.dev_test_subscripti
   for select using (auth.uid() = user_id);
 create policy "dev_test_subscriptions_self_upsert" on public.dev_test_subscriptions
   for insert with check (auth.uid() = user_id);
+drop policy if exists "dev_test_subscriptions_self_update" on public.dev_test_subscriptions;
 create policy "dev_test_subscriptions_self_update" on public.dev_test_subscriptions
   for update using (auth.uid() = user_id);
 create policy "dev_test_subscriptions_self_delete" on public.dev_test_subscriptions
@@ -377,6 +378,7 @@ create policy "oi_self_insert" on public.open_intelligence
 -- in the same faction). This policy extends that to the OI table so the
 -- Cloudflare Worker can resolve the shared entry content server-side.
 -- ═══════════════════════════════════════════════════════════════════════
+drop policy if exists "oi_faction_shared_select" on public.open_intelligence;
 create policy "oi_faction_shared_select" on public.open_intelligence
   for select using (
     exists (
@@ -1088,10 +1090,10 @@ create policy "usa_marketplace_select" on public.user_social_accounts
 -- =============================================================================
 -- ANALYST CONTEXT USAGE — Phase 5A (entry-level audit per source type)
 -- =============================================================================
--- Drop old Phase 4A table (minimal data — safe to recreate)
-drop table if exists public.analyst_context_usage cascade;
+-- analyst_context_usage: do NOT drop in normal schema — preserve existing data.
+-- drop table if exists public.analyst_context_usage cascade;
 
-create table public.analyst_context_usage (
+create table if not exists public.analyst_context_usage (
   id uuid primary key default gen_random_uuid(),
   execution_id uuid not null,
   requesting_user_id uuid not null references auth.users(id) on delete cascade,

@@ -1100,7 +1100,7 @@ create table public.analyst_context_usage (
   session_type text not null,
   selected_eagoh_id uuid null references public.eagohs(id) on delete set null,
   -- Source identification
-  source_type text not null check (source_type in ('personal', 'faction', 'exchange', 'external_research')),
+  source_type text not null check (source_type in ('personal', 'faction', 'exchange', 'retained_exchange', 'external_research')),
   source_entry_id uuid null references public.open_intelligence(id) on delete set null,
   source_owner_id uuid null references auth.users(id) on delete set null,
   source_eagoh_id uuid null references public.eagohs(id) on delete set null,
@@ -1119,12 +1119,19 @@ create table public.analyst_context_usage (
   external_url_hash text null,
   external_publisher text null,
   -- Timestamp
-  used_at timestamptz not null default now(),
-  -- Duplicate protection: one row per (execution_id, source_type, source_entry_id, exchange_purchase_id)
-  unique(execution_id, source_type, coalesce(source_entry_id, '00000000-0000-0000-0000-000000000000'), coalesce(exchange_purchase_id, '00000000-0000-0000-0000-000000000000'))
+  used_at timestamptz not null default now()
 );
 
 -- Indexes for query patterns
+-- Duplicate protection: one row per (execution_id, source_type, source_entry_id, exchange_purchase_id)
+-- Expressions (coalesce) are not allowed in inline table constraints, so use a unique index instead.
+create unique index if not exists acu_dedup_idx on public.analyst_context_usage(
+  execution_id,
+  source_type,
+  coalesce(source_entry_id, '00000000-0000-0000-0000-000000000000'),
+  coalesce(exchange_purchase_id, '00000000-0000-0000-0000-000000000000')
+);
+
 create index if not exists acu_requesting_user_idx on public.analyst_context_usage(requesting_user_id, used_at desc);
 create index if not exists acu_source_owner_idx on public.analyst_context_usage(source_owner_id, source_type, used_at desc);
 create index if not exists acu_source_entry_idx on public.analyst_context_usage(source_entry_id);

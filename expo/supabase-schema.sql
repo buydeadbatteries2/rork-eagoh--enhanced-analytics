@@ -1273,6 +1273,11 @@ insert into storage.buckets (id, name, public)
   values ('user-profile-media', 'user-profile-media', true)
   on conflict (id) do nothing;
 
+drop policy if exists "upm_select_all" on storage.objects;
+drop policy if exists "upm_insert_authenticated" on storage.objects;
+drop policy if exists "upm_update_owner" on storage.objects;
+drop policy if exists "upm_delete_owner" on storage.objects;
+
 create policy "upm_select_all"
   on storage.objects for select
   using (bucket_id = 'user-profile-media');
@@ -1354,7 +1359,12 @@ create policy "np_self_insert" on public.neuron_purchases
   for insert with check (auth.uid() = user_id);
 
 -- =============================================================================
--- Storage policies for eagoh-renders bucket
+-- Storage policies for eagoh-renders bucket (idempotent — safe to rerun)
+drop policy if exists "eagoh_renders_select_authenticated" on storage.objects;
+drop policy if exists "eagoh_renders_insert_authenticated" on storage.objects;
+drop policy if exists "eagoh_renders_update_owner" on storage.objects;
+drop policy if exists "eagoh_renders_delete_owner" on storage.objects;
+
 -- Authenticated users can read all renders (bucket is public)
 create policy "eagoh_renders_select_authenticated"
   on storage.objects for select

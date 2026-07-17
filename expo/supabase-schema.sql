@@ -25,12 +25,37 @@ create table if not exists public.profiles (
   updated_at timestamptz default now()
 );
 
-alter table public.profiles add column if not exists last_rollover_at timestamptz;
-alter table public.profiles add column if not exists last_allocation int default 0;
-alter table public.profiles add column if not exists admin_tier_override text;
-alter table public.profiles add column if not exists admin_tier_expires_at timestamptz;
-alter table public.profiles add column if not exists admin_tier_note text;
-alter table public.profiles add column if not exists is_admin boolean default false;
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.profiles
+  add column if not exists username text,
+  add column if not exists subscription_tier text,
+  add column if not exists edge_subscription integer,
+  add column if not exists edge_purchased integer,
+  add column if not exists selected_labs jsonb,
+  add column if not exists selected_eagohs jsonb,
+  add column if not exists preferences jsonb,
+  add column if not exists created_at timestamptz,
+  add column if not exists updated_at timestamptz;,
+  add column if not exists last_rollover_at timestamptz;,
+  add column if not exists last_allocation int,
+  add column if not exists admin_tier_override text;,
+  add column if not exists admin_tier_expires_at timestamptz;,
+  add column if not exists admin_tier_note text;,
+  add column if not exists is_admin boolean,
+  add column if not exists avatar_url text;,
+  add column if not exists banner_url text;,
+  add column if not exists public_display_title text;,
+  add column if not exists is_social_verified boolean,
+  add column if not exists social_verified_platform text;,
+  add column if not exists bio text;,
+  add column if not exists display_name text;,
+  add column if not exists public_profile_enabled boolean,
+  add column if not exists show_social_accounts boolean,
+  add column if not exists show_credentials boolean,
+  add column if not exists show_public_eagohs boolean,
+  add column if not exists show_faction boolean;
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
 
 alter table public.profiles enable row level security;
 
@@ -115,40 +140,53 @@ create table if not exists public.eagohs (
   updated_at timestamptz default now()
 );
 
-alter table public.eagohs add column if not exists domain text;
-alter table public.eagohs add column if not exists body_type text;
-alter table public.eagohs add column if not exists style_notes text;
-alter table public.eagohs add column if not exists image_thumb_url text;
-alter table public.eagohs add column if not exists image_prompt text;
-alter table public.eagohs add column if not exists image_generated_at timestamptz;
-alter table public.eagohs add column if not exists last_name_change timestamptz;
-alter table public.eagohs add column if not exists team_focus_mode text;
-alter table public.eagohs add column if not exists pro_team_focus_id text;
-alter table public.eagohs add column if not exists pro_team_focus_name text;
-alter table public.eagohs add column if not exists college_team_focus_id text;
-alter table public.eagohs add column if not exists college_team_focus_name text;
-alter table public.eagohs add column if not exists music_genre text;
-alter table public.eagohs add column if not exists music_role text;
-alter table public.eagohs add column if not exists film_tv_category text;
-alter table public.eagohs add column if not exists film_tv_genre text;
-alter table public.eagohs add column if not exists film_tv_role text;
-alter table public.eagohs add column if not exists fashion_style_category text;
-alter table public.eagohs add column if not exists fashion_role text;
-alter table public.eagohs add column if not exists education_subject text;
-alter table public.eagohs add column if not exists education_role text;
-alter table public.eagohs add column if not exists gaming_genre text;
-alter table public.eagohs add column if not exists gaming_role text;
-alter table public.eagohs add column if not exists business_industry text;
-alter table public.eagohs add column if not exists business_role text;
-alter table public.eagohs add column if not exists finance_focus text;
-alter table public.eagohs add column if not exists finance_role text;
-alter table public.eagohs add column if not exists technology_area text;
-alter table public.eagohs add column if not exists technology_role text;
-alter table public.eagohs add column if not exists health_fitness_area text;
-alter table public.eagohs add column if not exists health_fitness_role text;
-alter table public.eagohs add column if not exists is_default_shell boolean not null default false;
-alter table public.eagohs add column if not exists is_user_forged boolean not null default true;
-alter table public.eagohs add column if not exists status text default 'active';
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.eagohs
+  add column if not exists user_id uuid,
+  add column if not exists name text,
+  add column if not exists sport text,
+  add column if not exists gender text,
+  add column if not exists cybernetic_intensity text,
+  add column if not exists pose text,
+  add column if not exists lab text,
+  add column if not exists dna jsonb,
+  add column if not exists image_url text,
+  add column if not exists created_at timestamptz,
+  add column if not exists updated_at timestamptz;,
+  add column if not exists domain text;,
+  add column if not exists body_type text;,
+  add column if not exists style_notes text;,
+  add column if not exists image_thumb_url text;,
+  add column if not exists image_prompt text;,
+  add column if not exists image_generated_at timestamptz;,
+  add column if not exists last_name_change timestamptz;,
+  add column if not exists team_focus_mode text;,
+  add column if not exists pro_team_focus_id text;,
+  add column if not exists pro_team_focus_name text;,
+  add column if not exists college_team_focus_id text;,
+  add column if not exists college_team_focus_name text;,
+  add column if not exists music_genre text;,
+  add column if not exists music_role text;,
+  add column if not exists film_tv_category text;,
+  add column if not exists film_tv_genre text;,
+  add column if not exists film_tv_role text;,
+  add column if not exists fashion_style_category text;,
+  add column if not exists fashion_role text;,
+  add column if not exists education_subject text;,
+  add column if not exists education_role text;,
+  add column if not exists gaming_genre text;,
+  add column if not exists gaming_role text;,
+  add column if not exists business_industry text;,
+  add column if not exists business_role text;,
+  add column if not exists finance_focus text;,
+  add column if not exists finance_role text;,
+  add column if not exists technology_area text;,
+  add column if not exists technology_role text;,
+  add column if not exists health_fitness_area text;,
+  add column if not exists health_fitness_role text;,
+  add column if not exists is_default_shell boolean,
+  add column if not exists is_user_forged boolean,
+  add column if not exists status text;
 
 create index if not exists eagohs_user_id_idx on public.eagohs(user_id);
 create index if not exists eagohs_user_default_shell_idx on public.eagohs(user_id, is_default_shell);
@@ -164,6 +202,15 @@ create table if not exists public.dev_test_subscriptions (
   expires_at timestamptz default (now() + interval '30 days'),
   created_at timestamptz default now()
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.dev_test_subscriptions
+  add column if not exists user_id uuid,
+  add column if not exists test_tier text,
+  add column if not exists expires_at timestamptz,
+  add column if not exists created_at timestamptz;
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
 
 alter table public.dev_test_subscriptions enable row level security;
 
@@ -218,6 +265,14 @@ create table if not exists public.eagoh_customization (
   updated_at timestamptz default now()
 );
 
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.eagoh_customization
+  add column if not exists eagoh_id uuid,
+  add column if not exists appearance jsonb,
+  add column if not exists updated_at timestamptz;
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+
 alter table public.eagoh_customization enable row level security;
 
 drop policy if exists "eagoh_customization_self_all" on public.eagoh_customization;
@@ -236,6 +291,12 @@ create table if not exists public.eagoh_fanatic_teams (
   created_at timestamptz default now(),
   primary key (eagoh_id, team_id)
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.eagoh_fanatic_teams
+  add column if not exists eagoh_id uuid,
+  add column if not exists team_id text,
+  add column if not exists created_at timestamptz;
 
 create index if not exists eagoh_fanatic_teams_eagoh_idx on public.eagoh_fanatic_teams(eagoh_id);
 
@@ -257,6 +318,12 @@ create table if not exists public.eagoh_labs (
   created_at timestamptz default now(),
   primary key (eagoh_id, lab_id)
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.eagoh_labs
+  add column if not exists eagoh_id uuid,
+  add column if not exists lab_id text,
+  add column if not exists created_at timestamptz;
 
 create index if not exists eagoh_labs_eagoh_idx on public.eagoh_labs(eagoh_id);
 
@@ -287,6 +354,20 @@ create table if not exists public.edge_transactions (
   created_at timestamptz default now()
 );
 
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.edge_transactions
+  add column if not exists user_id uuid,
+  add column if not exists kind text,
+  add column if not exists reason text,
+  add column if not exists amount integer,
+  add column if not exists bucket text,
+  add column if not exists from_subscription integer,
+  add column if not exists from_purchased integer,
+  add column if not exists balance_subscription_after integer,
+  add column if not exists balance_purchased_after integer,
+  add column if not exists note text,
+  add column if not exists created_at timestamptz;
+
 create index if not exists edge_transactions_user_idx on public.edge_transactions(user_id, created_at desc);
 
 alter table public.edge_transactions enable row level security;
@@ -315,6 +396,18 @@ create table if not exists public.eagoh_image_generations (
   meta jsonb default '{}'::jsonb,
   created_at timestamptz default now()
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.eagoh_image_generations
+  add column if not exists eagoh_id uuid,
+  add column if not exists user_id uuid,
+  add column if not exists mode text,
+  add column if not exists prompt text,
+  add column if not exists image_url text,
+  add column if not exists thumb_url text,
+  add column if not exists edge_cost integer,
+  add column if not exists meta jsonb,
+  add column if not exists created_at timestamptz;
 
 create index if not exists eagoh_image_generations_eagoh_idx on public.eagoh_image_generations(eagoh_id, created_at desc);
 create index if not exists eagoh_image_generations_user_idx on public.eagoh_image_generations(user_id, created_at desc);
@@ -353,6 +446,35 @@ create table if not exists public.open_intelligence (
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.open_intelligence
+  add column if not exists user_id uuid,
+  add column if not exists eagoh_id uuid,
+  add column if not exists intelligence_domain text,
+  add column if not exists entry_type text,
+  add column if not exists tag text,
+  add column if not exists content text,
+  add column if not exists character_count_no_spaces integer,
+  add column if not exists confidence_level text,
+  add column if not exists quality_score integer,
+  add column if not exists validation_status text,
+  add column if not exists influence_score integer,
+  add column if not exists created_at timestamptz,
+  add column if not exists updated_at timestamptz;,
+  add column if not exists selected_category text;,
+  add column if not exists selected_subtags jsonb,
+  add column if not exists custom_tags jsonb,
+  add column if not exists exchange_share_enabled boolean,
+  add column if not exists staleness_score numeric,
+  add column if not exists staleness_evaluated_at timestamptz;,
+  add column if not exists outdated_flag boolean,
+  add column if not exists content_hash text;,
+  add column if not exists duplicate_flag boolean,
+  add column if not exists duplicate_of uuid;,
+  add column if not exists version_number int,
+  add column if not exists last_major_edit_at timestamptz;,
+  add column if not exists active_dispute_count int;
 
 create index if not exists oi_user_id_idx on public.open_intelligence(user_id, created_at desc);
 create index if not exists oi_eagoh_id_idx on public.open_intelligence(eagoh_id, created_at desc);
@@ -395,10 +517,6 @@ select 1 from pg_catalog.pg_tables where schemaname = 'public' and tablename = '
 
 do $$
 begin
-  alter table public.open_intelligence add column if not exists selected_category text;
-  alter table public.open_intelligence add column if not exists selected_subtags jsonb default '[]'::jsonb;
-  alter table public.open_intelligence add column if not exists custom_tags jsonb default '[]'::jsonb;
-  alter table public.open_intelligence add column if not exists exchange_share_enabled boolean not null default false;
 exception when others then null;
 end $$;
 
@@ -421,8 +539,20 @@ create table if not exists public.factions (
   created_at timestamptz default now()
 );
 
-alter table public.factions add column if not exists motto text;
-alter table public.factions add column if not exists fanatic_team_focus text;
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.factions
+  add column if not exists commander_id uuid,
+  add column if not exists name text,
+  add column if not exists description text,
+  add column if not exists emblem text,
+  add column if not exists intelligence_domain text,
+  add column if not exists included_members integer,
+  add column if not exists max_members integer,
+  add column if not exists current_members integer,
+  add column if not exists influence_score integer,
+  add column if not exists created_at timestamptz;,
+  add column if not exists motto text;,
+  add column if not exists fanatic_team_focus text;
 
 create index if not exists factions_commander_id_idx on public.factions(commander_id);
 
@@ -458,6 +588,15 @@ create table if not exists public.faction_members (
   joined_at timestamptz default now(),
   unique(faction_id, user_id)
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.faction_members
+  add column if not exists faction_id uuid,
+  add column if not exists user_id uuid,
+  add column if not exists role text,
+  add column if not exists status text,
+  add column if not exists downgrade_at timestamptz,
+  add column if not exists joined_at timestamptz;
 
 create index if not exists fm_faction_id_idx on public.faction_members(faction_id);
 create index if not exists fm_user_id_idx on public.faction_members(user_id);
@@ -500,6 +639,16 @@ create table if not exists public.faction_invites (
   created_at timestamptz default now()
 );
 
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.faction_invites
+  add column if not exists faction_id uuid,
+  add column if not exists inviter_id uuid,
+  add column if not exists invitee_id uuid,
+  add column if not exists role text,
+  add column if not exists status text,
+  add column if not exists expires_at timestamptz,
+  add column if not exists created_at timestamptz;
+
 create index if not exists fi_invitee_idx on public.faction_invites(invitee_id, status);
 create index if not exists fi_faction_idx on public.faction_invites(faction_id);
 
@@ -535,6 +684,14 @@ create table if not exists public.faction_activity (
   created_at timestamptz default now()
 );
 
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.faction_activity
+  add column if not exists faction_id uuid,
+  add column if not exists user_id uuid,
+  add column if not exists kind text,
+  add column if not exists details jsonb,
+  add column if not exists created_at timestamptz;
+
 create index if not exists fa_faction_idx on public.faction_activity(faction_id, created_at desc);
 
 alter table public.faction_activity enable row level security;
@@ -558,6 +715,13 @@ create table if not exists public.faction_shared_intelligence (
   oi_entry_id uuid not null references public.open_intelligence(id) on delete cascade,
   shared_at timestamptz default now()
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.faction_shared_intelligence
+  add column if not exists faction_id uuid,
+  add column if not exists user_id uuid,
+  add column if not exists oi_entry_id uuid,
+  add column if not exists shared_at timestamptz;
 
 create index if not exists fsi_faction_idx on public.faction_shared_intelligence(faction_id, shared_at desc);
 create index if not exists fsi_user_idx on public.faction_shared_intelligence(user_id);
@@ -646,6 +810,14 @@ create table if not exists public.faction_slot_purchases (
   purchased_at timestamptz default now()
 );
 
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.faction_slot_purchases
+  add column if not exists faction_id uuid,
+  add column if not exists user_id uuid,
+  add column if not exists slots_purchased integer,
+  add column if not exists edge_cost integer,
+  add column if not exists purchased_at timestamptz;
+
 create index if not exists fsp_faction_idx on public.faction_slot_purchases(faction_id, purchased_at desc);
 
 alter table public.faction_slot_purchases enable row level security;
@@ -675,6 +847,19 @@ create table if not exists public.marketplace_listings (
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.marketplace_listings
+  add column if not exists vendor_id uuid,
+  add column if not exists eagoh_id uuid,
+  add column if not exists active boolean,
+  add column if not exists price_25_per_day integer,
+  add column if not exists price_50_per_day integer,
+  add column if not exists price_75_per_day integer,
+  add column if not exists price_100_per_day integer,
+  add column if not exists description text,
+  add column if not exists created_at timestamptz,
+  add column if not exists updated_at timestamptz;
 
 create index if not exists ml_vendor_idx on public.marketplace_listings(vendor_id);
 create index if not exists ml_eagoh_idx on public.marketplace_listings(eagoh_id);
@@ -717,6 +902,20 @@ create table if not exists public.marketplace_sync_purchases (
   created_at timestamptz default now()
 );
 
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.marketplace_sync_purchases
+  add column if not exists listing_id uuid,
+  add column if not exists buyer_id uuid,
+  add column if not exists vendor_id uuid,
+  add column if not exists eagoh_id uuid,
+  add column if not exists sync_level text,
+  add column if not exists days integer,
+  add column if not exists edge_cost integer,
+  add column if not exists started_at timestamptz,
+  add column if not exists expires_at timestamptz,
+  add column if not exists active boolean,
+  add column if not exists created_at timestamptz;
+
 create index if not exists msp_buyer_idx on public.marketplace_sync_purchases(buyer_id, created_at desc);
 create index if not exists msp_vendor_idx on public.marketplace_sync_purchases(vendor_id, created_at desc);
 create index if not exists msp_expires_idx on public.marketplace_sync_purchases(expires_at) where active = true;
@@ -751,6 +950,22 @@ create table if not exists public.marketplace_vendor_stats (
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.marketplace_vendor_stats
+  add column if not exists vendor_id uuid,
+  add column if not exists total_listings integer,
+  add column if not exists active_listings integer,
+  add column if not exists total_sales integer,
+  add column if not exists total_edge_earned integer,
+  add column if not exists edge_earned_this_month integer,
+  add column if not exists edge_earned_last_month integer,
+  add column if not exists month_key text,
+  add column if not exists sync_success_score integer,
+  add column if not exists avg_quality_score integer,
+  add column if not exists rank text,
+  add column if not exists created_at timestamptz,
+  add column if not exists updated_at timestamptz;
 
 create index if not exists mvs_rank_idx on public.marketplace_vendor_stats(rank);
 
@@ -790,6 +1005,19 @@ create table if not exists public.sponsored_banners (
   created_at timestamptz default now()
 );
 
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.sponsored_banners
+  add column if not exists purchaser_id uuid,
+  add column if not exists eagoh_id uuid,
+  add column if not exists location text,
+  add column if not exists start_date date,
+  add column if not exists end_date date,
+  add column if not exists colored_border boolean,
+  add column if not exists hot_badge boolean,
+  add column if not exists edge_cost integer,
+  add column if not exists active boolean,
+  add column if not exists created_at timestamptz;
+
 create index if not exists sb_location_active_idx on public.sponsored_banners(location, active) where active = true;
 create index if not exists sb_dates_idx on public.sponsored_banners(start_date, end_date);
 create index if not exists sb_purchaser_idx on public.sponsored_banners(purchaser_id);
@@ -826,6 +1054,19 @@ create table if not exists public.banner_purchases (
   created_at timestamptz default now()
 );
 
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.banner_purchases
+  add column if not exists user_id uuid,
+  add column if not exists banner_id uuid,
+  add column if not exists eagoh_id uuid,
+  add column if not exists location text,
+  add column if not exists start_date date,
+  add column if not exists days integer,
+  add column if not exists colored_border boolean,
+  add column if not exists hot_badge boolean,
+  add column if not exists edge_cost integer,
+  add column if not exists created_at timestamptz;
+
 create index if not exists bp_user_idx on public.banner_purchases(user_id, created_at desc);
 
 alter table public.banner_purchases enable row level security;
@@ -853,6 +1094,16 @@ create table if not exists public.banner_analytics (
   updated_at timestamptz default now(),
   unique(banner_id, user_id, date)
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.banner_analytics
+  add column if not exists banner_id uuid,
+  add column if not exists user_id uuid,
+  add column if not exists date date,
+  add column if not exists impressions integer,
+  add column if not exists tap_count integer,
+  add column if not exists tap_hold_count integer,
+  add column if not exists updated_at timestamptz;
 
 create index if not exists ba_banner_idx on public.banner_analytics(banner_id, date);
 create index if not exists ba_user_idx on public.banner_analytics(user_id);
@@ -896,6 +1147,26 @@ create table if not exists public.eagoh_reputation (
   updated_at timestamptz default now()
 );
 
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.eagoh_reputation
+  add column if not exists eagoh_id uuid,
+  add column if not exists user_id uuid,
+  add column if not exists reputation_score integer,
+  add column if not exists rank text,
+  add column if not exists intelligence_quality integer,
+  add column if not exists marketplace_trust integer,
+  add column if not exists faction_influence integer,
+  add column if not exists sync_success integer,
+  add column if not exists activity_level integer,
+  add column if not exists fanatic_team_strength integer,
+  add column if not exists total_observations integer,
+  add column if not exists total_validated integer,
+  add column if not exists marketplace_sales integer,
+  add column if not exists banner_impressions integer,
+  add column if not exists last_calculated_at timestamptz,
+  add column if not exists created_at timestamptz,
+  add column if not exists updated_at timestamptz;
+
 create index if not exists er_user_id_idx on public.eagoh_reputation(user_id);
 create index if not exists er_rank_idx on public.eagoh_reputation(rank);
 create index if not exists er_score_idx on public.eagoh_reputation(reputation_score desc);
@@ -929,6 +1200,16 @@ create table if not exists public.eagoh_rank_history (
   created_at timestamptz default now()
 );
 
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.eagoh_rank_history
+  add column if not exists eagoh_id uuid,
+  add column if not exists user_id uuid,
+  add column if not exists previous_rank text,
+  add column if not exists new_rank text,
+  add column if not exists reputation_score integer,
+  add column if not exists reason text,
+  add column if not exists created_at timestamptz;
+
 create index if not exists erh_eagoh_idx on public.eagoh_rank_history(eagoh_id, created_at desc);
 create index if not exists erh_user_idx on public.eagoh_rank_history(user_id, created_at desc);
 
@@ -956,6 +1237,15 @@ create table if not exists public.eagoh_badges (
   earned_at timestamptz default now(),
   unique(eagoh_id, badge_id)
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.eagoh_badges
+  add column if not exists eagoh_id uuid,
+  add column if not exists user_id uuid,
+  add column if not exists badge_id text,
+  add column if not exists badge_name text,
+  add column if not exists badge_description text,
+  add column if not exists earned_at timestamptz;
 
 create index if not exists eb_eagoh_idx on public.eagoh_badges(eagoh_id);
 create index if not exists eb_user_idx on public.eagoh_badges(user_id);
@@ -989,6 +1279,20 @@ create table if not exists public.user_knowledge_credentials (
   updated_at timestamptz default now(),
   unique(user_id)
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.user_knowledge_credentials
+  add column if not exists user_id uuid,
+  add column if not exists public_title text,
+  add column if not exists domain_expertise text,
+  add column if not exists experience_summary text,
+  add column if not exists accolades text,
+  add column if not exists relevant_background text,
+  add column if not exists years_experience integer,
+  add column if not exists credibility_tags jsonb,
+  add column if not exists is_public boolean,
+  add column if not exists created_at timestamptz,
+  add column if not exists updated_at timestamptz;
 
 create index if not exists ukc_user_id_idx on public.user_knowledge_credentials(user_id);
 
@@ -1025,18 +1329,6 @@ create policy "ukc_marketplace_select" on public.user_knowledge_credentials
 -- =============================================================================
 -- PROFILE COLUMNS: avatar, banner, social verification, public display
 -- =============================================================================
-alter table public.profiles add column if not exists avatar_url text;
-alter table public.profiles add column if not exists banner_url text;
-alter table public.profiles add column if not exists public_display_title text;
-alter table public.profiles add column if not exists is_social_verified boolean default false;
-alter table public.profiles add column if not exists social_verified_platform text;
-alter table public.profiles add column if not exists bio text;
-alter table public.profiles add column if not exists display_name text;
-alter table public.profiles add column if not exists public_profile_enabled boolean default true;
-alter table public.profiles add column if not exists show_social_accounts boolean default true;
-alter table public.profiles add column if not exists show_credentials boolean default true;
-alter table public.profiles add column if not exists show_public_eagohs boolean default true;
-alter table public.profiles add column if not exists show_faction boolean default false;
 
 -- =============================================================================
 -- USER SOCIAL ACCOUNTS (connected social media verification)
@@ -1054,6 +1346,18 @@ create table if not exists public.user_social_accounts (
   updated_at timestamptz default now(),
   unique(user_id, platform)
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.user_social_accounts
+  add column if not exists user_id uuid,
+  add column if not exists platform text,
+  add column if not exists handle text,
+  add column if not exists profile_url text,
+  add column if not exists is_connected boolean,
+  add column if not exists is_platform_verified boolean,
+  add column if not exists verified_checked_at timestamptz,
+  add column if not exists created_at timestamptz,
+  add column if not exists updated_at timestamptz;
 
 create index if not exists usa_user_id_idx on public.user_social_accounts(user_id);
 
@@ -1124,11 +1428,12 @@ create table if not exists public.analyst_context_usage (
   used_at timestamptz not null default now()
 );
 
--- ── COLUMN MIGRATION: add columns that may be absent from older live tables ──
--- CREATE TABLE IF NOT EXISTS does not add new columns to an existing table.
--- This block guarantees every column referenced by indexes below exists.
--- Idempotent: ADD COLUMN IF NOT EXISTS is a no-op for columns already present.
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
 alter table public.analyst_context_usage
+  add column if not exists execution_id uuid,
+  add column if not exists requesting_user_id uuid,
+  add column if not exists session_type text,
+  add column if not exists used_at timestamptz,
   add column if not exists analyst_thread_id uuid,
   add column if not exists analyst_message_id uuid,
   add column if not exists selected_eagoh_id uuid,
@@ -1149,11 +1454,6 @@ alter table public.analyst_context_usage
   add column if not exists external_url_hash text,
   add column if not exists external_publisher text;
 
--- ── CONSTRAINT MIGRATION: upgrade source_type CHECK to include retained_exchange ──
--- The inline constraint from CREATE TABLE gets an auto-generated name. On older
--- live tables the constraint may only allow ('personal','faction','exchange').
--- This DO block drops and recreates the constraint only if 'retained_exchange'
--- is not already present in its definition. Safe to rerun.
 do $$
 declare
   v_constraint_name text;
@@ -1253,20 +1553,24 @@ create table if not exists public.analyst_response_audits (
   created_at timestamptz not null default now()
 );
 
--- ── COLUMN MIGRATION: add columns that may be absent from older live tables ──
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
 alter table public.analyst_response_audits
+  add column if not exists execution_id uuid,
+  add column if not exists requesting_user_id uuid,
+  add column if not exists session_type text,
+  add column if not exists created_at timestamptz,
   add column if not exists analyst_thread_id uuid,
   add column if not exists analyst_message_id uuid,
   add column if not exists selected_eagoh_id uuid,
-  add column if not exists personal_count integer not null default 0,
-  add column if not exists faction_count integer not null default 0,
-  add column if not exists exchange_count integer not null default 0,
-  add column if not exists external_source_count integer not null default 0,
-  add column if not exists external_search_used boolean not null default false,
+  add column if not exists personal_count integer,
+  add column if not exists faction_count integer,
+  add column if not exists exchange_count integer,
+  add column if not exists external_source_count integer,
+  add column if not exists external_search_used boolean,
   add column if not exists model text,
   add column if not exists confidence numeric,
-  add column if not exists audit_status text not null default 'complete',
-  add column if not exists retained_exchange_count integer not null default 0;
+  add column if not exists audit_status text,
+  add column if not exists retained_exchange_count integer;
 
 create index if not exists ara_requesting_user_idx on public.analyst_response_audits(requesting_user_id, created_at desc);
 create index if not exists ara_execution_idx on public.analyst_response_audits(execution_id);
@@ -1298,6 +1602,16 @@ create table if not exists public.analyst_threads (
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.analyst_threads
+  add column if not exists user_id uuid,
+  add column if not exists eagoh_id uuid,
+  add column if not exists session_type text,
+  add column if not exists title text,
+  add column if not exists domain text,
+  add column if not exists created_at timestamptz,
+  add column if not exists updated_at timestamptz;
 
 create index if not exists at_user_id_idx on public.analyst_threads(user_id, updated_at desc);
 create index if not exists at_eagoh_idx on public.analyst_threads(eagoh_id);
@@ -1337,11 +1651,20 @@ create table if not exists public.analyst_messages (
   created_at timestamptz default now()
 );
 
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.analyst_messages
+  add column if not exists thread_id uuid,
+  add column if not exists user_id uuid,
+  add column if not exists role text,
+  add column if not exists content text,
+  add column if not exists edge_cost integer,
+  add column if not exists created_at timestamptz;,
+  add column if not exists visual_blocks jsonb;
+
 create index if not exists am_thread_id_idx on public.analyst_messages(thread_id, created_at asc);
 create index if not exists am_user_id_idx on public.analyst_messages(user_id);
 
 -- Visual blocks column for structured dashboard-style analysis cards
-alter table public.analyst_messages add column if not exists visual_blocks jsonb;
 
 alter table public.analyst_messages enable row level security;
 
@@ -1405,6 +1728,17 @@ create table if not exists public.subscription_allocations (
   unique(user_id, stable_key)
 );
 
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.subscription_allocations
+  add column if not exists user_id uuid,
+  add column if not exists product_id text,
+  add column if not exists entitlement_period_start timestamptz,
+  add column if not exists entitlement_period_end timestamptz,
+  add column if not exists neurons_granted integer,
+  add column if not exists revenuecat_transaction_id text,
+  add column if not exists stable_key text,
+  add column if not exists created_at timestamptz;
+
 create index if not exists sa_user_id_idx on public.subscription_allocations(user_id, created_at desc);
 create index if not exists sa_stable_key_idx on public.subscription_allocations(stable_key);
 
@@ -1431,6 +1765,14 @@ create table if not exists public.neuron_purchases (
   created_at timestamptz default now(),
   unique(revenuecat_transaction_id)
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.neuron_purchases
+  add column if not exists user_id uuid,
+  add column if not exists product_id text,
+  add column if not exists revenuecat_transaction_id text,
+  add column if not exists neurons_granted integer,
+  add column if not exists created_at timestamptz;
 
 create index if not exists np_user_id_idx on public.neuron_purchases(user_id, created_at desc);
 create index if not exists np_rc_tx_idx on public.neuron_purchases(revenuecat_transaction_id);
@@ -1493,6 +1835,22 @@ create table if not exists public.eagoh_knowledge_credentials (
   updated_at timestamptz default now(),
   unique(eagoh_id)
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.eagoh_knowledge_credentials
+  add column if not exists user_id uuid,
+  add column if not exists eagoh_id uuid,
+  add column if not exists domain text,
+  add column if not exists public_title text,
+  add column if not exists domain_expertise text,
+  add column if not exists experience_summary text,
+  add column if not exists accolades text,
+  add column if not exists relevant_background text,
+  add column if not exists years_experience integer,
+  add column if not exists credibility_tags jsonb,
+  add column if not exists is_public boolean,
+  add column if not exists created_at timestamptz,
+  add column if not exists updated_at timestamptz;
 
 create index if not exists ekc_eagoh_id_idx on public.eagoh_knowledge_credentials(eagoh_id);
 create index if not exists ekc_user_id_idx on public.eagoh_knowledge_credentials(user_id);
@@ -1698,18 +2056,10 @@ exception when others then null;
 end $$;
 
 -- ── 5B-2: Add staleness / outdated tracking columns to open_intelligence ──
-alter table public.open_intelligence add column if not exists staleness_score numeric not null default 0;
-alter table public.open_intelligence add column if not exists staleness_evaluated_at timestamptz;
-alter table public.open_intelligence add column if not exists outdated_flag boolean not null default false;
-alter table public.open_intelligence add column if not exists content_hash text;
 
 -- Add columns for duplicate detection tracking
-alter table public.open_intelligence add column if not exists duplicate_flag boolean not null default false;
-alter table public.open_intelligence add column if not exists duplicate_of uuid; -- references another open_intelligence entry
 
 -- Version tracking for edits
-alter table public.open_intelligence add column if not exists version_number int not null default 1;
-alter table public.open_intelligence add column if not exists last_major_edit_at timestamptz;
 
 create index if not exists oi_validation_status_idx on public.open_intelligence(validation_status);
 create index if not exists oi_content_hash_idx on public.open_intelligence(user_id, content_hash) where content_hash is not null;
@@ -1738,6 +2088,18 @@ create table if not exists public.open_intelligence_feedback (
   updated_at timestamptz default now(),
   unique(entry_id, reviewer_user_id)
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.open_intelligence_feedback
+  add column if not exists entry_id uuid,
+  add column if not exists reviewer_user_id uuid,
+  add column if not exists feedback_type text,
+  add column if not exists optional_reason text,
+  add column if not exists access_source text,
+  add column if not exists faction_id uuid,
+  add column if not exists exchange_purchase_id uuid,
+  add column if not exists created_at timestamptz,
+  add column if not exists updated_at timestamptz;
 
 create index if not exists oif_entry_idx on public.open_intelligence_feedback(entry_id);
 create index if not exists oif_reviewer_idx on public.open_intelligence_feedback(reviewer_user_id, created_at desc);
@@ -1789,6 +2151,22 @@ create table if not exists public.open_intelligence_disputes (
   unique(entry_id, reporter_user_id)
 );
 
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.open_intelligence_disputes
+  add column if not exists entry_id uuid,
+  add column if not exists reporter_user_id uuid,
+  add column if not exists reason_category text,
+  add column if not exists explanation text,
+  add column if not exists supporting_url text,
+  add column if not exists access_source text,
+  add column if not exists faction_id uuid,
+  add column if not exists exchange_purchase_id uuid,
+  add column if not exists status text,
+  add column if not exists resolution text,
+  add column if not exists reviewed_by uuid,
+  add column if not exists reviewed_at timestamptz,
+  add column if not exists created_at timestamptz;
+
 create index if not exists oid_entry_idx on public.open_intelligence_disputes(entry_id);
 create index if not exists oid_reporter_user_idx on public.open_intelligence_disputes(reporter_user_id, created_at desc);
 create index if not exists oid_status_idx on public.open_intelligence_disputes(status) where status in ('pending', 'reviewing');
@@ -1830,6 +2208,27 @@ create table if not exists public.intelligence_contributor_reputation (
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.intelligence_contributor_reputation
+  add column if not exists user_id uuid,
+  add column if not exists overall_score numeric,
+  add column if not exists quality_component numeric,
+  add column if not exists usefulness_component numeric,
+  add column if not exists validation_component numeric,
+  add column if not exists reliability_component numeric,
+  add column if not exists dispute_penalty numeric,
+  add column if not exists total_entries integer,
+  add column if not exists entries_used integer,
+  add column if not exists supported_entries integer,
+  add column if not exists disputed_entries integer,
+  add column if not exists rejected_entries integer,
+  add column if not exists withdrawn_entries integer,
+  add column if not exists positive_feedback integer,
+  add column if not exists negative_feedback integer,
+  add column if not exists calculated_at timestamptz,
+  add column if not exists created_at timestamptz,
+  add column if not exists updated_at timestamptz;
 
 create index if not exists icr_overall_score_idx on public.intelligence_contributor_reputation(overall_score desc);
 
@@ -1881,6 +2280,22 @@ create table if not exists public.open_intelligence_versions (
   unique(entry_id, version_number)
 );
 
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.open_intelligence_versions
+  add column if not exists entry_id uuid,
+  add column if not exists version_number integer,
+  add column if not exists previous_content text,
+  add column if not exists previous_category text,
+  add column if not exists previous_subtags jsonb,
+  add column if not exists previous_custom_tags jsonb,
+  add column if not exists previous_confidence_level text,
+  add column if not exists previous_validation_status text,
+  add column if not exists previous_quality_score integer,
+  add column if not exists previous_influence_score integer,
+  add column if not exists change_type text,
+  add column if not exists changed_by uuid,
+  add column if not exists changed_at timestamptz;
+
 create index if not exists oiv_entry_idx on public.open_intelligence_versions(entry_id, version_number desc);
 
 alter table public.open_intelligence_versions enable row level security;
@@ -1917,6 +2332,21 @@ create table if not exists public.feedback_rate_limits (
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.feedback_rate_limits
+  add column if not exists user_id uuid,
+  add column if not exists feedback_count integer,
+  add column if not exists dispute_count integer,
+  add column if not exists daily_feedback_count integer,
+  add column if not exists daily_dispute_count integer,
+  add column if not exists window_started_at timestamptz,
+  add column if not exists last_feedback_at timestamptz,
+  add column if not exists last_dispute_at timestamptz,
+  add column if not exists anomaly_flag boolean,
+  add column if not exists anomaly_reason text,
+  add column if not exists created_at timestamptz,
+  add column if not exists updated_at timestamptz;
 
 create index if not exists frl_anomaly_idx on public.feedback_rate_limits(anomaly_flag) where anomaly_flag = true;
 
@@ -2239,7 +2669,6 @@ end;
 $$;
 
 -- ── 5B-12: Add dispute_count column to open_intelligence for fast filtering ─
-alter table public.open_intelligence add column if not exists active_dispute_count int not null default 0;
 
 create index if not exists oi_active_dispute_idx on public.open_intelligence(active_dispute_count) where active_dispute_count > 0;
 
@@ -2446,6 +2875,16 @@ create table if not exists public.intelligence_notifications (
   created_at timestamptz not null default now()
 );
 
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.intelligence_notifications
+  add column if not exists user_id uuid,
+  add column if not exists entry_id uuid,
+  add column if not exists notification_type text,
+  add column if not exists title text,
+  add column if not exists message text,
+  add column if not exists is_read boolean,
+  add column if not exists created_at timestamptz;
+
 create index if not exists in_user_unread_idx
   on public.intelligence_notifications(user_id, is_read, created_at desc);
 create index if not exists in_user_created_idx
@@ -2490,6 +2929,17 @@ create table if not exists public.intelligence_moderation_audit (
   optional_note text,
   created_at timestamptz not null default now()
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.intelligence_moderation_audit
+  add column if not exists entry_id uuid,
+  add column if not exists moderator_user_id uuid,
+  add column if not exists action text,
+  add column if not exists previous_status text,
+  add column if not exists new_status text,
+  add column if not exists dispute_id uuid,
+  add column if not exists optional_note text,
+  add column if not exists created_at timestamptz;
 
 create index if not exists ima_entry_idx
   on public.intelligence_moderation_audit(entry_id, created_at desc);
@@ -2862,6 +3312,19 @@ create table if not exists public.arena_deductions (
   refunded_at timestamptz
 );
 
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.arena_deductions
+  add column if not exists user_id uuid,
+  add column if not exists request_id text,
+  add column if not exists amount integer,
+  add column if not exists from_subscription integer,
+  add column if not exists from_purchased integer,
+  add column if not exists bucket text,
+  add column if not exists status text,
+  add column if not exists note text,
+  add column if not exists created_at timestamptz,
+  add column if not exists refunded_at timestamptz;
+
 drop index if exists arena_deductions_user_request_uniq;
 create unique index if not exists arena_deductions_user_request_uniq
   on public.arena_deductions(user_id, request_id);
@@ -3136,6 +3599,37 @@ create table if not exists public.arena_history (
   created_at timestamptz default now()
 );
 
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.arena_history
+  add column if not exists user_id uuid,
+  add column if not exists eagoh_id uuid,
+  add column if not exists domain text,
+  add column if not exists comparison_type text,
+  add column if not exists subject_a_name text,
+  add column if not exists subject_a_context text,
+  add column if not exists subject_a_year text,
+  add column if not exists subject_b_name text,
+  add column if not exists subject_b_context text,
+  add column if not exists subject_b_year text,
+  add column if not exists focus text,
+  add column if not exists custom_focus text,
+  add column if not exists custom_question text,
+  add column if not exists verdict text,
+  add column if not exists confidence integer,
+  add column if not exists category_scores jsonb,
+  add column if not exists subject_a_advantages jsonb,
+  add column if not exists subject_b_advantages jsonb,
+  add column if not exists similarities jsonb,
+  add column if not exists major_differences jsonb,
+  add column if not exists oi_influence jsonb,
+  add column if not exists response_summary text,
+  add column if not exists source_citations jsonb,
+  add column if not exists evidence_limitations text,
+  add column if not exists source_counts jsonb,
+  add column if not exists neuron_cost integer,
+  add column if not exists request_id text,
+  add column if not exists created_at timestamptz;
+
 create index if not exists arena_history_user_idx on public.arena_history(user_id, created_at desc);
 create index if not exists arena_history_eagoh_idx on public.arena_history(eagoh_id, created_at desc);
 
@@ -3207,6 +3701,20 @@ create table if not exists public.oi_creation_ledger (
   created_at timestamptz default now(),
   refunded_at timestamptz
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.oi_creation_ledger
+  add column if not exists user_id uuid,
+  add column if not exists request_id text,
+  add column if not exists entry_id uuid,
+  add column if not exists amount integer,
+  add column if not exists from_subscription integer,
+  add column if not exists from_purchased integer,
+  add column if not exists bucket text,
+  add column if not exists status text,
+  add column if not exists note text,
+  add column if not exists created_at timestamptz,
+  add column if not exists refunded_at timestamptz;
 
 drop index if exists oi_ledger_user_request_uniq;
 create unique index if not exists oi_ledger_user_request_uniq
@@ -3512,6 +4020,31 @@ create table if not exists public.retained_exchange_intelligence (
   deactivated_at timestamptz,
   created_at timestamptz not null default now()
 );
+
+-- ── LEGACY COLUMN MIGRATION: ensure all columns exist on older live tables ──
+alter table public.retained_exchange_intelligence
+  add column if not exists buyer_id uuid,
+  add column if not exists vendor_id uuid,
+  add column if not exists vendor_eagoh_id uuid,
+  add column if not exists source_entry_id uuid,
+  add column if not exists purchase_id uuid,
+  add column if not exists listing_id uuid,
+  add column if not exists purchased_percentage integer,
+  add column if not exists retention_percentage numeric,
+  add column if not exists retained_content_snapshot text,
+  add column if not exists source_entry_type text,
+  add column if not exists source_tag text,
+  add column if not exists source_category text,
+  add column if not exists source_quality_score numeric,
+  add column if not exists source_confidence_level text,
+  add column if not exists source_validation_status text,
+  add column if not exists source_created_at timestamptz,
+  add column if not exists vendor_display_name text,
+  add column if not exists vendor_eagoh_name text,
+  add column if not exists active boolean,
+  add column if not exists deactivated_reason text,
+  add column if not exists deactivated_at timestamptz,
+  add column if not exists created_at timestamptz;
 
 -- Unique constraint: one retained row per (purchase_id, source_entry_id) where active
 drop index if exists retained_exchange_purchase_entry_uniq;

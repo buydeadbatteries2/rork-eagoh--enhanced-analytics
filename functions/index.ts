@@ -7848,13 +7848,15 @@ async function handleExchangeRetentionCreate(request: Request, env: Env): Promis
 /**
  * POST /exchange/retention/deactivate
  *
- * Deactivates retained exchange intelligence when the original purchase
- * becomes inactive (refund, reversal, dispute, cancellation, revocation, expiration).
- * Calls the security-definer RPC `deactivate_retained_exchange_intelligence`.
+ * Deactivates retained exchange intelligence ONLY for refund, payment
+ * reversal, chargeback, dispute, invalid purchase cancellation, or admin
+ * revocation. NEVER for normal sync expiration — retained intelligence is
+ * permanent after a valid completed purchase. Calls the security-definer RPC
+ * `deactivate_retained_exchange_intelligence`.
  *
  * Accepts JWT auth — the buyer may trigger deactivation for their own
- * expired/inactive purchases. The worker verifies the purchase belongs to
- * the authenticated user and is actually inactive before calling the RPC.
+ * refund/reversal cases. The worker verifies the purchase belongs to the
+ * authenticated user and is actually inactive before calling the RPC.
  * For administrative revocations, the worker calls the RPC internally
  * via service-role without a client request.
  */
@@ -8519,5 +8521,6 @@ export default {
     return jsonResponse({ ok: false, error: "Not found" }, 404);
   },
 };
+
 
 

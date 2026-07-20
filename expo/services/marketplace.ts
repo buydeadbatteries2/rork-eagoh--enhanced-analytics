@@ -33,8 +33,10 @@ async function triggerRetention(purchaseId: string): Promise<void> {
 }
 
 /**
- * Deactivate retained exchange intelligence for expired purchases via the worker.
- * Best-effort — never fails the expiration flow if deactivation fails.
+ * Deactivate retained exchange intelligence for refunds/reversals/disputes only.
+ * NEVER call this for normal sync expiration — retained intelligence is
+ * permanent after a valid completed purchase. Valid reasons: refund,
+ * payment_reversal, chargeback, dispute, invalid_purchase, admin_revocation.
  */
 async function triggerDeactivation(purchaseId: string, reason: string): Promise<void> {
   try {
@@ -970,10 +972,12 @@ export async function expireSyncs(buyerId: string): Promise<number> {
     .in("id", ids);
   if (ue) console.warn("[marketplace] expire update failed", ue.message);
 
-  // ── Deactivate retained intelligence for expired purchases (best-effort) ──
-  for (const id of ids) {
-    void triggerDeactivation(id, "sync_expired");
-  }
+  // NOTE: Normal sync expiration does NOT deactivate Retained Exchange
+  // Intelligence. The buyer's retained 2% is permanent after a valid
+  // completed purchase. Expiration only ends the temporary 1–5 day
+  // Exchange access (preventing further temporary Exchange retrieval).
+  // Retained entries may only be deactivated for refund, payment reversal,
+  // chargeback/dispute, invalid purchase cancellation, or admin revocation.
 
   return ids.length;
 }

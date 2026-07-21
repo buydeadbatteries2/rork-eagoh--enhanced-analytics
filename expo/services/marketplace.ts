@@ -35,8 +35,11 @@ async function triggerRetention(purchaseId: string): Promise<void> {
 /**
  * Deactivate retained exchange intelligence for refunds/reversals/disputes only.
  * NEVER call this for normal sync expiration — retained intelligence is
- * permanent after a valid completed purchase. Valid reasons: refund,
- * payment_reversal, chargeback, dispute, invalid_purchase, admin_revocation.
+ * permanent after a valid completed purchase. The worker endpoint is
+ * ADMIN-ONLY: a buyer cannot deactivate their own retained entries because
+ * active=false is not proof of a refund (normal expiration also sets it).
+ * Valid reasons: refund, payment_reversal, chargeback, dispute,
+ * invalid_purchase, admin_revocation. Non-admin callers receive 403.
  */
 async function triggerDeactivation(purchaseId: string, reason: string): Promise<void> {
   try {

@@ -1,6 +1,6 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker (Phase RETAINED-OI-1 + Cap — Retained Exchange Intelligence + 25% Cumulative Cap)
- * Phase 12A — Social sharing + faction invite by email/username
+ * EAGOH Analyst Chat — Cloudflare Worker (Phase RETAINED-OI-2 - Secure admin-only deactivation) (Phase RETAINED-OI-1 + Cap — Retained Exchange Intelligence + 25% Cumulative Cap)
+  * Phase 12A — Social sharing + faction invite by email/username
  * Phase 11C — JWT-authed RLS client + network fix + OI save diagnostics)
  * Phase 11D — Analyst thread save fix + Exchange sharing validation
  * Phase 11E — Visual analysis blocks for analyst sessions
@@ -7854,12 +7854,29 @@ async function handleExchangeRetentionCreate(request: Request, env: Env): Promis
  * permanent after a valid completed purchase. Calls the security-definer RPC
  * `deactivate_retained_exchange_intelligence`.
  *
- * Accepts JWT auth — the buyer may trigger deactivation for their own
- * refund/reversal cases. The worker verifies the purchase belongs to the
- * authenticated user and is actually inactive before calling the RPC.
- * For administrative revocations, the worker calls the RPC internally
- * via service-role without a client request.
+ * SECURITY: This endpoint is ADMIN-ONLY. A buyer cannot deactivate their own
+ * retained entries — `marketplace_sync_purchases.active = false` is NOT proof
+ * of a refund because normal sync expiration also sets it to false, and there
+ * is no trusted refund/reversal status column on the purchase table yet.
+ * Allowing buyer-controlled deactivation would let a buyer free retention
+ * capacity and re-acquire different portions of a vendor EAGOH's knowledge,
+ * bypassing the 25% cumulative retention cap.
+ *
+ * Only profiles with `is_admin = true` (verified via the `isAdmin` helper) may
+ * call this endpoint. The admin attests to the reversal by providing one of
+ * the allowed normalized reasons. When a trusted refund/reversal status
+ * system is added to `marketplace_sync_purchases` in a future phase, this
+ * endpoint can be opened to the buyer for matching records only.
  */
+const ALLOWED_DEACTIVATION_REASONS = new Set([
+  "refund",
+  "payment_reversal",
+  "chargeback",
+  "dispute",
+  "invalid_purchase",
+  "admin_revocation",
+]);
+
 async function handleExchangeRetentionDeactivate(request: Request, env: Env): Promise<Response> {
   if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
     return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
@@ -7882,18 +7899,50 @@ async function handleExchangeRetentionDeactivate(request: Request, env: Env): Pr
 
   const purchaseId = str(payload.purchaseId).trim();
   if (!purchaseId) return jsonResponse({ ok: false, error: "purchaseId is required." }, 400);
-  const reason = str(payload.reason).trim();
+  const reason = str(payload.reason).trim().toLowerCase();
   if (!reason) return jsonResponse({ ok: false, error: "reason is required." }, 400);
 
-  // ── Verify the purchase belongs to the authenticated buyer and is inactive ──
+  // ── 1. Enforce allowed reasons (reject sync_expired / expired / unknown) ──
+  if (!ALLOWED_DEACTIVATION_REASONS.has(reason)) {
+    console.warn("[retention:deactivate] rejected reason", {
+      userIdPrefix: userId.slice(0, 8),
+      reason: reason.slice(0, 40),
+    });
+    return jsonResponse(
+      { ok: false, error: "Invalid deactivation reason. Retained intelligence is permanent after a valid completed purchase and is not deactivated by normal sync expiration." },
+      400,
+    );
+  }
+
   const serviceClient = getServiceRoleClient(env);
   if (!serviceClient) {
     return jsonResponse({ ok: false, error: "Service not configured." }, 503);
   }
 
+  // ── 2. ADMIN-ONLY authorization ──
+  // A buyer setting marketplace_sync_purchases.active = false is not proof of
+  // a refund — normal expiration also sets active = false, and there is no
+  // trusted refund/reversal status column yet. Only an admin may attest to a
+  // legitimate reversal. This blocks buyer-initiated cap manipulation.
+  const admin = await isAdmin(serviceClient, userId);
+  if (!admin) {
+    console.warn("[retention:deactivate] non-admin rejected", {
+      userIdPrefix: userId.slice(0, 8),
+      reason,
+    });
+    return jsonResponse(
+      { ok: false, error: "Deactivation requires admin authorization. Retained intelligence is permanent after a valid completed purchase." },
+      403,
+    );
+  }
+
+  // ── 3. Verify the purchase exists (do NOT use expiration as authorization) ──
+  // The purchase being active or inactive is irrelevant — normal expiration
+  // sets active=false, so it must never authorize deactivation. Only the
+  // admin's attestation (via an allowed reason) authorizes it.
   const { data: purchase, error: purchaseErr } = await serviceClient
     .from("marketplace_sync_purchases")
-    .select("id, buyer_id, active, expires_at")
+    .select("id, buyer_id")
     .eq("id", purchaseId)
     .maybeSingle();
 
@@ -7901,18 +7950,7 @@ async function handleExchangeRetentionDeactivate(request: Request, env: Env): Pr
     return jsonResponse({ ok: false, error: "Purchase not found." }, 404);
   }
 
-  const purchaseRow = purchase as { id: string; buyer_id: string; active: boolean; expires_at: string };
-  if (purchaseRow.buyer_id !== userId) {
-    return jsonResponse({ ok: false, error: "Purchase does not belong to this account." }, 403);
-  }
-
-  // Only allow deactivation if the purchase is actually inactive or expired
-  const now = new Date().toISOString();
-  if (purchaseRow.active && purchaseRow.expires_at > now) {
-    return jsonResponse({ ok: false, error: "Purchase is still active. Retained intelligence cannot be deactivated while the purchase is active." }, 409);
-  }
-
-  // ── Call the security-definer RPC ──
+  // ── 4. Call the security-definer RPC ──
   const { data: rpcResult, error: rpcErr } = await serviceClient
     .rpc("deactivate_retained_exchange_intelligence", { p_purchase_id: purchaseId, p_reason: reason });
 
@@ -7927,8 +7965,8 @@ async function handleExchangeRetentionDeactivate(request: Request, env: Env): Pr
     return jsonResponse({ ok: false, error: "Deactivation could not be completed." }, 500);
   }
 
-  console.log("[retention:deactivate] success", {
-    userIdPrefix: userId.slice(0, 8),
+  console.log("[retention:deactivate] admin success", {
+    adminIdPrefix: userId.slice(0, 8),
     purchaseId: purchaseId.slice(0, 8),
     reason,
     deactivatedCount: result.deactivated_count,
@@ -7937,6 +7975,7 @@ async function handleExchangeRetentionDeactivate(request: Request, env: Env): Pr
   return jsonResponse({
     ok: true,
     purchaseId,
+    reason,
     deactivatedCount: result.deactivated_count ?? 0,
   });
 }
@@ -8521,6 +8560,8 @@ export default {
     return jsonResponse({ ok: false, error: "Not found" }, 404);
   },
 };
+
+
 
 
 

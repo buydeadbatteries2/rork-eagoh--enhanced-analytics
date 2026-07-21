@@ -54,17 +54,6 @@ import { Image as ExpoImage } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { ProfilePreferences } from "@/services/profile";
 import {
-  getUserVerificationStatus,
-  connectSocialAccountMock,
-  disconnectSocialAccount,
-  refreshSocialVerificationStatus,
-  SOCIAL_PLATFORMS,
-  PLATFORM_DISPLAY,
-  type SocialPlatform,
-  type SocialAccountRow,
-  type UserVerificationStatus,
-} from "@/services/socialVerification";
-import {
   createShareAttempt,
   verifyShareAttempt,
   getShareAttempts,
@@ -79,8 +68,8 @@ import {
 } from "@/services/socialShareVerification";
 import { useEagohs } from "@/providers/EagohProvider";
 import { Share as RNShare } from "react-native";
-import { Image as ExpoImage } from "expo-image";
 import { CheckCircle2, Clock, Copy, Gift, Share2, Trophy, XCircle, QrCode, Sparkles, ChevronDown } from "lucide-react-native";
+import { copyToClipboard } from "@/services/sharing";
 import * as ImagePicker from "expo-image-picker";
 import { File as ExpoFile } from "expo-file-system";
 import { supabase } from "@/lib/supabase";
@@ -227,6 +216,375 @@ const ImageUploadRow = memo(function ImageUploadRow({
 });
 
 // ── Social Verification Panel ─────────────────────────────────────────────
+// EAGOH Social Share Verification — share an EAGOH on social media, verify
+// the public post, and earn 5 Neurons per verified share. Badge progress is
+// tracked across 5 tiers. All reward logic is server-side.
+
+function toneColor(tone: "success" | "cyan" | "gold" | "ember" | "muted", pal: P): string {
+  if (tone === "success") return pal.success;
+  if (tone === "cyan") return pal.cyan;
+  if (tone === "gold") return pal.gold;
+  if (tone === "ember") return pal.ember;
+  return pal.muted;
+}
+
+function badgeForCount(count: number): { name: string; threshold: number } | null {
+  for (let i = SHARE_BADGES.length - 1; i >= 0; i--) {
+    if (count >= SHARE_BADGES[i].threshold) return SHARE_BADGES[i];
+  }
+  return null;
+}
+
+function nextBadgeForCount(count: number): { name: string; threshold: number; remaining: number } | null {
+  for (let i = 0; i < SHARE_BADGES.length; i++) {
+    if (count < SHARE_BADGES[i].threshold) {
+      return { name: SHARE_BADGES[i].name, threshold: SHARE_BADGES[i].threshold, remaining: SHARE_BADGES[i].threshold - count };
+    }
+  }
+  return null;
+}
+
+const EagohSelector = memo(function EagohSelector({
+  pal,
+  eagohs,
+  selectedId,
+  onSelect,
+  verifiedCount,
+  currentBadgeName,
+}: {
+  pal: P;
+  eagohs: { id: string; name: string; image_url: string | null; image_thumb_url: string | null; domain: string | null; sport: string | null }[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  verifiedCount: number;
+  currentBadgeName: string | null;
+}): JSX.Element {
+  const h = useHaptics();
+  const [expanded, setExpanded] = useState(false);
+  const selected = eagohs.find((e) => e.id === selectedId) ?? null;
+  const specialty = selected ? (selected.domain ?? selected.sport ?? "General Intelligence") : "";
+
+  const s = useMemo(() => ({
+    selectorWrap: { gap: 8 } as const,
+    selectedCard: {
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      gap: 10,
+      padding: 10,
+      borderRadius: 5,
+      backgroundColor: pal.panel,
+      borderWidth: 1,
+      borderColor: pal.line,
+    } as const,
+    eagohThumb: {
+      width: 48,
+      height: 48,
+      borderRadius: 5,
+      backgroundColor: pal.graphite,
+    } as const,
+    eagohInfo: { flex: 1, gap: 2 } as const,
+    eagohName: { color: pal.text, fontSize: 14, fontWeight: "900" as const } as const,
+    eagohSpec: { color: pal.muted, fontSize: 11, fontWeight: "600" as const } as const,
+    badgeChip: {
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      gap: 3,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 5,
+      backgroundColor: pal.violetSoft,
+      borderWidth: 1,
+      borderColor: `${pal.violet}55`,
+    } as const,
+    badgeChipText: { color: pal.violet, fontSize: 9, fontWeight: "800" as const } as const,
+    countRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 4 } as const,
+    countText: { color: pal.cyan, fontSize: 11, fontWeight: "800" as const } as const,
+    chevron: { padding: 4 } as const,
+    dropdown: { gap: 4, maxHeight: 260 } as const,
+    dropdownItem: {
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      gap: 10,
+      padding: 8,
+      borderRadius: 5,
+      backgroundColor: "rgba(255,255,255,0.02)",
+      borderWidth: 1,
+      borderColor: pal.line,
+    } as const,
+    dropdownItemSelected: {
+      borderColor: pal.cyan,
+      backgroundColor: pal.cyanSoft,
+    } as const,
+  }), [pal]);
+
+  return (
+    <View style={s.selectorWrap}>
+      <Pressable
+        onPress={() => { h.selection(); setExpanded(!expanded); }}
+        style={({ pressed }) => [s.selectedCard, pressed && { opacity: 0.8 }]}
+      >
+        {selected ? (
+          <>
+            {selected.image_thumb_url || selected.image_url ? (
+              <ExpoImage
+                source={{ uri: selected.image_thumb_url ?? selected.image_url ?? "" }}
+                style={s.eagohThumb}
+                contentFit="cover"
+              />
+            ) : (
+              <View style={[s.eagohThumb, { alignItems: "center", justifyContent: "center" }]}>
+                <Sparkles color={pal.cyan} size={20} />
+              </View>
+            )}
+            <View style={s.eagohInfo}>
+              <Text style={s.eagohName}>{selected.name}</Text>
+              <Text style={s.eagohSpec}>{specialty}</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
+                {currentBadgeName && (
+                  <View style={s.badgeChip}>
+                    <Trophy color={pal.violet} size={9} />
+                    <Text style={s.badgeChipText}>{currentBadgeName}</Text>
+                  </View>
+                )}
+                <View style={s.countRow}>
+                  <CheckCircle2 color={pal.cyan} size={10} />
+                  <Text style={s.countText}>{verifiedCount} verified</Text>
+                </View>
+              </View>
+            </View>
+          </>
+        ) : (
+          <View style={s.eagohInfo}>
+            <Text style={s.eagohName}>Select an EAGOH</Text>
+            <Text style={s.eagohSpec}>Choose one of your EAGOHs to share</Text>
+          </View>
+        )}
+        <ChevronDown color={pal.muted} size={18} style={s.chevron} />
+      </Pressable>
+
+      {expanded && (
+        <ScrollView style={s.dropdown} nestedScrollEnabled>
+          {eagohs.length === 0 && (
+            <Text style={{ color: pal.muted, fontSize: 11, fontWeight: "600", padding: 8 }}>
+              Forge an EAGOH first to share it.
+            </Text>
+          )}
+          {eagohs.map((e) => (
+            <Pressable
+              key={e.id}
+              onPress={() => { h.selection(); onSelect(e.id); setExpanded(false); }}
+              style={({ pressed }) => [
+                s.dropdownItem,
+                e.id === selectedId && s.dropdownItemSelected,
+                pressed && { opacity: 0.8 },
+              ]}
+            >
+              {e.image_thumb_url || e.image_url ? (
+                <ExpoImage
+                  source={{ uri: e.image_thumb_url ?? e.image_url ?? "" }}
+                  style={{ width: 36, height: 36, borderRadius: 5, backgroundColor: pal.graphite }}
+                  contentFit="cover"
+                />
+              ) : (
+                <View style={{ width: 36, height: 36, borderRadius: 5, backgroundColor: pal.graphite, alignItems: "center", justifyContent: "center" }}>
+                  <Sparkles color={pal.cyan} size={14} />
+                </View>
+              )}
+              <View style={{ flex: 1, gap: 1 }}>
+                <Text style={{ color: pal.text, fontSize: 12, fontWeight: "800" }}>{e.name}</Text>
+                <Text style={{ color: pal.muted, fontSize: 10, fontWeight: "600" }}>{e.domain ?? e.sport ?? "General"}</Text>
+              </View>
+              {e.id === selectedId && <CheckCircle2 color={pal.cyan} size={14} />}
+            </Pressable>
+          ))}
+        </ScrollView>
+      )}
+    </View>
+  );
+});
+
+const BadgeProgress = memo(function BadgeProgress({
+  pal,
+  count,
+  badges,
+}: {
+  pal: P;
+  count: number;
+  badges: BadgeInfo[];
+}): JSX.Element {
+  const s = useMemo(() => ({
+    wrap: { gap: 8 } as const,
+    header: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 } as const,
+    countBig: { color: pal.cyan, fontSize: 22, fontWeight: "900" as const } as const,
+    countLabel: { color: pal.muted, fontSize: 10, fontWeight: "700" as const, letterSpacing: 1 } as const,
+    progressWrap: { gap: 6 } as const,
+    badgeRow: {
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      gap: 8,
+      paddingVertical: 6,
+      paddingHorizontal: 10,
+      borderRadius: 5,
+      borderWidth: 1,
+    } as const,
+    badgeRowUnlocked: {
+      backgroundColor: pal.violetSoft,
+      borderColor: `${pal.violet}66`,
+    } as const,
+    badgeRowLocked: {
+      backgroundColor: "rgba(255,255,255,0.02)",
+      borderColor: pal.line,
+    } as const,
+    badgeIcon: { width: 28, alignItems: "center" } as const,
+    badgeInfo: { flex: 1, gap: 2 } as const,
+    badgeName: { fontSize: 12, fontWeight: "900" as const } as const,
+    badgeThreshold: { fontSize: 10, fontWeight: "600" as const } as const,
+    progressBar: {
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: pal.graphite,
+      overflow: "hidden" as const,
+    } as const,
+    progressFill: {
+      height: 4,
+      borderRadius: 2,
+    } as const,
+  }), [pal]);
+
+  const nextB = nextBadgeForCount(count);
+  const currentB = badgeForCount(count);
+
+  return (
+    <View style={s.wrap}>
+      <View style={s.header}>
+        <Trophy color={pal.violet} size={18} />
+        <Text style={s.countBig}>{count}</Text>
+        <Text style={s.countLabel}>VERIFIED SHARES</Text>
+      </View>
+
+      {currentB && (
+        <View style={[s.badgeRow, s.badgeRowUnlocked]}>
+          <View style={s.badgeIcon}><Trophy color={pal.violet} size={16} /></View>
+          <View style={s.badgeInfo}>
+            <Text style={[s.badgeName, { color: pal.violet }]}>{currentB.name}</Text>
+            <Text style={[s.badgeThreshold, { color: pal.muted }]}>Current badge · {currentB.threshold} shares</Text>
+          </View>
+        </View>
+      )}
+
+      {nextB && (
+        <View style={{ gap: 4 }}>
+          <Text style={{ color: pal.muted, fontSize: 10, fontWeight: "700", paddingHorizontal: 2 }}>
+            {count} of {nextB.threshold} verified shares · {nextB.remaining} remaining until {nextB.name}
+          </Text>
+          <View style={s.progressBar}>
+            <View style={[s.progressFill, { width: `${Math.min(100, (count / nextB.threshold) * 100)}%`, backgroundColor: pal.violet }]} />
+          </View>
+        </View>
+      )}
+
+      <View style={s.progressWrap}>
+        {badges.map((b) => {
+          const unlocked = b.unlocked;
+          return (
+            <View key={b.name} style={[s.badgeRow, unlocked ? s.badgeRowUnlocked : s.badgeRowLocked]}>
+              <View style={s.badgeIcon}>
+                <Trophy color={unlocked ? pal.violet : pal.muted} size={16} />
+              </View>
+              <View style={s.badgeInfo}>
+                <Text style={[s.badgeName, { color: unlocked ? pal.violet : pal.muted }]}>
+                  {b.name}
+                </Text>
+                <Text style={[s.badgeThreshold, { color: pal.muted }]}>
+                  {b.threshold} shares{unlocked ? " · Unlocked" : ""}
+                </Text>
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+});
+
+const HistoryList = memo(function HistoryList({
+  pal,
+  attempts,
+}: {
+  pal: P;
+  attempts: ShareAttempt[];
+}): JSX.Element {
+  const s = useMemo(() => ({
+    wrap: { gap: 6 } as const,
+    emptyText: { color: pal.muted, fontSize: 11, fontWeight: "600", paddingVertical: 8, textAlign: "center" as const } as const,
+    row: {
+      padding: 10,
+      borderRadius: 5,
+      backgroundColor: "rgba(255,255,255,0.02)",
+      borderWidth: 1,
+      borderColor: pal.line,
+      gap: 4,
+    } as const,
+    rowTop: { flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "space-between" as const } as const,
+    eagohName: { color: pal.text, fontSize: 12, fontWeight: "800" as const, flex: 1 } as const,
+    statusChip: {
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      gap: 3,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 5,
+    } as const,
+    statusChipText: { fontSize: 9, fontWeight: "800" as const } as const,
+    postUrl: { color: pal.muted, fontSize: 10, fontWeight: "500" as const } as const,
+    rowBottom: { flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "space-between" as const } as const,
+    dateText: { color: pal.muted, fontSize: 9, fontWeight: "600" as const } as const,
+    rewardText: { color: pal.success, fontSize: 10, fontWeight: "800" as const } as const,
+  }), [pal]);
+
+  if (attempts.length === 0) {
+    return (
+      <View>
+        <Text style={s.emptyText}>No share attempts yet. Share an EAGOH to get started.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={s.wrap}>
+      {attempts.slice(0, 10).map((a) => {
+        const tone = statusTone(a.status);
+        const toneC = toneColor(tone, pal);
+        const date = new Date(a.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+        return (
+          <View key={a.id} style={s.row}>
+            <View style={s.rowTop}>
+              <Text style={s.eagohName} numberOfLines={1}>{a.eagoh_name}</Text>
+              <View style={[s.statusChip, { backgroundColor: `${toneC}22`, borderWidth: 1, borderColor: `${toneC}55` }]}>
+                {a.status === "verified" ? <CheckCircle2 color={toneC} size={10} /> : null}
+                {a.status === "manual_review" ? <Clock color={toneC} size={10} /> : null}
+                {a.status === "rejected" || a.status === "already_verified" || a.status === "expired" ? <XCircle color={toneC} size={10} /> : null}
+                <Text style={[s.statusChipText, { color: toneC }]}>{statusLabel(a.status)}</Text>
+              </View>
+            </View>
+            {a.submitted_post_url ? (
+              <Text style={s.postUrl} numberOfLines={1}>{a.submitted_post_url}</Text>
+            ) : null}
+            <View style={s.rowBottom}>
+              <Text style={s.dateText}>{date}</Text>
+              {a.reward_awarded ? (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+                  <Gift color={pal.success} size={10} />
+                  <Text style={s.rewardText}>+{a.reward_amount} Neurons</Text>
+                </View>
+              ) : null}
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+});
 
 const SocialVerificationPanel = memo(function SocialVerificationPanel({
   pal,
@@ -235,145 +593,189 @@ const SocialVerificationPanel = memo(function SocialVerificationPanel({
 }): JSX.Element {
   const { user } = useAuth();
   const h = useHaptics();
-  const [accounts, setAccounts] = useState<SocialAccountRow[]>([]);
-  const [verification, setVerification] = useState<UserVerificationStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [connecting, setConnecting] = useState<string | null>(null);
-  const [showConnect, setShowConnect] = useState(false);
-  const [handleInput, setHandleInput] = useState("");
-  const [connectPlatform, setConnectPlatform] = useState<SocialPlatform | null>(null);
+  const { eagohs } = useEagohs();
 
-  const loadAccounts = useCallback(async () => {
+  const [selectedEagohId, setSelectedEagohId] = useState<string | null>(null);
+  const [loadingShare, setLoadingShare] = useState(false);
+  const [activeAttempt, setActiveAttempt] = useState<{ attemptId: string; verificationCode: string; publicEagohUrl: string; shareContent: string; qrCodeUrl: string; eagohName: string } | null>(null);
+  const [postUrlInput, setPostUrlInput] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<{ ok: boolean; status: string; message?: string; rewardAmount?: number } | null>(null);
+  const [history, setHistory] = useState<ShareAttempt[]>([]);
+  const [badges, setBadges] = useState<BadgeInfo[]>(SHARE_BADGES.map((b) => ({ name: b.name, threshold: b.threshold, unlocked: false })));
+  const [verifiedCount, setVerifiedCount] = useState(0);
+  const [loadingData, setLoadingData] = useState(true);
+  const [showVerifySection, setShowVerifySection] = useState(false);
+
+  const userForgedEagohs = useMemo(() => eagohs.filter((e) => !e.is_default_shell), [eagohs]);
+  const currentBadgeName = useMemo(() => badgeForCount(verifiedCount)?.name ?? null, [verifiedCount]);
+
+  const loadData = useCallback(async () => {
     if (!user?.id) return;
     try {
-      const status = await getUserVerificationStatus(user.id);
-      setVerification(status);
-      setAccounts(status.connectedAccounts);
+      const [status, attempts] = await Promise.all([getShareStatus(), getShareAttempts()]);
+      if (status.ok) {
+        setVerifiedCount(status.verifiedShareCount);
+        if (status.badges) setBadges(status.badges);
+      }
+      setHistory(attempts);
     } catch {
-      // ignore
+      // ignore — panel still renders with defaults
     } finally {
-      setLoading(false);
+      setLoadingData(false);
     }
   }, [user?.id]);
 
   useEffect(() => {
-    void loadAccounts();
-  }, [loadAccounts]);
+    void loadData();
+  }, [loadData]);
 
-  const handleConnect = useCallback(async (platform: SocialPlatform) => {
-    setConnectPlatform(platform);
-    setHandleInput("");
-    setShowConnect(true);
-  }, []);
+  // Auto-select first EAGOH if none selected
+  useEffect(() => {
+    if (!selectedEagohId && userForgedEagohs.length > 0) {
+      setSelectedEagohId(userForgedEagohs[0].id);
+    }
+  }, [selectedEagohId, userForgedEagohs]);
 
-  const handleSubmitConnect = useCallback(async () => {
-    if (!user?.id || !connectPlatform || !handleInput.trim()) return;
-    setConnecting(connectPlatform);
+  const handleShare = useCallback(async () => {
+    if (!selectedEagohId || loadingShare) return;
+    setLoadingShare(true);
+    setVerifyResult(null);
+    setShowVerifySection(false);
     try {
-      await connectSocialAccountMock(user.id, connectPlatform, handleInput.trim());
-      await refreshSocialVerificationStatus(user.id);
-      await loadAccounts();
+      const result = await createShareAttempt(selectedEagohId);
+      setActiveAttempt({
+        attemptId: result.attemptId,
+        verificationCode: result.verificationCode,
+        publicEagohUrl: result.publicEagohUrl,
+        shareContent: result.shareContent,
+        qrCodeUrl: result.qrCodeUrl,
+        eagohName: result.eagohName,
+      });
       h.success();
-      setShowConnect(false);
-      setHandleInput("");
-      setConnectPlatform(null);
+      // Open the native share sheet with the generated content
+      try {
+        await RNShare.share({
+          message: result.shareContent,
+          title: `Share ${result.eagohName}`,
+        });
+      } catch {
+        // User cancelled share or share failed — content is still generated, they can verify later
+      }
+      setShowVerifySection(true);
     } catch (err: unknown) {
-      console.warn("[settings] connect social failed", err);
-    } finally {
-      setConnecting(null);
-    }
-  }, [user?.id, connectPlatform, handleInput, loadAccounts, h]);
-
-  const handleDisconnect = useCallback(async (platform: SocialPlatform) => {
-    if (!user?.id) return;
-    try {
-      await disconnectSocialAccount(user.id, platform);
-      await loadAccounts();
+      const msg = err instanceof Error ? err.message : "Could not create share.";
+      Alert.alert("Share Failed", msg);
       h.warning();
-    } catch (err: unknown) {
-      console.warn("[settings] disconnect social failed", err);
+    } finally {
+      setLoadingShare(false);
     }
-  }, [user?.id, loadAccounts, h]);
+  }, [selectedEagohId, loadingShare, h]);
+
+  const handleVerify = useCallback(async () => {
+    if (!activeAttempt || verifying || !postUrlInput.trim()) return;
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      const result = await verifyShareAttempt(activeAttempt.attemptId, postUrlInput.trim());
+      setVerifyResult({ ok: result.ok, status: result.status, message: result.message ?? result.error, rewardAmount: result.rewardAmount });
+      if (result.ok && result.status === "verified") {
+        h.success();
+        setPostUrlInput("");
+        await loadData(); // refresh history + count
+      } else if (result.status === "manual_review") {
+        h.warning();
+        await loadData();
+      } else {
+        h.warning();
+        await loadData();
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Verification failed.";
+      setVerifyResult({ ok: false, status: "rejected", message: msg });
+      h.warning();
+    } finally {
+      setVerifying(false);
+    }
+  }, [activeAttempt, verifying, postUrlInput, h, loadData]);
 
   const inlineStyles = useMemo(
     () => ({
-      container: { padding: 14, gap: 12 } as const,
-      verifiedBanner: {
+      container: { padding: 14, gap: 14 } as const,
+      sectionTitle: { color: pal.text, fontSize: 13, fontWeight: "900" as const, letterSpacing: 0.5 } as const,
+      sectionHint: { color: pal.muted, fontSize: 11, fontWeight: "600" as const, lineHeight: 16 } as const,
+      rewardBanner: {
         flexDirection: "row" as const,
         alignItems: "center" as const,
         gap: 8,
         padding: 10,
         borderRadius: 5,
-        backgroundColor: pal.cyanSoft,
+        backgroundColor: pal.successSoft,
         borderWidth: 1,
-        borderColor: pal.cyan,
-      },
-      verifiedText: { color: pal.cyan, fontSize: 12, fontWeight: "800" as const, flex: 1 },
-      platformRow: {
-        flexDirection: "row" as const,
+        borderColor: `${pal.success}55`,
+      } as const,
+      rewardText: { color: pal.success, fontSize: 12, fontWeight: "800" as const, flex: 1 } as const,
+      shareBtn: {
+        minHeight: 44,
+        borderRadius: 5,
         alignItems: "center" as const,
-        justifyContent: "space-between" as const,
-        paddingVertical: 8,
-        paddingHorizontal: 10,
-        borderRadius: 5,
-        backgroundColor: "rgba(255,255,255,0.03)",
-        borderWidth: 1,
-        borderColor: pal.line,
-      },
-      platformLabel: { color: pal.text, fontSize: 13, fontWeight: "800" as const },
-      platformHandle: { color: pal.muted, fontSize: 11, fontWeight: "600" as const },
-      connectBtn: {
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 5,
-        backgroundColor: pal.blueSoft,
-        borderWidth: 1,
-        borderColor: pal.blue,
-      },
-      connectBtnText: { color: pal.blue, fontSize: 11, fontWeight: "800" as const },
-      disconnectBtn: {
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 5,
-        backgroundColor: pal.emberSoft,
-        borderWidth: 1,
-        borderColor: pal.ember,
-      },
-      disconnectBtnText: { color: pal.ember, fontSize: 11, fontWeight: "800" as const },
-      verifiedChip: {
+        justifyContent: "center" as const,
         flexDirection: "row" as const,
-        alignItems: "center" as const,
-        gap: 3,
-        paddingHorizontal: 8,
-        paddingVertical: 3,
+        gap: 8,
+        backgroundColor: pal.cyan,
+      } as const,
+      shareBtnText: { color: pal.void, fontSize: 14, fontWeight: "900" as const } as const,
+      verifyBtn: {
+        minHeight: 44,
         borderRadius: 5,
-        backgroundColor: pal.cyanSoft,
-        borderWidth: 1,
-        borderColor: pal.cyan,
-      },
-      verifiedChipText: { color: pal.cyan, fontSize: 10, fontWeight: "800" as const },
-      connectSheet: {
-        padding: 14,
-        gap: 10,
-      },
-      connectSheetTitle: { color: pal.text, fontSize: 15, fontWeight: "900" as const },
+        alignItems: "center" as const,
+        justifyContent: "center" as const,
+        flexDirection: "row" as const,
+        gap: 8,
+        backgroundColor: pal.violet,
+        opacity: 1,
+      } as const,
+      verifyBtnText: { color: pal.void, fontSize: 14, fontWeight: "900" as const } as const,
       textInput: {
         backgroundColor: "rgba(3,6,11,0.62)",
         borderWidth: 1,
         borderColor: pal.line,
         borderRadius: 5,
         paddingHorizontal: 12,
-        paddingVertical: 9,
+        paddingVertical: 10,
         color: pal.text,
         fontSize: 13,
         fontWeight: "700" as const,
-      },
-      helperText: {
-        color: pal.muted,
-        fontSize: 11,
-        fontWeight: "600" as const,
-        lineHeight: 16,
-      },
+        minHeight: 44,
+      } as const,
+      codeBox: {
+        alignItems: "center" as const,
+        padding: 12,
+        borderRadius: 5,
+        backgroundColor: pal.graphite,
+        borderWidth: 1,
+        borderColor: pal.cyan,
+        gap: 4,
+      } as const,
+      codeLabel: { color: pal.muted, fontSize: 9, fontWeight: "700" as const, letterSpacing: 1.5 } as const,
+      codeText: { color: pal.cyan, fontSize: 18, fontWeight: "900" as const, letterSpacing: 2 } as const,
+      qrWrap: {
+        alignItems: "center" as const,
+        gap: 4,
+        paddingVertical: 8,
+      } as const,
+      qrLabel: { color: pal.muted, fontSize: 10, fontWeight: "600" as const } as const,
+      resultBox: {
+        padding: 10,
+        borderRadius: 5,
+        borderWidth: 1,
+        gap: 4,
+      } as const,
+      divider: {
+        height: 1,
+        backgroundColor: pal.line,
+        marginVertical: 2,
+      } as const,
       privacyHelper: {
         color: pal.ember,
         fontSize: 10,
@@ -384,12 +786,12 @@ const SocialVerificationPanel = memo(function SocialVerificationPanel({
         borderRadius: 5,
         borderWidth: 1,
         borderColor: `${pal.ember}30`,
-      },
+      } as const,
     }),
     [pal],
   );
 
-  if (loading) {
+  if (loadingData) {
     return (
       <View style={{ padding: 14, alignItems: "center" }}>
         <ActivityIndicator color={pal.cyan} size="small" />
@@ -399,112 +801,168 @@ const SocialVerificationPanel = memo(function SocialVerificationPanel({
 
   return (
     <View style={inlineStyles.container}>
-      {verification?.isVerified && (
-        <View style={inlineStyles.verifiedBanner}>
-          <BadgeCheck color={pal.cyan} size={18} />
-          <Text style={inlineStyles.verifiedText}>
-            Verified through connected social account
-          </Text>
+      {/* Reward info banner */}
+      <View style={inlineStyles.rewardBanner}>
+        <Gift color={pal.success} size={16} />
+        <Text style={inlineStyles.rewardText}>
+          Earn {SHARE_REWARD_AMOUNT} Neurons per verified social share
+        </Text>
+      </View>
+
+      {/* 1. EAGOH Selection */}
+      <View>
+        <Text style={inlineStyles.sectionTitle}>1. Select Your EAGOH</Text>
+        <View style={{ height: 6 }} />
+        <EagohSelector
+          pal={pal}
+          eagohs={userForgedEagohs}
+          selectedId={selectedEagohId}
+          onSelect={setSelectedEagohId}
+          verifiedCount={verifiedCount}
+          currentBadgeName={currentBadgeName}
+        />
+      </View>
+
+      {/* 2. Share My EAGOH button */}
+      <Pressable
+        onPress={handleShare}
+        disabled={!selectedEagohId || loadingShare}
+        style={({ pressed }) => [
+          inlineStyles.shareBtn,
+          { opacity: !selectedEagohId || loadingShare ? 0.5 : 1 },
+          pressed && { opacity: 0.8 },
+        ]}
+      >
+        {loadingShare ? (
+          <ActivityIndicator color={pal.void} size="small" />
+        ) : (
+          <>
+            <Share2 color={pal.void} size={16} />
+            <Text style={inlineStyles.shareBtnText}>Share My EAGOH</Text>
+          </>
+        )}
+      </Pressable>
+
+      {/* Verification code + QR display after share */}
+      {activeAttempt && (
+        <View style={{ gap: 10 }}>
+          <View style={inlineStyles.codeBox}>
+            <Text style={inlineStyles.codeLabel}>VERIFICATION CODE</Text>
+            <Text style={inlineStyles.codeText}>{activeAttempt.verificationCode}</Text>
+          </View>
+
+          <View style={inlineStyles.qrWrap}>
+            <ExpoImage
+              source={{ uri: activeAttempt.qrCodeUrl }}
+              style={{ width: 120, height: 120, borderRadius: 5, backgroundColor: pal.graphite }}
+              contentFit="contain"
+            />
+            <Text style={inlineStyles.qrLabel}>Scan to view {activeAttempt.eagohName}</Text>
+          </View>
+
+          <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+            <Text style={{ color: pal.muted, fontSize: 10, fontWeight: "600", flex: 1 }} numberOfLines={2}>
+              {activeAttempt.publicEagohUrl}
+            </Text>
+            <Pressable
+              onPress={() => { h.selection(); copyToClipboard(activeAttempt.publicEagohUrl, "EAGOH link"); }}
+              style={({ pressed }) => [pressed && { opacity: 0.7 }]}
+            >
+              <Copy color={pal.cyan} size={16} />
+            </Pressable>
+          </View>
         </View>
       )}
 
-      {!verification?.isVerified && (
-        <Text style={inlineStyles.helperText}>
-          Connect a social account to verify your identity and earn the verified badge.
-        </Text>
-      )}
-
-      {SOCIAL_PLATFORMS.map((platform) => {
-        const account = accounts.find((a) => a.platform === platform);
-        const isConnected = account?.is_connected;
-
-        return (
-          <View key={platform} style={inlineStyles.platformRow}>
-            <View style={{ gap: 2 }}>
-              <Text style={inlineStyles.platformLabel}>{PLATFORM_DISPLAY[platform]}</Text>
-              {isConnected && account?.handle ? (
-                <Text style={inlineStyles.platformHandle}>@{account.handle}</Text>
-              ) : null}
-            </View>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              {isConnected && account?.is_platform_verified ? (
-                <View style={inlineStyles.verifiedChip}>
-                  <BadgeCheck color={pal.cyan} size={12} />
-                  <Text style={inlineStyles.verifiedChipText}>Verified</Text>
-                </View>
-              ) : null}
-              {isConnected ? (
-                <Pressable
-                  onPress={() => handleDisconnect(platform)}
-                  style={({ pressed }) => [inlineStyles.disconnectBtn, pressed && { opacity: 0.7 }]}
-                >
-                  <Text style={inlineStyles.disconnectBtnText}>Disconnect</Text>
-                </Pressable>
-              ) : (
-                <Pressable
-                  onPress={() => handleConnect(platform)}
-                  style={({ pressed }) => [inlineStyles.connectBtn, pressed && { opacity: 0.7 }]}
-                >
-                  <Text style={inlineStyles.connectBtnText}>Connect</Text>
-                </Pressable>
-              )}
-            </View>
-          </View>
-        );
-      })}
-
-      {/* Connect modal */}
-      {showConnect && connectPlatform && (
-        <View style={inlineStyles.connectSheet}>
-          <Text style={inlineStyles.connectSheetTitle}>
-            Connect {PLATFORM_DISPLAY[connectPlatform]}
-          </Text>
-          <Text style={inlineStyles.helperText}>
-            Enter your {PLATFORM_DISPLAY[connectPlatform]} handle (v1: mock verification).
+      {/* 3. Verify My Share */}
+      {showVerifySection && activeAttempt && (
+        <View style={{ gap: 8 }}>
+          <Text style={inlineStyles.sectionTitle}>3. Verify Your Share</Text>
+          <Text style={inlineStyles.sectionHint}>
+            Paste the public link to the social post you just shared. Make sure your post is public and contains both the EAGOH URL and the verification code.
           </Text>
           <TextInput
             style={inlineStyles.textInput}
-            value={handleInput}
-            onChangeText={setHandleInput}
-            placeholder={`Your ${PLATFORM_DISPLAY[connectPlatform]} handle`}
+            value={postUrlInput}
+            onChangeText={setPostUrlInput}
+            placeholder="Paste Public Social Post Link"
             placeholderTextColor={pal.muted}
             autoCapitalize="none"
             autoCorrect={false}
+            keyboardType="url"
+            multiline
           />
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <Pressable
-              onPress={() => { setShowConnect(false); setHandleInput(""); setConnectPlatform(null); }}
-              style={({ pressed }) => [
-                { flex: 1, minHeight: 40, borderRadius: 5, alignItems: "center", justifyContent: "center", backgroundColor: pal.panel, borderWidth: 1, borderColor: pal.line },
-                pressed && { opacity: 0.7 },
-              ]}
-            >
-              <Text style={{ color: pal.muted, fontSize: 13, fontWeight: "800" }}>Cancel</Text>
-            </Pressable>
-            <Pressable
-              onPress={handleSubmitConnect}
-              disabled={connecting === connectPlatform || !handleInput.trim()}
-              style={({ pressed }) => [
-                { flex: 1, minHeight: 40, borderRadius: 5, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6, backgroundColor: pal.cyan, opacity: handleInput.trim() ? 1 : 0.5 },
-                pressed && { opacity: 0.7 },
-              ]}
-            >
-              {connecting === connectPlatform ? (
-                <ActivityIndicator color={pal.void} size="small" />
-              ) : (
-                <>
-                  <Link2 color={pal.void} size={14} />
-                  <Text style={{ color: pal.void, fontSize: 13, fontWeight: "900" }}>Connect</Text>
-                </>
-              )}
-            </Pressable>
-          </View>
+          <Pressable
+            onPress={handleVerify}
+            disabled={verifying || !postUrlInput.trim()}
+            style={({ pressed }) => [
+              inlineStyles.verifyBtn,
+              { opacity: verifying || !postUrlInput.trim() ? 0.5 : 1 },
+              pressed && { opacity: 0.8 },
+            ]}
+          >
+            {verifying ? (
+              <ActivityIndicator color={pal.void} size="small" />
+            ) : (
+              <>
+                <CheckCircle2 color={pal.void} size={16} />
+                <Text style={inlineStyles.verifyBtnText}>Verify My Share</Text>
+              </>
+            )}
+          </Pressable>
+
+          {verifyResult && (
+            <View style={[
+              inlineStyles.resultBox,
+              {
+                backgroundColor: verifyResult.ok && verifyResult.status === "verified" ? pal.successSoft : verifyResult.status === "manual_review" ? pal.goldSoft : pal.emberSoft,
+                borderColor: verifyResult.ok && verifyResult.status === "verified" ? `${pal.success}55` : verifyResult.status === "manual_review" ? `${pal.gold}55` : `${pal.ember}55`,
+              },
+            ]}>
+              <Text style={{
+                color: verifyResult.ok && verifyResult.status === "verified" ? pal.success : verifyResult.status === "manual_review" ? pal.gold : pal.ember,
+                fontSize: 12,
+                fontWeight: "800",
+              }}>
+                {verifyResult.status === "verified" ? "Verified!" : verifyResult.status === "manual_review" ? "Manual Review Required" : "Verification Failed"}
+              </Text>
+              {verifyResult.message ? (
+                <Text style={{ color: pal.text, fontSize: 11, fontWeight: "600", lineHeight: 16 }}>
+                  {verifyResult.message}
+                </Text>
+              ) : null}
+              {verifyResult.ok && verifyResult.status === "verified" && verifyResult.rewardAmount ? (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
+                  <Gift color={pal.success} size={12} />
+                  <Text style={{ color: pal.success, fontSize: 11, fontWeight: "900" }}>+{verifyResult.rewardAmount} Neurons awarded!</Text>
+                </View>
+              ) : null}
+            </View>
+          )}
         </View>
       )}
 
+      <View style={inlineStyles.divider} />
+
+      {/* 6. Badges */}
+      <View>
+        <Text style={inlineStyles.sectionTitle}>Badges</Text>
+        <View style={{ height: 8 }} />
+        <BadgeProgress pal={pal} count={verifiedCount} badges={badges} />
+      </View>
+
+      <View style={inlineStyles.divider} />
+
+      {/* 7. Verification History */}
+      <View>
+        <Text style={inlineStyles.sectionTitle}>Verification History</Text>
+        <View style={{ height: 8 }} />
+        <HistoryList pal={pal} attempts={history} />
+      </View>
+
       <View style={inlineStyles.privacyHelper}>
         <Text style={{ color: pal.ember, fontSize: 10, fontWeight: "900" }}>
-          Only public profile information is shown to other users. Email and private account details are never shown.
+          Verification is handled securely on our servers. You cannot directly mark a share as verified or award yourself Neurons. Duplicate posts and expired codes are automatically rejected.
         </Text>
       </View>
     </View>

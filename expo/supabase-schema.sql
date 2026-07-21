@@ -4850,3 +4850,324 @@ revoke execute on function public.mark_purchase_expired(uuid) from anon;
 revoke execute on function public.mark_purchase_expired(uuid) from authenticated;
 grant execute on function public.mark_purchase_expired(uuid) to service_role;
 grant execute on function public.mark_purchase_expired(uuid) to authenticated;
+
+-- =============================================================================
+-- PHASE SOCIAL-VERIFICATION-1 — EAGOH SOCIAL SHARE VERIFICATION SYSTEM
+-- =============================================================================
+-- Allows a user to share one of their EAGOHs on social media and verify the
+-- post is real. Verified shares award 5 Neurons and progress toward badges.
+-- Only the secure server-side worker may award rewards. The mobile client
+-- cannot directly mark a share verified, increase counts, award Neurons, or
+-- unlock badges. All reward logic lives in the security-definer RPC
+-- `award_social_share_reward`.
+-- -----------------------------------------------------------------------------
+
+-- ── 1. Add verified_share_count column to profiles ──
+alter table public.profiles
+  add column if not exists verified_share_count int not null default 0;
+
+-- ── 2. social_share_attempts table ──
+create table if not exists public.social_share_attempts (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  eagoh_id uuid not null references public.eagohs(id) on delete cascade,
+  verification_code text not null,
+  public_eagoh_url text not null,
+  share_content_snapshot text not null,
+  status text not null default 'share_created'
+    check (status in (
+      'share_created',
+      'verification_pending',
+      'verified',
+      'manual_review',
+      'rejected',
+      'already_verified',
+      'expired'
+    )),
+  platform text,
+  submitted_post_url text,
+  submitted_post_url_normalized text,
+  verified_at timestamptz,
+  reward_awarded boolean not null default false,
+  reward_amount int not null default 0,
+  verification_attempted_at timestamptz,
+  rejection_reason text,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '7 days')
+);
+
+alter table public.social_share_attempts
+  add column if not exists id uuid,
+  add column if not exists user_id uuid,
+  add column if not exists eagoh_id uuid,
+  add column if not exists verification_code text,
+  add column if not exists public_eagoh_url text,
+  add column if not exists share_content_snapshot text,
+  add column if not exists status text,
+  add column if not exists platform text,
+  add column if not exists submitted_post_url text,
+  add column if not exists submitted_post_url_normalized text,
+  add column if not exists verified_at timestamptz,
+  add column if not exists reward_awarded boolean,
+  add column if not exists reward_amount integer,
+  add column if not exists verification_attempted_at timestamptz,
+  add column if not exists rejection_reason text,
+  add column if not exists created_at timestamptz,
+  add column if not exists expires_at timestamptz;
+
+-- Unique constraint: verification_code must be unique (case-insensitive).
+create unique index if not exists ssa_verification_code_uniq
+  on public.social_share_attempts(lower(verification_code));
+
+-- Unique constraint: one verified post URL per attempt (prevents the same
+-- social post URL from being verified twice across ALL users). Only enforced
+-- for verified rows so that failed/rejected attempts don't block retries.
+create unique index if not exists ssa_verified_url_uniq
+  on public.social_share_attempts(submitted_post_url_normalized)
+  where status = 'verified' and submitted_post_url_normalized is not null;
+
+create index if not exists ssa_user_idx
+  on public.social_share_attempts(user_id, created_at desc);
+create index if not exists ssa_eagoh_idx
+  on public.social_share_attempts(eagoh_id);
+create index if not exists ssa_status_idx
+  on public.social_share_attempts(status) where status in ('share_created','verification_pending');
+
+alter table public.social_share_attempts enable row level security;
+
+drop policy if exists "ssa_self_select" on public.social_share_attempts;
+drop policy if exists "ssa_self_insert" on public.social_share_attempts;
+drop policy if exists "ssa_self_update" on public.social_share_attempts;
+drop policy if exists "ssa_self_delete" on public.social_share_attempts;
+
+-- Buyers may only read their own attempts. No client insert/update/delete.
+-- Only service_role (bypasses RLS) or the security-definer RPCs may write.
+create policy "ssa_self_select" on public.social_share_attempts
+  for select using (auth.uid() = user_id);
+
+-- ── 3. Secure DB function: award_social_share_reward ──
+-- SECURITY DEFINER, service_role only. Called by the worker AFTER the worker
+-- has verified the public post URL contains the EAGOH URL and verification
+-- code. Locks the attempt row, checks not already rewarded, checks not
+-- expired, awards 5 Neurons (edge_purchased), increments
+-- verified_share_count, logs an edge_transaction, and sets status = verified.
+-- Idempotent: re-calling on an already-verified attempt returns skipped=true.
+create or replace function public.award_social_share_reward(
+  p_attempt_id uuid,
+  p_post_url text,
+  p_post_url_normalized text,
+  p_platform text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_attempt record;
+  v_profile record;
+  v_reward int := 5;
+  v_next_purchased int;
+  v_next_count int;
+begin
+  -- Lock the attempt row
+  select * into v_attempt
+    from public.social_share_attempts
+    where id = p_attempt_id
+    for update;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'attempt_not_found');
+  end if;
+
+  -- Idempotency: already rewarded
+  if v_attempt.reward_awarded = true or v_attempt.status = 'verified' then
+    return jsonb_build_object(
+      'ok', true,
+      'skipped', true,
+      'attempt_id', p_attempt_id,
+      'message', 'Reward already awarded for this attempt.'
+    );
+  end if;
+
+  -- Check not expired
+  if v_attempt.expires_at <= now() then
+    update public.social_share_attempts
+      set status = 'expired',
+          verification_attempted_at = now()
+      where id = p_attempt_id;
+    return jsonb_build_object('ok', false, 'error', 'code_expired');
+  end if;
+
+  -- Check the same normalized URL hasn't already been verified by another attempt
+  if exists (
+    select 1 from public.social_share_attempts
+      where submitted_post_url_normalized = p_post_url_normalized
+        and status = 'verified'
+        and id <> p_attempt_id
+  ) then
+    update public.social_share_attempts
+      set status = 'already_verified',
+          submitted_post_url = p_post_url,
+          submitted_post_url_normalized = p_post_url_normalized,
+          verification_attempted_at = now()
+      where id = p_attempt_id;
+    return jsonb_build_object('ok', false, 'error', 'already_verified');
+  end if;
+
+  -- Lock the profile row
+  select edge_subscription, edge_purchased, verified_share_count
+    into v_profile
+    from public.profiles
+    where id = v_attempt.user_id
+    for update;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'profile_not_found');
+  end if;
+
+  -- Award 5 Neurons to edge_purchased
+  v_next_purchased := (v_profile.edge_purchased ?? 0) + v_reward;
+  v_next_count := (v_profile.verified_share_count ?? 0) + 1;
+
+  update public.profiles
+    set edge_purchased = v_next_purchased,
+        verified_share_count = v_next_count,
+        updated_at = now()
+    where id = v_attempt.user_id;
+
+  -- Log the edge transaction
+  insert into public.edge_transactions (
+    user_id, kind, reason, amount, bucket,
+    from_subscription, from_purchased,
+    balance_subscription_after, balance_purchased_after, note
+  ) values (
+    v_attempt.user_id,
+    'addition',
+    'social_share_reward',
+    v_reward,
+    'purchased',
+    0,
+    0,
+    v_profile.edge_subscription ?? 0,
+    v_next_purchased,
+    'Social share verification reward (EAGOH ' || v_attempt.eagoh_id::text || ')'
+  );
+
+  -- Update the attempt
+  update public.social_share_attempts
+    set status = 'verified',
+        submitted_post_url = p_post_url,
+        submitted_post_url_normalized = p_post_url_normalized,
+        platform = p_platform,
+        verified_at = now(),
+        verification_attempted_at = now(),
+        reward_awarded = true,
+        reward_amount = v_reward
+    where id = p_attempt_id;
+
+  return jsonb_build_object(
+    'ok', true,
+    'skipped', false,
+    'attempt_id', p_attempt_id,
+    'reward_amount', v_reward,
+    'new_verified_share_count', v_next_count,
+    'new_edge_purchased', v_next_purchased
+  );
+end;
+$$;
+
+revoke execute on function public.award_social_share_reward(uuid, text, text, text) from public;
+revoke execute on function public.award_social_share_reward(uuid, text, text, text) from anon;
+revoke execute on function public.award_social_share_reward(uuid, text, text, text) from authenticated;
+grant execute on function public.award_social_share_reward(uuid, text, text, text) to service_role;
+
+-- ── 4. Secure DB function: create_social_share_attempt ──
+-- SECURITY DEFINER, service_role only. Called by the worker to create a new
+-- share attempt with a unique verification code. Idempotent: the worker
+-- generates the code and passes it in; the unique index prevents duplicates.
+create or replace function public.create_social_share_attempt(
+  p_user_id uuid,
+  p_eagoh_id uuid,
+  p_verification_code text,
+  p_public_eagoh_url text,
+  p_share_content_snapshot text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_attempt_id uuid;
+  v_expires_at timestamptz;
+begin
+  -- Verify the EAGOH belongs to the user
+  if not exists (
+    select 1 from public.eagohs
+      where id = p_eagoh_id and user_id = p_user_id
+  ) then
+    return jsonb_build_object('ok', false, 'error', 'eagoh_not_owned');
+  end if;
+
+  v_expires_at := now() + interval '7 days';
+
+  insert into public.social_share_attempts (
+    user_id, eagoh_id, verification_code,
+    public_eagoh_url, share_content_snapshot,
+    status, expires_at
+  ) values (
+    p_user_id, p_eagoh_id, p_verification_code,
+    p_public_eagoh_url, p_share_content_snapshot,
+    'share_created', v_expires_at
+  )
+  returning id into v_attempt_id;
+
+  return jsonb_build_object(
+    'ok', true,
+    'attempt_id', v_attempt_id,
+    'verification_code', p_verification_code,
+    'expires_at', v_expires_at
+  );
+end;
+$$;
+
+revoke execute on function public.create_social_share_attempt(uuid, uuid, text, text, text) from public;
+revoke execute on function public.create_social_share_attempt(uuid, uuid, text, text, text) from anon;
+revoke execute on function public.create_social_share_attempt(uuid, uuid, text, text, text) from authenticated;
+grant execute on function public.create_social_share_attempt(uuid, uuid, text, text, text) to service_role;
+
+-- ── 5. Secure DB function: update_share_attempt_status ──
+-- SECURITY DEFINER, service_role only. Updates the status of a share attempt
+-- (used for manual_review, rejected, verification_pending, already_verified).
+create or replace function public.update_share_attempt_status(
+  p_attempt_id uuid,
+  p_status text,
+  p_post_url text,
+  p_post_url_normalized text,
+  p_platform text,
+  p_rejection_reason text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.social_share_attempts
+    set status = p_status,
+        submitted_post_url = p_post_url,
+        submitted_post_url_normalized = p_post_url_normalized,
+        platform = p_platform,
+        rejection_reason = p_rejection_reason,
+        verification_attempted_at = now()
+    where id = p_attempt_id;
+
+  return jsonb_build_object('ok', true, 'attempt_id', p_attempt_id, 'status', p_status);
+end;
+$$;
+
+revoke execute on function public.update_share_attempt_status(uuid, text, text, text, text, text) from public;
+revoke execute on function public.update_share_attempt_status(uuid, text, text, text, text, text) from anon;
+revoke execute on function public.update_share_attempt_status(uuid, text, text, text, text, text) from authenticated;
+grant execute on function public.update_share_attempt_status(uuid, text, text, text, text, text) to service_role;

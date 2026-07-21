@@ -8071,6 +8071,545 @@ async function handleGetRetainedExchange(request: Request, env: Env): Promise<Re
   return jsonResponse({ ok: true, entries: data ?? [] });
 }
 
+// =============================================================================
+// PHASE SOCIAL-VERIFICATION-1 — EAGOH Social Share Verification
+// =============================================================================
+// POST /social/share/create   — create a share attempt + verification code
+// POST /social/share/verify   — verify a public post URL and award reward
+// GET  /social/share/attempts — list the caller's share attempt history
+// GET  /social/share/status   — get verified share count + badge progress
+//
+// Security: all reward logic lives in the security-definer RPC
+// `award_social_share_reward` (service_role only). The mobile client cannot
+// mark a share verified, award Neurons, or increment counts directly.
+// -----------------------------------------------------------------------------
+
+const EAGOH_PUBLIC_BASE_URL = "https://eagoh.app/e/";
+const SHARE_REWARD_AMOUNT = 5;
+
+const SHARE_BADGES: { threshold: number; name: string }[] = [
+  { threshold: 5, name: "Neural Scout" },
+  { threshold: 25, name: "Synapse Builder" },
+  { threshold: 100, name: "Cortex Architect" },
+  { threshold: 500, name: "Neural Vanguard" },
+  { threshold: 1000, name: "Oracle Ascendant" },
+];
+
+/** Generate a unique verification code like EAGOH-J7K4P9. */
+function generateVerificationCode(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous chars
+  let code = "";
+  const arr = new Uint8Array(6);
+  crypto.getRandomValues(arr);
+  for (let i = 0; i < 6; i++) {
+    code += chars[arr[i] % chars.length];
+  }
+  return `EAGOH-${code}`;
+}
+
+/** Normalize a social post URL for duplicate detection (strips tracking params). */
+function normalizePostUrl(url: string): string {
+  try {
+    const u = new URL(url.trim());
+    // Strip common tracking params
+    const trackKeys = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "fbclid", "gclid", "igshid", "ref", "ref_url"];
+    for (const k of trackKeys) {
+      u.searchParams.delete(k);
+    }
+    // Lowercase host, strip trailing slash, strip fragment
+    return `${u.host.toLowerCase()}${u.pathname.replace(/\/$/, "")}${u.search ? "?" + u.searchParams.toString() : ""}`;
+  } catch {
+    return url.trim().toLowerCase();
+  }
+}
+
+/** Detect the platform from a URL host. */
+function detectPlatform(url: string): string {
+  try {
+    const host = new URL(url).host.toLowerCase();
+    if (host.includes("facebook.com") || host.includes("fb.com")) return "facebook";
+    if (host.includes("x.com") || host.includes("twitter.com")) return "x";
+    if (host.includes("linkedin.com")) return "linkedin";
+    if (host.includes("instagram.com")) return "instagram";
+    if (host.includes("threads.net") || host.includes("threads.com")) return "threads";
+    if (host.includes("tiktok.com")) return "tiktok";
+    if (host.includes("youtube.com") || host.includes("youtu.be")) return "youtube";
+    return "other";
+  } catch {
+    return "other";
+  }
+}
+
+/** Validate that a URL is a plausible public post URL (not a profile URL). */
+function isValidPostUrl(url: string): boolean {
+  const trimmed = url.trim();
+  if (trimmed.length < 15) return false;
+  try {
+    const u = new URL(trimmed);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return false;
+    // Reject bare profile URLs (heuristic — these platforms use /<handle> for profiles)
+    const path = u.pathname.replace(/^\//, "").replace(/\/$/, "");
+    const segments = path.split("/");
+    // facebook.com/<handle> = profile; facebook.com/<handle>/posts/123 = post
+    // x.com/<handle> = profile; x.com/<handle>/status/123 = post
+    // instagram.com/<handle> = profile; instagram.com/p/ABC = post
+    // tiktok.com/@<handle> = profile; tiktok.com/@<handle>/video/123 = post
+    if (segments.length < 2) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * POST /social/share/create
+ *
+ * Creates a new social share attempt for one of the caller's EAGOHs.
+ * Generates a unique verification code and a public EAGOH URL. The client
+ * uses the returned code + URL to build the native share sheet content.
+ */
+async function handleSocialShareCreate(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createAuthedClient(env, jwt);
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  let payload: { eagohId?: unknown };
+  try {
+    payload = (await request.json()) as typeof payload;
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request." }, 400);
+  }
+
+  const eagohId = str(payload.eagohId).trim();
+  if (!eagohId) return jsonResponse({ ok: false, error: "eagohId is required." }, 400);
+
+  // ── Verify the EAGOH belongs to the caller (RLS) ──
+  const { data: eagoh, error: eagohErr } = await supabase
+    .from("eagohs")
+    .select("id, name, image_url, image_thumb_url, domain, sport")
+    .eq("id", eagohId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (eagohErr || !eagoh) {
+    return jsonResponse({ ok: false, error: "EAGOH not found or not owned by you." }, 404);
+  }
+
+  // ── Fetch the creator display name for the share card ──
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("username, display_name")
+    .eq("id", userId)
+    .maybeSingle();
+  const creatorName = (profile as { display_name?: string | null; username?: string | null } | null)?.display_name
+    ?? (profile as { username?: string | null } | null)?.username
+    ?? "EAGOH Creator";
+
+  // ── Generate a unique verification code (retry on collision) ──
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) return jsonResponse({ ok: false, error: "Service not configured." }, 503);
+
+  const publicEagohUrl = `${EAGOH_PUBLIC_BASE_URL}${eagohId}`;
+  let verificationCode = generateVerificationCode();
+  let shareContent = "";
+  let attemptId = "";
+  let expiresAt = "";
+  let lastErr: unknown = null;
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    shareContent = [
+      `${(eagoh as { name: string }).name} — EAGOH Intelligence Analyst`,
+      `Specialty: ${(eagoh as { domain?: string | null; sport?: string | null }).domain ?? (eagoh as { sport?: string | null }).sport ?? "General Intelligence"}`,
+      `Creator: ${creatorName}`,
+      `Powered by Human Experience + AI`,
+      `View: ${publicEagohUrl}`,
+      `Verification Code: ${verificationCode}`,
+    ].join("\n");
+
+    const { data: rpcResult, error: rpcErr } = await serviceClient.rpc(
+      "create_social_share_attempt",
+      {
+        p_user_id: userId,
+        p_eagoh_id: eagohId,
+        p_verification_code: verificationCode,
+        p_public_eagoh_url: publicEagohUrl,
+        p_share_content_snapshot: shareContent,
+      },
+    );
+
+    if (rpcErr) {
+      // Unique constraint violation on verification_code → regenerate and retry
+      if (String(rpcErr.message).includes("ssa_verification_code_uniq") || String(rpcErr.message).includes("duplicate key")) {
+        verificationCode = generateVerificationCode();
+        continue;
+      }
+      lastErr = rpcErr;
+      break;
+    }
+
+    const result = rpcResult as { ok?: boolean; attempt_id?: string; expires_at?: string; error?: string };
+    if (!result?.ok) {
+      if (result?.error === "eagoh_not_owned") {
+        return jsonResponse({ ok: false, error: "EAGOH not found or not owned by you." }, 404);
+      }
+      lastErr = result?.error;
+      break;
+    }
+    attemptId = result.attempt_id ?? "";
+    expiresAt = result.expires_at ?? "";
+    lastErr = null;
+    break;
+  }
+
+  if (lastErr || !attemptId) {
+    console.warn("[social:share:create] failed", { userIdPrefix: userId.slice(0, 8), error: String(lastErr).slice(0, 200) });
+    return jsonResponse({ ok: false, error: "Could not create share attempt." }, 500);
+  }
+
+  console.log("[social:share:create] success", { userIdPrefix: userId.slice(0, 8), eagohId: eagohId.slice(0, 8), code: verificationCode });
+
+  return jsonResponse({
+    ok: true,
+    attemptId,
+    eagohId,
+    eagohName: (eagoh as { name: string }).name,
+    eagohImageUrl: (eagoh as { image_url?: string | null }).image_url ?? null,
+    eagohThumbUrl: (eagoh as { image_thumb_url?: string | null }).image_thumb_url ?? null,
+    creatorName,
+    verificationCode,
+    publicEagohUrl,
+    shareContent,
+    expiresAt,
+    qrCodeUrl: `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(publicEagohUrl)}`,
+  });
+}
+
+/**
+ * POST /social/share/verify
+ *
+ * Verifies that a public social post URL contains the caller's EAGOH URL and
+ * verification code. If verification succeeds, awards 5 Neurons via the
+ * security-definer RPC. If the platform blocks automated verification, marks
+ * the attempt as `manual_review` and returns that status — never falsely
+ * marks as verified.
+ */
+async function handleSocialShareVerify(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createAuthedClient(env, jwt);
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  let payload: { attemptId?: unknown; postUrl?: unknown };
+  try {
+    payload = (await request.json()) as typeof payload;
+  } catch {
+    return jsonResponse({ ok: false, error: "Invalid request." }, 400);
+  }
+
+  const attemptId = str(payload.attemptId).trim();
+  if (!attemptId) return jsonResponse({ ok: false, error: "attemptId is required." }, 400);
+  const postUrl = str(payload.postUrl).trim();
+  if (!postUrl) return jsonResponse({ ok: false, error: "postUrl is required." }, 400);
+
+  if (!isValidPostUrl(postUrl)) {
+    return jsonResponse({ ok: false, error: "Please paste the URL of the actual public post, not a profile URL." }, 400);
+  }
+
+  const normalizedUrl = normalizePostUrl(postUrl);
+  const platform = detectPlatform(postUrl);
+
+  const serviceClient = getServiceRoleClient(env);
+  if (!serviceClient) return jsonResponse({ ok: false, error: "Service not configured." }, 503);
+
+  // ── 1. Fetch the attempt (RLS ensures the caller owns it) ──
+  const { data: attempt, error: attemptErr } = await supabase
+    .from("social_share_attempts")
+    .select("id, user_id, eagoh_id, verification_code, public_eagoh_url, status, expires_at, reward_awarded")
+    .eq("id", attemptId)
+    .maybeSingle();
+
+  if (attemptErr || !attempt) {
+    return jsonResponse({ ok: false, error: "Share attempt not found." }, 404);
+  }
+
+  const a = attempt as { user_id: string; verification_code: string; public_eagoh_url: string; status: string; expires_at: string; reward_awarded: boolean };
+  if (a.user_id !== userId) {
+    return jsonResponse({ ok: false, error: "Share attempt not found." }, 404);
+  }
+
+  // Already verified
+  if (a.status === "verified" || a.reward_awarded) {
+    return jsonResponse({ ok: true, skipped: true, status: "verified", message: "This share was already verified and rewarded." });
+  }
+
+  // Expired
+  if (new Date(a.expires_at).getTime() <= Date.now()) {
+    await serviceClient.rpc("update_share_attempt_status", {
+      p_attempt_id: attemptId,
+      p_status: "expired",
+      p_post_url: postUrl,
+      p_post_url_normalized: normalizedUrl,
+      p_platform: platform,
+      p_rejection_reason: "code_expired",
+    });
+    return jsonResponse({ ok: false, error: "This verification code has expired. Codes are valid for 7 days. Generate a new share to verify." }, 410);
+  }
+
+  // Check for duplicate post URL (same URL already verified by anyone)
+  const { data: dupAttempt } = await serviceClient
+    .from("social_share_attempts")
+    .select("id, user_id")
+    .eq("submitted_post_url_normalized", normalizedUrl)
+    .eq("status", "verified")
+    .neq("id", attemptId)
+    .limit(1)
+    .maybeSingle();
+
+  if (dupAttempt) {
+    await serviceClient.rpc("update_share_attempt_status", {
+      p_attempt_id: attemptId,
+      p_status: "already_verified",
+      p_post_url: postUrl,
+      p_post_url_normalized: normalizedUrl,
+      p_platform: platform,
+      p_rejection_reason: "duplicate_post_url",
+    });
+    return jsonResponse({ ok: false, error: "This social post URL has already been verified. Each post can only be verified once.", status: "already_verified" }, 409);
+  }
+
+  // ── 2. Fetch the public post page to verify it contains the EAGOH URL + code ──
+  let pageHtml = "";
+  let fetchOk = false;
+  let fetchBlocked = false;
+  try {
+    const fetchResp = await fetch(postUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; EagohShareVerifier/1.0)",
+        "Accept": "text/html,application/xhtml+xml",
+      },
+      redirect: "follow",
+    });
+    if (fetchResp.ok) {
+      pageHtml = await fetchResp.text();
+      fetchOk = true;
+    } else if (fetchResp.status === 403 || fetchResp.status === 401 || fetchResp.status === 451) {
+      fetchBlocked = true;
+    } else {
+      fetchBlocked = true;
+    }
+  } catch {
+    fetchBlocked = true;
+  }
+
+  // If the platform blocked automated access, mark for manual review.
+  if (fetchBlocked || !fetchOk) {
+    await serviceClient.rpc("update_share_attempt_status", {
+      p_attempt_id: attemptId,
+      p_status: "manual_review",
+      p_post_url: postUrl,
+      p_post_url_normalized: normalizedUrl,
+      p_platform: platform,
+      p_rejection_reason: "platform_blocked_automated_verification",
+    });
+    console.log("[social:share:verify] manual review", { userIdPrefix: userId.slice(0, 8), attemptId: attemptId.slice(0, 8), platform });
+    return jsonResponse({
+      ok: true,
+      status: "manual_review",
+      message: "Manual Review Required — this platform blocked automated verification. Our team will review your post. You will not lose your reward if the post is valid.",
+    });
+  }
+
+  // ── 3. Verify the page contains the EAGOH URL and verification code ──
+  const pageLower = pageHtml.toLowerCase();
+  const urlFound = pageLower.includes(a.public_eagoh_url.toLowerCase());
+  const codeFound = pageLower.includes(a.verification_code.toLowerCase());
+
+  if (!urlFound || !codeFound) {
+    const reason = !urlFound && !codeFound
+      ? "missing_url_and_code"
+      : !urlFound ? "missing_public_eagoh_url" : "missing_verification_code";
+    await serviceClient.rpc("update_share_attempt_status", {
+      p_attempt_id: attemptId,
+      p_status: "rejected",
+      p_post_url: postUrl,
+      p_post_url_normalized: normalizedUrl,
+      p_platform: platform,
+      p_rejection_reason: reason,
+    });
+    return jsonResponse({
+      ok: false,
+      status: "rejected",
+      error: `Verification failed: the public post does not contain ${!urlFound && !codeFound ? "the EAGOH URL and verification code" : !urlFound ? "the EAGOH public URL" : "the verification code"}. Make sure your post is public and includes both the URL and the code.`,
+    }, 422);
+  }
+
+  // ── 4. Award the reward via the security-definer RPC ──
+  const { data: awardResult, error: awardErr } = await serviceClient.rpc(
+    "award_social_share_reward",
+    {
+      p_attempt_id: attemptId,
+      p_post_url: postUrl,
+      p_post_url_normalized: normalizedUrl,
+      p_platform: platform,
+    },
+  );
+
+  if (awardErr) {
+    console.warn("[social:share:verify] award RPC failed", { attemptId: attemptId.slice(0, 8), error: awardErr.message });
+    return jsonResponse({ ok: false, error: "Verification completed but reward could not be awarded." }, 500);
+  }
+
+  const result = awardResult as { ok?: boolean; skipped?: boolean; error?: string; reward_amount?: number; new_verified_share_count?: number; new_edge_purchased?: number };
+  if (!result?.ok) {
+    if (result?.error === "already_verified") {
+      return jsonResponse({ ok: false, status: "already_verified", error: "This social post URL has already been verified." }, 409);
+    }
+    if (result?.error === "code_expired") {
+      return jsonResponse({ ok: false, status: "expired", error: "This verification code has expired." }, 410);
+    }
+    console.warn("[social:share:verify] award RPC returned error", { attemptId: attemptId.slice(0, 8), error: result?.error });
+    return jsonResponse({ ok: false, error: "Reward could not be awarded." }, 500);
+  }
+
+  console.log("[social:share:verify] verified", {
+    userIdPrefix: userId.slice(0, 8),
+    attemptId: attemptId.slice(0, 8),
+    platform,
+    reward: result.reward_amount,
+    newCount: result.new_verified_share_count,
+  });
+
+  return jsonResponse({
+    ok: true,
+    skipped: result.skipped ?? false,
+    status: "verified",
+    rewardAmount: result.reward_amount ?? SHARE_REWARD_AMOUNT,
+    newVerifiedShareCount: result.new_verified_share_count,
+    newEdgePurchased: result.new_edge_purchased,
+  });
+}
+
+/**
+ * GET /social/share/attempts
+ *
+ * Returns the authenticated caller's social share attempt history.
+ */
+async function handleSocialShareAttempts(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createAuthedClient(env, jwt);
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const { data, error } = await supabase
+    .from("social_share_attempts")
+    .select("id, eagoh_id, verification_code, public_eagoh_url, status, platform, submitted_post_url, reward_awarded, reward_amount, created_at, verified_at, expires_at, rejection_reason")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  if (error) {
+    console.warn("[social:share:attempts] query failed", { userIdPrefix: userId.slice(0, 8), error: error.message });
+    return jsonResponse({ ok: false, error: "Could not load share history." }, 500);
+  }
+
+  // Join EAGOH names (best-effort)
+  const attempts = (data ?? []) as { eagoh_id: string }[];
+  const eagohIds = [...new Set(attempts.map((a) => a.eagoh_id))];
+  const eagohNames = new Map<string, string>();
+  if (eagohIds.length > 0) {
+    const { data: eagohs } = await supabase
+      .from("eagohs")
+      .select("id, name")
+      .in("id", eagohIds);
+    for (const e of (eagohs ?? []) as { id: string; name: string }[]) {
+      eagohNames.set(e.id, e.name);
+    }
+  }
+
+  const enriched = attempts.map((a) => ({ ...a, eagoh_name: eagohNames.get((a as { eagoh_id: string }).eagoh_id) ?? "Unknown" }));
+
+  return jsonResponse({ ok: true, attempts: enriched });
+}
+
+/**
+ * GET /social/share/status
+ *
+ * Returns the caller's verified share count and badge progress.
+ */
+async function handleSocialShareStatus(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!jwt) return jsonResponse({ ok: false, error: "Authentication required." }, 401);
+
+  const supabase = createAuthedClient(env, jwt);
+  const userId = await verifyAuth(supabase, jwt);
+  if (!userId) return jsonResponse({ ok: false, error: "Invalid auth." }, 401);
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("verified_share_count")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (error || !data) {
+    return jsonResponse({ ok: false, error: "Could not load verification status." }, 500);
+  }
+
+  const count = (data as { verified_share_count?: number | null }).verified_share_count ?? 0;
+
+  // Compute badge progress
+  let currentBadge: { name: string; threshold: number } | null = null;
+  let nextBadge: { name: string; threshold: number } | null = null;
+  for (let i = 0; i < SHARE_BADGES.length; i++) {
+    if (count >= SHARE_BADGES[i].threshold) {
+      currentBadge = SHARE_BADGES[i];
+    } else {
+      nextBadge = SHARE_BADGES[i];
+      break;
+    }
+  }
+
+  const allBadges = SHARE_BADGES.map((b) => ({
+    name: b.name,
+    threshold: b.threshold,
+    unlocked: count >= b.threshold,
+  }));
+
+  return jsonResponse({
+    ok: true,
+    verifiedShareCount: count,
+    currentBadge: currentBadge ? { name: currentBadge.name, threshold: currentBadge.threshold } : null,
+    nextBadge: nextBadge ? { name: nextBadge.name, threshold: nextBadge.threshold, remaining: nextBadge.threshold - count } : null,
+    badges: allBadges,
+  });
+}
+
 async function handleForgeGenerate(request: Request, env: Env): Promise<Response> {
   if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
     return jsonResponse({ ok: false, error: "Backend not configured." }, 503);
@@ -8610,6 +9149,20 @@ export default {
     // Phase RETAINED-OI-1: Get buyer's active retained exchange intelligence library
     if (url.pathname === "/exchange/retained" && request.method === "GET") {
       return handleGetRetainedExchange(request, env);
+    }
+
+    // Phase SOCIAL-VERIFICATION-1: EAGOH social share verification
+    if (url.pathname === "/social/share/create" && request.method === "POST") {
+      return handleSocialShareCreate(request, env);
+    }
+    if (url.pathname === "/social/share/verify" && request.method === "POST") {
+      return handleSocialShareVerify(request, env);
+    }
+    if (url.pathname === "/social/share/attempts" && request.method === "GET") {
+      return handleSocialShareAttempts(request, env);
+    }
+    if (url.pathname === "/social/share/status" && request.method === "GET") {
+      return handleSocialShareStatus(request, env);
     }
 
     return jsonResponse({ ok: false, error: "Not found" }, 404);

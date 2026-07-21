@@ -64,6 +64,23 @@ import {
   type SocialAccountRow,
   type UserVerificationStatus,
 } from "@/services/socialVerification";
+import {
+  createShareAttempt,
+  verifyShareAttempt,
+  getShareAttempts,
+  getShareStatus,
+  statusLabel,
+  statusTone,
+  SHARE_BADGES,
+  SHARE_REWARD_AMOUNT,
+  type ShareAttempt,
+  type ShareAttemptStatus,
+  type BadgeInfo,
+} from "@/services/socialShareVerification";
+import { useEagohs } from "@/providers/EagohProvider";
+import { Share as RNShare } from "react-native";
+import { Image as ExpoImage } from "expo-image";
+import { CheckCircle2, Clock, Copy, Gift, Share2, Trophy, XCircle, QrCode, Sparkles, ChevronDown } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 import { File as ExpoFile } from "expo-file-system";
 import { supabase } from "@/lib/supabase";

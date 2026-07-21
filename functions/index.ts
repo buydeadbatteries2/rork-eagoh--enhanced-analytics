@@ -1,5 +1,7 @@
 /**
- * EAGOH Analyst Chat — Cloudflare Worker (Phase RETAINED-OI-2 - Secure admin-only deactivation) (Phase RETAINED-OI-1 + Cap — Retained Exchange Intelligence + 25% Cumulative Cap)
+ * EAGOH Analyst Chat — Cloudflare Worker
+ * Phase RETAINED-OI-2 — Trusted purchase reversal status (record_exchange_purchase_reversal RPC)
+ * Phase RETAINED-OI-1 + Cap — Retained Exchange Intelligence + 25% Cumulative Cap
   * Phase 12A — Social sharing + faction invite by email/username
  * Phase 11C — JWT-authed RLS client + network fix + OI save diagnostics)
  * Phase 11D — Analyst thread save fix + Exchange sharing validation
@@ -7848,34 +7850,48 @@ async function handleExchangeRetentionCreate(request: Request, env: Env): Promis
 /**
  * POST /exchange/retention/deactivate
  *
- * Deactivates retained exchange intelligence ONLY for refund, payment
- * reversal, chargeback, dispute, invalid purchase cancellation, or admin
- * revocation. NEVER for normal sync expiration — retained intelligence is
- * permanent after a valid completed purchase. Calls the security-definer RPC
- * `deactivate_retained_exchange_intelligence`.
+ * Records a trusted purchase reversal AND deactivates retained exchange
+ * intelligence for refund, payment reversal, chargeback, dispute, invalid
+ * purchase cancellation, or admin revocation. NEVER for normal sync
+ * expiration — retained intelligence is permanent after a valid completed
+ * purchase.
  *
- * SECURITY: This endpoint is ADMIN-ONLY. A buyer cannot deactivate their own
- * retained entries — `marketplace_sync_purchases.active = false` is NOT proof
- * of a refund because normal sync expiration also sets it to false, and there
- * is no trusted refund/reversal status column on the purchase table yet.
- * Allowing buyer-controlled deactivation would let a buyer free retention
- * capacity and re-acquire different portions of a vendor EAGOH's knowledge,
- * bypassing the 25% cumulative retention cap.
+ * PHASE RETAINED-OI-2: This endpoint no longer treats an admin-provided reason
+ * alone as sufficient. It calls the security-definer RPC
+ * `record_exchange_purchase_reversal`, which (1) locks the purchase row,
+ * (2) verifies and records the trusted `purchase_status` on
+ * `marketplace_sync_purchases`, (3) writes an audit row into
+ * `exchange_purchase_status_audit`, (4) sets `active = false`, and (5) calls
+ * `deactivate_retained_exchange_intelligence` with the normalized retained
+ * deactivation reason. The trusted status is recorded BEFORE retained entries
+ * are deactivated, all inside one server-side transaction.
  *
- * Only profiles with `is_admin = true` (verified via the `isAdmin` helper) may
- * call this endpoint. The admin attests to the reversal by providing one of
- * the allowed normalized reasons. When a trusted refund/reversal status
- * system is added to `marketplace_sync_purchases` in a future phase, this
- * endpoint can be opened to the buyer for matching records only.
+ * SECURITY: This endpoint is ADMIN-ONLY. A buyer cannot record a reversal or
+ * deactivate their own retained entries — `marketplace_sync_purchases.active
+ * = false` is NOT proof of a refund because normal sync expiration also sets
+ * it to false. Allowing buyer-controlled deactivation would let a buyer free
+ * retention capacity and re-acquire different portions of a vendor EAGOH's
+ * knowledge, bypassing the 25% cumulative retention cap.
+ *
+ * The endpoint stays admin-only until an actual payment-provider webhook
+ * system is implemented; at that point webhooks (not buyers) will call this
+ * path with a trusted reversal status derived from the provider's event.
  */
-const ALLOWED_DEACTIVATION_REASONS = new Set([
-  "refund",
-  "payment_reversal",
-  "chargeback",
-  "dispute",
-  "invalid_purchase",
-  "admin_revocation",
-]);
+
+// Map client-supplied deactivation reasons to the trusted purchase_status
+// values accepted by record_exchange_purchase_reversal. The RPC is the single
+// source of truth for which statuses are valid; this map just translates the
+// caller's vocabulary into the trusted-status vocabulary.
+const REASON_TO_TRUSTED_STATUS: Record<string, string> = {
+  refund: "refunded",
+  payment_reversal: "payment_reversed",
+  chargeback: "charged_back",
+  dispute: "disputed",
+  invalid_purchase: "invalidated",
+  admin_revocation: "admin_revoked",
+};
+
+const ALLOWED_DEACTIVATION_REASONS = new Set(Object.keys(REASON_TO_TRUSTED_STATUS));
 
 async function handleExchangeRetentionDeactivate(request: Request, env: Env): Promise<Response> {
   if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
@@ -7936,46 +7952,85 @@ async function handleExchangeRetentionDeactivate(request: Request, env: Env): Pr
     );
   }
 
-  // ── 3. Verify the purchase exists (do NOT use expiration as authorization) ──
-  // The purchase being active or inactive is irrelevant — normal expiration
-  // sets active=false, so it must never authorize deactivation. Only the
-  // admin's attestation (via an allowed reason) authorizes it.
-  const { data: purchase, error: purchaseErr } = await serviceClient
-    .from("marketplace_sync_purchases")
-    .select("id, buyer_id")
-    .eq("id", purchaseId)
-    .maybeSingle();
+  // ── 3. Map the caller reason to a trusted purchase_status ──
+  // The RPC is the single source of truth and re-validates this server-side.
+  const trustedStatus = REASON_TO_TRUSTED_STATUS[reason] ?? reason;
 
-  if (purchaseErr || !purchase) {
-    return jsonResponse({ ok: false, error: "Purchase not found." }, 404);
-  }
-
-  // ── 4. Call the security-definer RPC ──
-  const { data: rpcResult, error: rpcErr } = await serviceClient
-    .rpc("deactivate_retained_exchange_intelligence", { p_purchase_id: purchaseId, p_reason: reason });
+  // ── 4. Call the secure reversal RPC ──
+  // record_exchange_purchase_reversal locks the purchase row, records the
+  // trusted purchase_status + reversal_reason + reversal_recorded_at +
+  // reversal_recorded_by, writes an audit row, sets active = false, and then
+  // calls deactivate_retained_exchange_intelligence with the normalized
+  // retained reason. The trusted status is recorded BEFORE retained entries
+  // are deactivated, all inside one security-definer transaction. An admin
+  // reason alone is no longer sufficient — the trusted status must be written.
+  const { data: rpcResult, error: rpcErr } = await serviceClient.rpc(
+    "record_exchange_purchase_reversal",
+    {
+      p_purchase_id: purchaseId,
+      p_status: trustedStatus,
+      p_reason: reason,
+      p_recorded_by: userId,
+    },
+  );
 
   if (rpcErr) {
-    console.warn("[retention:deactivate] RPC failed", { purchaseId: purchaseId.slice(0, 8), error: rpcErr.message });
-    return jsonResponse({ ok: false, error: "Deactivation could not be completed." }, 500);
+    console.warn("[retention:deactivate] reversal RPC failed", {
+      purchaseId: purchaseId.slice(0, 8),
+      error: rpcErr.message,
+    });
+    return jsonResponse({ ok: false, error: "Reversal could not be recorded." }, 500);
   }
 
-  const result = rpcResult as { ok?: boolean; deactivated_count?: number; error?: string };
+  const result = rpcResult as {
+    ok?: boolean;
+    skipped?: boolean;
+    purchase_status?: string;
+    reversal_reason?: string;
+    deactivated_count?: number;
+    error?: string;
+    message?: string;
+    previous_status?: string;
+  };
+
   if (!result?.ok) {
-    console.warn("[retention:deactivate] RPC returned error", { purchaseId: purchaseId.slice(0, 8), error: result?.error });
-    return jsonResponse({ ok: false, error: "Deactivation could not be completed." }, 500);
+    console.warn("[retention:deactivate] reversal RPC returned error", {
+      purchaseId: purchaseId.slice(0, 8),
+      error: result?.error,
+      message: result?.message,
+    });
+    // Surface the specific error so admins can tell invalid_status /
+    // already_reversed / purchase_not_found apart.
+    if (result?.error === "purchase_not_found") {
+      return jsonResponse({ ok: false, error: "Purchase not found." }, 404);
+    }
+    if (result?.error === "already_reversed") {
+      return jsonResponse(
+        {
+          ok: false,
+          error: result.message ?? "Purchase already has a recorded reversal status.",
+          previousStatus: result.previous_status,
+        },
+        409,
+      );
+    }
+    return jsonResponse({ ok: false, error: "Reversal could not be recorded." }, 500);
   }
 
-  console.log("[retention:deactivate] admin success", {
+  console.log("[retention:deactivate] admin reversal recorded", {
     adminIdPrefix: userId.slice(0, 8),
     purchaseId: purchaseId.slice(0, 8),
-    reason,
+    trustedStatus: result.purchase_status,
+    skipped: result.skipped,
     deactivatedCount: result.deactivated_count,
   });
 
   return jsonResponse({
     ok: true,
+    skipped: result.skipped ?? false,
     purchaseId,
-    reason,
+    purchaseStatus: result.purchase_status,
+    reason: result.reversal_reason ?? reason,
     deactivatedCount: result.deactivated_count ?? 0,
   });
 }

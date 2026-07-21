@@ -4475,3 +4475,320 @@ create trigger trg_auto_create_retained_exchange
   after insert on public.marketplace_sync_purchases
   for each row
   execute function public.auto_create_retained_exchange();
+
+-- =============================================================================
+-- PHASE RETAINED-OI-2 — TRUSTED PURCHASE REVERSAL STATUS
+-- =============================================================================
+-- Adds a trusted server-side status system to marketplace_sync_purchases so
+-- that refunds / reversals / disputes / invalidations / admin revocations can
+-- be distinguished from normal temporary-access expiration. Only a
+-- service-role worker or the secure security-definer RPC
+-- `record_exchange_purchase_reversal` may write the trusted status fields.
+-- Normal expiration sets purchase_status = 'expired' but does NOT touch
+-- retained exchange intelligence (retained entries are permanent after a
+-- valid completed purchase).
+-- -----------------------------------------------------------------------------
+
+-- ── 1. Trusted status columns on marketplace_sync_purchases ──
+alter table public.marketplace_sync_purchases
+  add column if not exists purchase_status text not null default 'completed',
+  add column if not exists reversal_reason text,
+  add column if not exists reversal_recorded_at timestamptz,
+  add column if not exists reversal_recorded_by uuid,
+  add column if not exists payment_reference text,
+  add column if not exists status_updated_at timestamptz not null default now();
+
+-- Check constraint: only the documented trusted statuses are allowed.
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint
+      where conname = 'msp_purchase_status_check'
+        and conrelid = 'public.marketplace_sync_purchases'::regclass
+  ) then
+    alter table public.marketplace_sync_purchases drop constraint msp_purchase_status_check;
+  end if;
+end;
+$$;
+
+alter table public.marketplace_sync_purchases
+  add constraint msp_purchase_status_check
+  check (purchase_status in (
+    'completed',
+    'expired',
+    'refunded',
+    'payment_reversed',
+    'charged_back',
+    'disputed',
+    'invalidated',
+    'admin_revoked'
+  ));
+
+-- Backfill existing rows: active rows stay 'completed'; inactive rows without
+-- a recorded reversal reason are treated as 'expired' (normal expiration).
+update public.marketplace_sync_purchases
+  set purchase_status = case
+        when active = true then 'completed'
+        else 'expired'
+      end,
+      status_updated_at = now()
+  where purchase_status is null
+     or (purchase_status = 'completed' and active = false
+           and reversal_reason is null
+           and reversal_recorded_at is null);
+
+create index if not exists msp_purchase_status_idx
+  on public.marketplace_sync_purchases(purchase_status)
+  where purchase_status <> 'completed';
+
+-- ── 2. RLS: block client writes to the trusted status fields ──
+drop policy if exists "msp_self_update" on public.marketplace_sync_purchases;
+create policy "msp_self_update" on public.marketplace_sync_purchases
+  for update using (auth.uid() = buyer_id)
+  with check (
+    auth.uid() = buyer_id
+    and purchase_status = 'completed'
+    and reversal_reason is null
+    and reversal_recorded_at is null
+    and reversal_recorded_by is null
+    and payment_reference is null
+  );
+
+-- ── 3. Audit table: exchange_purchase_status_audit ──
+create table if not exists public.exchange_purchase_status_audit (
+  id uuid primary key default gen_random_uuid(),
+  purchase_id uuid not null references public.marketplace_sync_purchases(id) on delete cascade,
+  previous_status text,
+  new_status text not null,
+  reason text,
+  changed_by uuid,
+  changed_at timestamptz not null default now(),
+  metadata jsonb not null default '{}'::jsonb
+);
+
+alter table public.exchange_purchase_status_audit
+  add column if not exists id uuid,
+  add column if not exists purchase_id uuid,
+  add column if not exists previous_status text,
+  add column if not exists new_status text,
+  add column if not exists reason text,
+  add column if not exists changed_by uuid,
+  add column if not exists changed_at timestamptz,
+  add column if not exists metadata jsonb;
+
+create index if not exists epsa_purchase_idx
+  on public.exchange_purchase_status_audit(purchase_id, changed_at desc);
+create index if not exists epsa_new_status_idx
+  on public.exchange_purchase_status_audit(new_status)
+  where new_status in ('refunded','payment_reversed','charged_back','disputed','invalidated','admin_revoked');
+
+alter table public.exchange_purchase_status_audit enable row level security;
+
+drop policy if exists "epsa_self_select" on public.exchange_purchase_status_audit;
+drop policy if exists "epsa_self_insert" on public.exchange_purchase_status_audit;
+drop policy if exists "epsa_self_delete" on public.exchange_purchase_status_audit;
+drop policy if exists "epsa_self_update" on public.exchange_purchase_status_audit;
+
+create policy "epsa_self_select" on public.exchange_purchase_status_audit
+  for select using (
+    exists (
+      select 1 from public.marketplace_sync_purchases msp
+        where msp.id = purchase_id
+          and (msp.buyer_id = auth.uid() or msp.vendor_id = auth.uid())
+    )
+  );
+
+-- ── 4. Secure server function: record_exchange_purchase_reversal ──
+create or replace function public.record_exchange_purchase_reversal(
+  p_purchase_id uuid,
+  p_status text,
+  p_reason text,
+  p_recorded_by uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_purchase record;
+  v_normalized_status text;
+  v_normalized_reason text;
+  v_retained_reason text;
+  v_deactivated_count integer := 0;
+begin
+  v_normalized_status := lower(btrim(coalesce(p_status, '')));
+  v_normalized_reason := btrim(coalesce(p_reason, ''));
+
+  if v_normalized_status not in (
+    'refunded','payment_reversed','charged_back','disputed','invalidated','admin_revoked'
+  ) then
+    return jsonb_build_object(
+      'ok', false,
+      'error', 'invalid_status',
+      'message', 'Only refunded, payment_reversed, charged_back, disputed, invalidated, or admin_revoked are accepted.'
+    );
+  end if;
+
+  v_retained_reason := case v_normalized_status
+    when 'refunded' then 'refund'
+    when 'payment_reversed' then 'payment_reversal'
+    when 'charged_back' then 'chargeback'
+    when 'disputed' then 'dispute'
+    when 'invalidated' then 'invalid_purchase'
+    when 'admin_revoked' then 'admin_revocation'
+  end;
+
+  select *
+    into v_purchase
+    from public.marketplace_sync_purchases
+    where id = p_purchase_id
+    for update;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'purchase_not_found');
+  end if;
+
+  if v_purchase.purchase_status = v_normalized_status
+     and v_purchase.reversal_reason is not null
+     and v_purchase.reversal_recorded_at is not null then
+    return jsonb_build_object(
+      'ok', true,
+      'skipped', true,
+      'purchase_id', p_purchase_id,
+      'purchase_status', v_normalized_status,
+      'deactivated_count', 0
+    );
+  end if;
+
+  if v_purchase.purchase_status in (
+    'refunded','payment_reversed','charged_back','disputed','invalidated','admin_revoked'
+  ) and v_purchase.purchase_status <> v_normalized_status then
+    return jsonb_build_object(
+      'ok', false,
+      'error', 'already_reversed',
+      'previous_status', v_purchase.purchase_status,
+      'message', 'Purchase already has a recorded reversal status.'
+    );
+  end if;
+
+  update public.marketplace_sync_purchases
+    set purchase_status = v_normalized_status,
+        reversal_reason = v_normalized_reason,
+        reversal_recorded_at = now(),
+        reversal_recorded_by = p_recorded_by,
+        active = false,
+        status_updated_at = now()
+    where id = p_purchase_id;
+
+  insert into public.exchange_purchase_status_audit (
+    purchase_id, previous_status, new_status, reason, changed_by, metadata
+  ) values (
+    p_purchase_id,
+    v_purchase.purchase_status,
+    v_normalized_status,
+    v_normalized_reason,
+    p_recorded_by,
+    jsonb_build_object(
+      'source', 'record_exchange_purchase_reversal',
+      'retained_reason', v_retained_reason
+    )
+  );
+
+  begin
+    perform public.deactivate_retained_exchange_intelligence(
+      p_purchase_id, v_retained_reason
+    );
+    get diagnostics v_deactivated_count = row_count;
+  exception when others then
+    raise notice 'record_exchange_purchase_reversal: retained deactivation deferred for purchase %', p_purchase_id;
+    v_deactivated_count := 0;
+  end;
+
+  return jsonb_build_object(
+    'ok', true,
+    'skipped', false,
+    'purchase_id', p_purchase_id,
+    'purchase_status', v_normalized_status,
+    'reversal_reason', v_normalized_reason,
+    'deactivated_count', v_deactivated_count
+  );
+end;
+$$;
+
+revoke execute on function public.record_exchange_purchase_reversal(uuid, text, text, uuid) from public;
+revoke execute on function public.record_exchange_purchase_reversal(uuid, text, text, uuid) from anon;
+revoke execute on function public.record_exchange_purchase_reversal(uuid, text, text, uuid) from authenticated;
+grant execute on function public.record_exchange_purchase_reversal(uuid, text, text, uuid) to service_role;
+
+-- ── 5. Normal expiration helper: mark_purchase_expired ──
+create or replace function public.mark_purchase_expired(p_purchase_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_purchase record;
+begin
+  select purchase_status, active
+    into v_purchase
+    from public.marketplace_sync_purchases
+    where id = p_purchase_id
+    for update;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'purchase_not_found');
+  end if;
+
+  if v_purchase.purchase_status in (
+    'refunded','payment_reversed','charged_back','disputed','invalidated','admin_revoked'
+  ) then
+    return jsonb_build_object(
+      'ok', true,
+      'skipped', true,
+      'purchase_id', p_purchase_id,
+      'purchase_status', v_purchase.purchase_status
+    );
+  end if;
+
+  if v_purchase.purchase_status = 'expired' then
+    return jsonb_build_object(
+      'ok', true,
+      'skipped', true,
+      'purchase_id', p_purchase_id,
+      'purchase_status', 'expired'
+    );
+  end if;
+
+  update public.marketplace_sync_purchases
+    set purchase_status = 'expired',
+        active = false,
+        status_updated_at = now()
+    where id = p_purchase_id;
+
+  insert into public.exchange_purchase_status_audit (
+    purchase_id, previous_status, new_status, reason, changed_by, metadata
+  ) values (
+    p_purchase_id,
+    v_purchase.purchase_status,
+    'expired',
+    'normal_expiration',
+    null,
+    jsonb_build_object('source', 'mark_purchase_expired')
+  );
+
+  return jsonb_build_object(
+    'ok', true,
+    'skipped', false,
+    'purchase_id', p_purchase_id,
+    'purchase_status', 'expired'
+  );
+end;
+$$;
+
+revoke execute on function public.mark_purchase_expired(uuid) from public;
+revoke execute on function public.mark_purchase_expired(uuid) from anon;
+revoke execute on function public.mark_purchase_expired(uuid) from authenticated;
+grant execute on function public.mark_purchase_expired(uuid) to service_role;
+grant execute on function public.mark_purchase_expired(uuid) to authenticated;

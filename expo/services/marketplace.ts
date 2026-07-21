@@ -952,6 +952,15 @@ export async function purchaseSync(
 /**
  * Check and expire any active syncs that have passed their expiration date.
  * Called periodically or on screen load.
+ *
+ * PHASE RETAINED-OI-2: Expiration now records the trusted purchase_status =
+ * 'expired' via the security-definer RPC `mark_purchase_expired`. This writes
+ * an audit row and sets active = false. It does NOT deactivate Retained
+ * Exchange Intelligence — retained entries are permanent after a valid
+ * completed purchase and may only be deactivated by a recorded reversal
+ * (refund, payment_reversal, chargeback, dispute, invalid_purchase,
+ * admin_revocation). `mark_purchase_expired` refuses to overwrite a recorded
+ * reversal status, so a refunded purchase stays refunded.
  */
 export async function expireSyncs(buyerId: string): Promise<number> {
   const now = new Date().toISOString();
@@ -969,11 +978,22 @@ export async function expireSyncs(buyerId: string): Promise<number> {
   if (!expired || expired.length === 0) return 0;
 
   const ids = (expired as { id: string }[]).map((r) => r.id);
-  const { error: ue } = await supabase
-    .from("marketplace_sync_purchases")
-    .update({ active: false })
-    .in("id", ids);
-  if (ue) console.warn("[marketplace] expire update failed", ue.message);
+
+  // Record the trusted 'expired' status via the security-definer RPC. Best-effort
+  // per purchase: a failure on one does not stop the others. The RPC is granted
+  // to authenticated and is idempotent (re-calling on an already-expired
+  // purchase returns skipped=true). It never deactivates retained intelligence.
+  let expiredCount = 0;
+  for (const id of ids) {
+    const { error: rpcErr } = await supabase.rpc("mark_purchase_expired", {
+      p_purchase_id: id,
+    });
+    if (rpcErr) {
+      console.warn("[marketplace] mark_purchase_expired failed", id.slice(0, 8), rpcErr.message);
+    } else {
+      expiredCount += 1;
+    }
+  }
 
   // NOTE: Normal sync expiration does NOT deactivate Retained Exchange
   // Intelligence. The buyer's retained 2% is permanent after a valid
@@ -982,7 +1002,7 @@ export async function expireSyncs(buyerId: string): Promise<number> {
   // Retained entries may only be deactivated for refund, payment reversal,
   // chargeback/dispute, invalid purchase cancellation, or admin revocation.
 
-  return ids.length;
+  return expiredCount;
 }
 
 /** Get active syncs for a buyer (currently active purchases). */

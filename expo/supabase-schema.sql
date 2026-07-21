@@ -4399,14 +4399,20 @@ begin
     return jsonb_build_object('ok', false, 'error', 'missing_reason');
   end if;
 
-  update public.retained_exchange_intelligence
-    set active = false,
-        deactivated_reason = p_reason,
-        deactivated_at = now()
-    where purchase_id = p_purchase_id
-      and active = true;
-
-  get diagnostics v_deactivated_count = row_count;
+  -- Use UPDATE ... RETURNING to count the rows actually deactivated. GET
+  -- DIAGNOSTICS ROW_COUNT after a plain UPDATE would also work, but RETURNING
+  -- is explicit and safe even when the function is invoked via PERFORM from
+  -- another SECURITY DEFINER function (where ROW_COUNT can be clobbered).
+  with deactivated as (
+    update public.retained_exchange_intelligence
+      set active = false,
+          deactivated_reason = p_reason,
+          deactivated_at = now()
+      where purchase_id = p_purchase_id
+        and active = true
+      returning id
+  )
+  select count(*)::integer into v_deactivated_count from deactivated;
 
   return jsonb_build_object(
     'ok', true,
@@ -4541,18 +4547,20 @@ create index if not exists msp_purchase_status_idx
   on public.marketplace_sync_purchases(purchase_status)
   where purchase_status <> 'completed';
 
--- ── 2. RLS: block client writes to the trusted status fields ──
+-- ── 2. RLS: NO direct buyer UPDATE on marketplace_sync_purchases ──
+-- The mobile client no longer updates this table directly. Normal expiration
+-- goes through the mark_purchase_expired RPC (which enforces ownership +
+-- actual expiration inside the SECURITY DEFINER body), and reversals go
+-- through record_exchange_purchase_reversal (service_role only). Allowing a
+-- direct buyer UPDATE would let a buyer set active=false, reset
+-- status_updated_at, or attempt to touch a trusted status field even with a
+-- WITH CHECK guard — WITH CHECK only validates the post-update row, it does
+-- not prevent the buyer from trying to write the trusted columns in the first
+-- place. Removing the UPDATE policy entirely is the safe approach: only
+-- service_role (bypasses RLS) and the security-definer RPCs may write.
 drop policy if exists "msp_self_update" on public.marketplace_sync_purchases;
-create policy "msp_self_update" on public.marketplace_sync_purchases
-  for update using (auth.uid() = buyer_id)
-  with check (
-    auth.uid() = buyer_id
-    and purchase_status = 'completed'
-    and reversal_reason is null
-    and reversal_recorded_at is null
-    and reversal_recorded_by is null
-    and payment_reference is null
-  );
+-- No CREATE POLICY for update. Buyers retain SELECT and INSERT (a new
+-- purchase) only.
 
 -- ── 3. Audit table: exchange_purchase_status_audit ──
 create table if not exists public.exchange_purchase_status_audit (
@@ -4616,6 +4624,7 @@ declare
   v_normalized_reason text;
   v_retained_reason text;
   v_deactivated_count integer := 0;
+  v_retained_result jsonb;
 begin
   v_normalized_status := lower(btrim(coalesce(p_status, '')));
   v_normalized_reason := btrim(coalesce(p_reason, ''));
@@ -4695,11 +4704,18 @@ begin
     )
   );
 
+  -- Capture the JSONB return value of deactivate_retained_exchange_intelligence
+  -- and read deactivated_count out of it. Using PERFORM + GET DIAGNOSTICS
+  -- ROW_COUNT here is WRONG: ROW_COUNT after PERFORM reports whether the
+  -- function returned a row, not the number of retained entries deactivated
+  -- inside it. Reading the returned JSONB is the accurate source of truth.
   begin
-    perform public.deactivate_retained_exchange_intelligence(
-      p_purchase_id, v_retained_reason
+    select public.deactivate_retained_exchange_intelligence(
+             p_purchase_id, v_retained_reason
+           ) into v_retained_result;
+    v_deactivated_count := coalesce(
+      (v_retained_result ->> 'deactivated_count')::integer, 0
     );
-    get diagnostics v_deactivated_count = row_count;
   exception when others then
     raise notice 'record_exchange_purchase_reversal: retained deactivation deferred for purchase %', p_purchase_id;
     v_deactivated_count := 0;
@@ -4722,6 +4738,14 @@ revoke execute on function public.record_exchange_purchase_reversal(uuid, text, 
 grant execute on function public.record_exchange_purchase_reversal(uuid, text, text, uuid) to service_role;
 
 -- ── 5. Normal expiration helper: mark_purchase_expired ──
+-- SECURITY: This function is SECURITY DEFINER and granted to authenticated,
+-- so every authorization check MUST live inside the function body. We verify
+-- (1) auth.uid() is not null, (2) the purchase belongs to the caller
+-- (buyer_id = auth.uid()), and (3) the temporary access has actually expired
+-- (expires_at <= now()). Without these checks an authenticated user could mark
+-- ANY other user's purchase expired, or mark their own purchase expired before
+-- its access window ended. The mobile query is convenience only — the function
+-- is the trusted source of truth.
 create or replace function public.mark_purchase_expired(p_purchase_id uuid)
 returns jsonb
 language plpgsql
@@ -4729,18 +4753,30 @@ security definer
 set search_path = ''
 as $$
 declare
+  v_caller uuid := auth.uid();
   v_purchase record;
 begin
-  select purchase_status, active
+  -- ── 1. Require an authenticated caller ──
+  if v_caller is null then
+    return jsonb_build_object('ok', false, 'error', 'not_authenticated');
+  end if;
+
+  -- ── 2. Lock the purchase row owned by THIS caller only ──
+  -- Selecting with buyer_id = auth.uid() prevents cross-user expiration. A
+  -- caller supplying another user's purchase UUID gets the same
+  -- not_found_or_forbidden response as a missing UUID (no information leak).
+  select purchase_status, active, expires_at
     into v_purchase
     from public.marketplace_sync_purchases
     where id = p_purchase_id
+      and buyer_id = v_caller
     for update;
 
   if not found then
-    return jsonb_build_object('ok', false, 'error', 'purchase_not_found');
+    return jsonb_build_object('ok', false, 'error', 'purchase_not_found_or_forbidden');
   end if;
 
+  -- ── 3. Refuse to overwrite a recorded reversal ──
   if v_purchase.purchase_status in (
     'refunded','payment_reversed','charged_back','disputed','invalidated','admin_revoked'
   ) then
@@ -4752,6 +4788,7 @@ begin
     );
   end if;
 
+  -- ── 4. Idempotency: already expired ──
   if v_purchase.purchase_status = 'expired' then
     return jsonb_build_object(
       'ok', true,
@@ -4761,6 +4798,19 @@ begin
     );
   end if;
 
+  -- ── 5. Require actual expiration ──
+  -- The temporary 1-5 day Exchange access must have actually ended before we
+  -- record the trusted 'expired' status. This blocks premature expiration.
+  if v_purchase.expires_at > now() then
+    return jsonb_build_object(
+      'ok', false,
+      'error', 'not_yet_expired',
+      'purchase_id', p_purchase_id,
+      'expires_at', v_purchase.expires_at
+    );
+  end if;
+
+  -- ── 6. Record the trusted 'expired' status ──
   update public.marketplace_sync_purchases
     set purchase_status = 'expired',
         active = false,
@@ -4774,9 +4824,12 @@ begin
     v_purchase.purchase_status,
     'expired',
     'normal_expiration',
-    null,
+    v_caller,
     jsonb_build_object('source', 'mark_purchase_expired')
   );
+
+  -- NOTE: retained exchange intelligence is intentionally NOT deactivated.
+  -- Retained entries are permanent after a valid completed purchase.
 
   return jsonb_build_object(
     'ok', true,
@@ -4787,6 +4840,11 @@ begin
 end;
 $$;
 
+-- Permissions: mark_purchase_expired is executable by authenticated users
+-- (the mobile client calls it during expireSyncs). It is safe to grant to
+-- authenticated because every authorization check (auth.uid, buyer_id, and
+-- expires_at) is enforced INSIDE the SECURITY DEFINER body. anon and public
+-- cannot execute it.
 revoke execute on function public.mark_purchase_expired(uuid) from public;
 revoke execute on function public.mark_purchase_expired(uuid) from anon;
 revoke execute on function public.mark_purchase_expired(uuid) from authenticated;

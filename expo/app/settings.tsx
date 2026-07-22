@@ -68,13 +68,17 @@ import {
 } from "@/services/socialShareVerification";
 import { useEagohs } from "@/providers/EagohProvider";
 import { Share as RNShare } from "react-native";
-import { CheckCircle2, Clock, Copy, Gift, Share2, Trophy, XCircle, QrCode, Sparkles, ChevronDown } from "lucide-react-native";
+import { CheckCircle2, Clock, Copy, Gift, Share2, Trophy, XCircle, QrCode, Sparkles, ChevronDown, RefreshCw, X as XIcon } from "lucide-react-native";
 import { copyToClipboard } from "@/services/sharing";
 import * as ImagePicker from "expo-image-picker";
 import { File as ExpoFile } from "expo-file-system";
 import { supabase } from "@/lib/supabase";
 import { useQuery } from "@tanstack/react-query";
 import { fetchNotifications } from "@/services/openIntelligence";
+import { captureRef } from "react-native-view-shot";
+import * as Sharing from "expo-sharing";
+import { useRef } from "react";
+import EagohShareCard from "@/app/_components/EagohShareCard";
 
 type P = typeof palette;
 
@@ -597,7 +601,11 @@ const SocialVerificationPanel = memo(function SocialVerificationPanel({
 
   const [selectedEagohId, setSelectedEagohId] = useState<string | null>(null);
   const [loadingShare, setLoadingShare] = useState(false);
-  const [activeAttempt, setActiveAttempt] = useState<{ attemptId: string; verificationCode: string; publicEagohUrl: string; shareContent: string; qrCodeUrl: string; eagohName: string } | null>(null);
+  const [cardPhase, setCardPhase] = useState<"idle" | "creating" | "ready" | "capturing" | "sharing">("idle");
+  const [activeAttempt, setActiveAttempt] = useState<{ attemptId: string; verificationCode: string; publicEagohUrl: string; shareContent: string; qrCodeUrl: string; eagohName: string; eagohImageUrl: string | null; creatorName: string; specialty: string } | null>(null);
+  const [imagesReady, setImagesReady] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const cardRef = useRef<View>(null);
   const [postUrlInput, setPostUrlInput] = useState("");
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<{ ok: boolean; status: string; message?: string; rewardAmount?: number } | null>(null);
@@ -640,10 +648,16 @@ const SocialVerificationPanel = memo(function SocialVerificationPanel({
   const handleShare = useCallback(async () => {
     if (!selectedEagohId || loadingShare) return;
     setLoadingShare(true);
+    setShareError(null);
     setVerifyResult(null);
     setShowVerifySection(false);
+    setCardPhase("creating");
+    setImagesReady(false);
     try {
+      // 1. Create the backend share attempt first (generates verification code)
       const result = await createShareAttempt(selectedEagohId);
+      const selectedEagoh = userForgedEagohs.find((e) => e.id === selectedEagohId);
+      const specialty = selectedEagoh ? (selectedEagoh.domain ?? selectedEagoh.sport ?? "General Intelligence") : "General Intelligence";
       setActiveAttempt({
         attemptId: result.attemptId,
         verificationCode: result.verificationCode,
@@ -651,26 +665,104 @@ const SocialVerificationPanel = memo(function SocialVerificationPanel({
         shareContent: result.shareContent,
         qrCodeUrl: result.qrCodeUrl,
         eagohName: result.eagohName,
+        eagohImageUrl: result.eagohImageUrl,
+        creatorName: result.creatorName,
+        specialty,
       });
       h.success();
-      // Open the native share sheet with the generated content
-      try {
-        await RNShare.share({
-          message: result.shareContent,
-          title: `Share ${result.eagohName}`,
-        });
-      } catch {
-        // User cancelled share or share failed — content is still generated, they can verify later
-      }
-      setShowVerifySection(true);
+      // Card is now rendered with the verification code; wait for images to load.
+      // The actual capture + share happens in handleCaptureAndShare, triggered
+      // either automatically once imagesReady becomes true or by the user tapping Share.
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Could not create share.";
+      setShareError(msg);
+      setCardPhase("idle");
       Alert.alert("Share Failed", msg);
       h.warning();
     } finally {
       setLoadingShare(false);
     }
-  }, [selectedEagohId, loadingShare, h]);
+  }, [selectedEagohId, loadingShare, h, userForgedEagohs]);
+
+  // Auto-capture + share once both the EAGOH image and QR code have loaded.
+  useEffect(() => {
+    if (cardPhase === "creating" && imagesReady && activeAttempt && cardRef.current) {
+      void handleCaptureAndShare();
+    }
+  }, [cardPhase, imagesReady, activeAttempt]);
+
+  const handleCaptureAndShare = useCallback(async () => {
+    if (!activeAttempt || !cardRef.current) return;
+    setCardPhase("capturing");
+    setShareError(null);
+    try {
+      // Capture the card at 1080×1350 physical pixels.
+      // The card is 360×450 logical points; we scale via PixelRatio to get
+      // a high-quality PNG. We request width=1080 so the library scales up.
+      const targetWidth = 1080;
+      const uri = await captureRef(cardRef, {
+        result: "tmpfile",
+        format: "png",
+        quality: 1,
+        width: targetWidth,
+        height: Math.round(targetWidth / (1080 / 1350)),
+      });
+
+      setCardPhase("sharing");
+
+      // Build the share text (URL + code) — some platforms preserve it.
+      const shareText = `${activeAttempt.eagohName} — EAGOH Intelligence Analyst\n${activeAttempt.publicEagohUrl}\nVerification Code: ${activeAttempt.verificationCode}`;
+
+      // Prefer expo-sharing (supports image files) over RNShare for image sharing.
+      const fileUri = uri.startsWith("file://") ? uri : `file://${uri}`;
+
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: "image/png",
+          dialogTitle: `Share ${activeAttempt.eagohName}`,
+          UTI: "public.image",
+        });
+        h.success();
+        setCardPhase("ready");
+        setShowVerifySection(true);
+      } else {
+        // Fallback to RNShare with the image URI + text.
+        try {
+          await RNShare.share({
+            message: shareText,
+            url: fileUri,
+            title: `Share ${activeAttempt.eagohName}`,
+          });
+          h.success();
+          setCardPhase("ready");
+          setShowVerifySection(true);
+        } catch {
+          // User cancelled — keep card ready so they can retry.
+          setCardPhase("ready");
+          setShowVerifySection(true);
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Could not capture the share card image.";
+      console.warn("[social:share] capture/share failed", msg.slice(0, 200));
+      setShareError(msg);
+      setCardPhase("ready"); // allow retry
+      Alert.alert(
+        "Card Capture Failed",
+        "The EAGOH share card image could not be generated. You can retry sharing, or cancel to go back. The share attempt was not marked as shared.",
+      );
+      h.warning();
+    }
+  }, [activeAttempt, h]);
+
+  const handleCancelShare = useCallback(() => {
+    h.selection();
+    setActiveAttempt(null);
+    setCardPhase("idle");
+    setImagesReady(false);
+    setShareError(null);
+    setShowVerifySection(false);
+  }, [h]);
 
   const handleVerify = useCallback(async () => {
     if (!activeAttempt || verifying || !postUrlInput.trim()) return;
@@ -826,15 +918,28 @@ const SocialVerificationPanel = memo(function SocialVerificationPanel({
       {/* 2. Share My EAGOH button */}
       <Pressable
         onPress={handleShare}
-        disabled={!selectedEagohId || loadingShare}
+        disabled={!selectedEagohId || loadingShare || cardPhase === "capturing" || cardPhase === "sharing"}
         style={({ pressed }) => [
           inlineStyles.shareBtn,
-          { opacity: !selectedEagohId || loadingShare ? 0.5 : 1 },
+          { opacity: !selectedEagohId || loadingShare || cardPhase === "capturing" || cardPhase === "sharing" ? 0.5 : 1 },
           pressed && { opacity: 0.8 },
         ]}
       >
-        {loadingShare ? (
-          <ActivityIndicator color={pal.void} size="small" />
+        {loadingShare || cardPhase === "creating" ? (
+          <>
+            <ActivityIndicator color={pal.void} size="small" />
+            <Text style={inlineStyles.shareBtnText}>Creating EAGOH Card...</Text>
+          </>
+        ) : cardPhase === "capturing" ? (
+          <>
+            <ActivityIndicator color={pal.void} size="small" />
+            <Text style={inlineStyles.shareBtnText}>Capturing Card...</Text>
+          </>
+        ) : cardPhase === "sharing" ? (
+          <>
+            <ActivityIndicator color={pal.void} size="small" />
+            <Text style={inlineStyles.shareBtnText}>Opening Share Sheet...</Text>
+          </>
         ) : (
           <>
             <Share2 color={pal.void} size={16} />
@@ -843,21 +948,96 @@ const SocialVerificationPanel = memo(function SocialVerificationPanel({
         )}
       </Pressable>
 
-      {/* Verification code + QR display after share */}
+      {/* Share card preview + capture target */}
       {activeAttempt && (
-        <View style={{ gap: 10 }}>
+        <View style={{ gap: 12 }}>
+          {/* Card preview — this is the capture target */}
+          <View style={{ alignItems: "center", paddingVertical: 8 }}>
+            <View
+              ref={cardRef}
+              collapsable={false}
+              style={{ borderRadius: 16, overflow: "hidden" }}
+            >
+              <EagohShareCard
+                data={{
+                  eagohName: activeAttempt.eagohName,
+                  eagohImageUrl: activeAttempt.eagohImageUrl,
+                  specialty: activeAttempt.specialty,
+                  creatorName: activeAttempt.creatorName,
+                  currentBadgeName: currentBadgeName,
+                  publicEagohUrl: activeAttempt.publicEagohUrl,
+                  verificationCode: activeAttempt.verificationCode,
+                  qrCodeUrl: activeAttempt.qrCodeUrl,
+                }}
+                onImagesLoaded={() => { setImagesReady(true); }}
+              />
+            </View>
+          </View>
+
+          {/* Loading indicator while card images load */}
+          {cardPhase === "creating" && !imagesReady && (
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 4 }}>
+              <ActivityIndicator color={pal.cyan} size="small" />
+              <Text style={{ color: pal.muted, fontSize: 11, fontWeight: "700" }}>
+                Loading card images...
+              </Text>
+            </View>
+          )}
+
+          {/* Error state */}
+          {shareError && (
+            <View style={{ padding: 10, borderRadius: 5, backgroundColor: pal.emberSoft, borderWidth: 1, borderColor: `${pal.ember}55`, gap: 4 }}>
+              <Text style={{ color: pal.ember, fontSize: 11, fontWeight: "800" }}>
+                Card capture failed: {shareError}
+              </Text>
+              <Text style={{ color: pal.muted, fontSize: 10, fontWeight: "600" }}>
+                The share attempt was not marked as shared. You can retry below.
+              </Text>
+            </View>
+          )}
+
+          {/* Action buttons — Share / Regenerate / Cancel */}
+          {cardPhase === "ready" && (
+            <View style={{ gap: 8 }}>
+              <Pressable
+                onPress={() => void handleCaptureAndShare()}
+                style={({ pressed }) => [
+                  inlineStyles.shareBtn,
+                  pressed && { opacity: 0.8 },
+                ]}
+              >
+                <Share2 color={pal.void} size={16} />
+                <Text style={inlineStyles.shareBtnText}>Share Card Image</Text>
+              </Pressable>
+              {!showVerifySection && (
+                <Pressable
+                  onPress={() => { h.selection(); void handleShare(); }}
+                  style={({ pressed }) => [
+                    { minHeight: 40, borderRadius: 5, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8, backgroundColor: pal.panel, borderWidth: 1, borderColor: pal.line },
+                    pressed && { opacity: 0.8 },
+                  ]}
+                >
+                  <RefreshCw color={pal.cyan} size={14} />
+                  <Text style={{ color: pal.cyan, fontSize: 12, fontWeight: "800" }}>Regenerate Card</Text>
+                </Pressable>
+              )}
+              <Pressable
+                onPress={handleCancelShare}
+                style={({ pressed }) => [
+                  { minHeight: 40, borderRadius: 5, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8, backgroundColor: pal.emberSoft, borderWidth: 1, borderColor: `${pal.ember}44` },
+                  pressed && { opacity: 0.8 },
+                ]}
+              >
+                <XIcon color={pal.ember} size={14} />
+                <Text style={{ color: pal.ember, fontSize: 12, fontWeight: "800" }}>Cancel</Text>
+              </Pressable>
+            </View>
+          )}
+
+          {/* Verification code + URL summary (always visible after attempt) */}
           <View style={inlineStyles.codeBox}>
             <Text style={inlineStyles.codeLabel}>VERIFICATION CODE</Text>
             <Text style={inlineStyles.codeText}>{activeAttempt.verificationCode}</Text>
-          </View>
-
-          <View style={inlineStyles.qrWrap}>
-            <ExpoImage
-              source={{ uri: activeAttempt.qrCodeUrl }}
-              style={{ width: 120, height: 120, borderRadius: 5, backgroundColor: pal.graphite }}
-              contentFit="contain"
-            />
-            <Text style={inlineStyles.qrLabel}>Scan to view {activeAttempt.eagohName}</Text>
           </View>
 
           <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>

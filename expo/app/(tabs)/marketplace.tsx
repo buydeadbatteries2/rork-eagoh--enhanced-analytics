@@ -142,6 +142,98 @@ function domainLabel(d: string): string {
   return d.charAt(0).toUpperCase() + d.slice(1).replace(/_/g, " ");
 }
 
+// ── Domain DNA cleaning helpers ─────────────────────────────────────────
+// Raw DNA entries like "dom:music_genre:hip_hop" must never be shown to users.
+// These helpers extract, clean, and format domain knowledge values into
+// human-readable labels (e.g. "Genre: Hip Hop").
+
+/** Maps domain DNA column names to short human-readable labels. */
+const DOMAIN_FIELD_LABELS: Record<string, string> = {
+  music_genre: "Genre",
+  music_role: "Role",
+  film_tv_category: "Category",
+  film_tv_genre: "Genre",
+  film_tv_role: "Role",
+  fashion_style_category: "Style",
+  fashion_role: "Role",
+  education_subject: "Subject",
+  education_role: "Role",
+  gaming_genre: "Genre",
+  gaming_role: "Role",
+  business_industry: "Industry",
+  business_role: "Role",
+  finance_focus: "Focus",
+  finance_role: "Role",
+  technology_area: "Area",
+  technology_role: "Role",
+  health_fitness_area: "Area",
+  health_fitness_role: "Role",
+};
+
+/** Converts a snake_case or lowercase string to Title Case. */
+function toTitleCase(str: string): string {
+  return str
+    .replace(/_/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}
+
+/**
+ * Cleans a raw domain DNA entry (e.g. "dom:music_genre:hip_hop") into a
+ * human-readable value (e.g. "Hip Hop"). Returns null for non-dom entries.
+ */
+function cleanDomainValue(entry: string): string | null {
+  if (!entry.startsWith("dom:")) return null;
+  const rest = entry.slice(4);
+  const colonIdx = rest.indexOf(":");
+  if (colonIdx <= 0) return null;
+  return toTitleCase(rest.slice(colonIdx + 1));
+}
+
+/** Extracts the field key from a domain DNA entry for labeling. */
+function domainFieldKey(entry: string): string | null {
+  if (!entry.startsWith("dom:")) return null;
+  const rest = entry.slice(4);
+  const colonIdx = rest.indexOf(":");
+  if (colonIdx <= 0) return null;
+  return rest.slice(0, colonIdx);
+}
+
+type CleanedKnowledgeAttr = { label: string; value: string };
+
+/**
+ * Parses an EAGOH's DNA array and returns cleaned knowledge attributes.
+ * Separates domain DNA entries (dom:...) from archetype DNA tags.
+ * Returns up to `maxDisplay` attributes plus a count of remaining ones.
+ */
+function parseKnowledgeAttributes(
+  dna: string[] | undefined | null,
+  maxDisplay: number = 2,
+): { attrs: CleanedKnowledgeAttr[]; archetypeTags: string[]; remainingCount: number } {
+  if (!dna || dna.length === 0) {
+    return { attrs: [], archetypeTags: [], remainingCount: 0 };
+  }
+  const attrs: CleanedKnowledgeAttr[] = [];
+  const archetypeTags: string[] = [];
+  for (const entry of dna) {
+    if (entry.startsWith("dom:")) {
+      const key = domainFieldKey(entry);
+      const value = cleanDomainValue(entry);
+      if (key && value) {
+        const label = DOMAIN_FIELD_LABELS[key] ?? toTitleCase(key.replace(/_role$/, "").replace(/_genre$/, "").replace(/_category$/, ""));
+        attrs.push({ label, value });
+      }
+    } else {
+      archetypeTags.push(entry);
+    }
+  }
+  const remainingCount = Math.max(0, attrs.length - maxDisplay);
+  return { attrs: attrs.slice(0, maxDisplay), archetypeTags, remainingCount };
+}
+
 function timeLeft(expiresAt: string): string {
   const diff = new Date(expiresAt).getTime() - Date.now();
   if (diff <= 0) return "Expired";
@@ -385,8 +477,11 @@ const ListingCard = memo(function ListingCard({
 
   const tone: RenderTone = eagohRank === "Syndicate Prime" || eagohRank === "Oracle" ? "gold" : eagohRank === "Diamond" ? "cyan" : "violet";
 
+  // Parse DNA into archetype tags + cleaned knowledge attributes (max 2 on card)
+  const knowledgeAttrs = parseKnowledgeAttributes(eagoh?.dna, 2);
+
   return (
-    <View style={[styles.listingCard, { width: cardWidth, height: cardHeight }]}>
+    <View style={[styles.listingCard, { width: cardWidth, minHeight: cardHeight }]}>
       <View style={[styles.cardGlow, { backgroundColor: rkColor }]} />
 
       {/* ── Left: EAGOH Image (48%) ── */}
@@ -431,7 +526,7 @@ const ListingCard = memo(function ListingCard({
       <View style={styles.infoSection}>
         {/* Name + rank */}
         <View style={styles.nameRow}>
-          <Text style={styles.listingName} numberOfLines={1}>{eagoh?.name ?? "Unnamed"}</Text>
+          <Text style={styles.listingName} numberOfLines={2} ellipsizeMode="tail">{eagoh?.name ?? "Unnamed"}</Text>
           {repScore > 0 && (
             <View style={[styles.repScoreBadge, { borderColor: rkColor }]}>
               <Star color={rkColor} size={10} />
@@ -440,14 +535,31 @@ const ListingCard = memo(function ListingCard({
           )}
         </View>
 
-        {/* DNA tags */}
-        <View style={styles.listingDna}>
-          {(eagoh?.dna ?? []).slice(0, 3).map((d) => (
-            <View key={d} style={styles.dnaTag}>
-              <Text style={styles.dnaTagText}>{d}</Text>
-            </View>
-          ))}
-        </View>
+        {/* DNA archetype tags (non-dom entries only) */}
+        {knowledgeAttrs.archetypeTags.length > 0 && (
+          <View style={styles.listingDna}>
+            {knowledgeAttrs.archetypeTags.slice(0, 3).map((d) => (
+              <View key={d} style={styles.dnaTag}>
+                <Text style={styles.dnaTagText}>{d}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Cleaned knowledge attributes — max 2, human-readable */}
+        {knowledgeAttrs.attrs.length > 0 && (
+          <View style={styles.knowledgeRow}>
+            {knowledgeAttrs.attrs.map((attr) => (
+              <View key={attr.label + attr.value} style={styles.knowledgeItem}>
+                <Text style={styles.knowledgeLabel}>{attr.label}</Text>
+                <Text style={styles.knowledgeValue} numberOfLines={1} ellipsizeMode="tail">{attr.value}</Text>
+              </View>
+            ))}
+            {knowledgeAttrs.remainingCount > 0 && (
+              <Text style={styles.knowledgeMore}>+{knowledgeAttrs.remainingCount} more</Text>
+            )}
+          </View>
+        )}
 
         {/* Team info */}
         {(item.eagoh?.pro_team_focus_name || item.eagoh?.college_team_focus_name || item.fanatic_teams.length > 0) && (
@@ -623,6 +735,7 @@ function PurchaseModal({
   const eagohRank: RankTier = (reputation?.rank as RankTier) ?? "Dormant";
   const rkColor = rankColor(eagohRank);
   const repScore = reputation?.reputation_score ?? 0;
+  const detailKnowledgeAttrs = parseKnowledgeAttributes(eagoh?.dna, 99);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -867,17 +980,22 @@ function PurchaseModal({
                   </View>
                 )}
 
-                {/* DNA Tags */}
-                {(eagoh?.dna ?? []).length > 0 && (
+                {/* DNA Tags — cleaned, human-readable */}
+                {(detailKnowledgeAttrs.archetypeTags.length > 0 || detailKnowledgeAttrs.attrs.length > 0) && (
                   <View style={styles.detailRowCol}>
                     <View style={styles.detailIconWrap}>
                       <Dna color={palette.violet} size={14} />
                     </View>
                     <Text style={styles.detailLabel}>DNA</Text>
                     <View style={styles.detailDnaWrap}>
-                      {(eagoh!.dna ?? []).map((d) => (
+                      {detailKnowledgeAttrs.archetypeTags.map((d) => (
                         <View key={d} style={styles.detailDnaTag}>
                           <Text style={styles.detailDnaTagText}>{d}</Text>
+                        </View>
+                      ))}
+                      {detailKnowledgeAttrs.attrs.map((attr) => (
+                        <View key={attr.label + attr.value} style={styles.detailDnaTag}>
+                          <Text style={styles.detailDnaTagText}>{attr.value}</Text>
                         </View>
                       ))}
                     </View>
@@ -1805,6 +1923,7 @@ const MyListingCard = memo(function MyListingCard({
   const rkColor = rankColor(eagohRank);
   const imageUrl = resolveMarketplaceEagohImage(eagoh);
   const tone: RenderTone = eagohRank === "Syndicate Prime" || eagohRank === "Oracle" ? "gold" : eagohRank === "Diamond" ? "cyan" : "violet";
+  const knowledgeAttrs = parseKnowledgeAttributes(eagoh?.dna, 2);
   const minPrice = [item.price_25_per_day, item.price_50_per_day, item.price_75_per_day, item.price_100_per_day]
     .filter((p) => p > 0)
     .sort((a, b) => a - b)[0];
@@ -1845,7 +1964,7 @@ const MyListingCard = memo(function MyListingCard({
         {/* Info */}
         <View style={styles.myListingInfo}>
           <View style={styles.myListingTop}>
-            <Text style={styles.myListingName} numberOfLines={1}>{eagoh?.name ?? "Unnamed"}</Text>
+            <Text style={styles.myListingName} numberOfLines={2} ellipsizeMode="tail">{eagoh?.name ?? "Unnamed"}</Text>
             <View style={[styles.activeDot, item.active ? styles.activeDotOn : styles.activeDotOff]} />
           </View>
           {reputation && (
@@ -1856,14 +1975,29 @@ const MyListingCard = memo(function MyListingCard({
               </Text>
             </View>
           )}
-          {/* DNA tags */}
-          {(eagoh?.dna ?? []).length > 0 && (
+          {/* DNA archetype tags (non-dom entries only) */}
+          {knowledgeAttrs.archetypeTags.length > 0 && (
             <View style={styles.listingDna}>
-              {(eagoh!.dna ?? []).slice(0, 3).map((d) => (
+              {knowledgeAttrs.archetypeTags.slice(0, 3).map((d) => (
                 <View key={d} style={styles.dnaTag}>
                   <Text style={styles.dnaTagText}>{d}</Text>
                 </View>
               ))}
+            </View>
+          )}
+
+          {/* Cleaned knowledge attributes — max 2, human-readable */}
+          {knowledgeAttrs.attrs.length > 0 && (
+            <View style={styles.knowledgeRow}>
+              {knowledgeAttrs.attrs.map((attr) => (
+                <View key={attr.label + attr.value} style={styles.knowledgeItem}>
+                  <Text style={styles.knowledgeLabel}>{attr.label}</Text>
+                  <Text style={styles.knowledgeValue} numberOfLines={1} ellipsizeMode="tail">{attr.value}</Text>
+                </View>
+              ))}
+              {knowledgeAttrs.remainingCount > 0 && (
+                <Text style={styles.knowledgeMore}>+{knowledgeAttrs.remainingCount} more</Text>
+              )}
             </View>
           )}
           {/* Metrics */}
@@ -2744,7 +2878,7 @@ const styles = StyleSheet.create({
   },
   listingInfo: { gap: 4 },
   nameRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  listingName: { color: palette.text, fontSize: 16, fontWeight: "900", flex: 1 },
+  listingName: { color: palette.text, fontSize: 16, fontWeight: "900", flex: 1, flexShrink: 1 },
   listingDomain: { color: palette.cyan, fontSize: 12, fontWeight: "800" },
   listingDna: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 2 },
   dnaTag: {
@@ -2756,6 +2890,12 @@ const styles = StyleSheet.create({
     paddingVertical: 1,
   },
   dnaTagText: { color: palette.violet, fontSize: 9, fontWeight: "900" },
+  // Knowledge attribute rows (cleaned domain DNA values)
+  knowledgeRow: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: 6, marginTop: 3 },
+  knowledgeItem: { flexDirection: "row" as const, alignItems: "center" as const, gap: 3 },
+  knowledgeLabel: { color: palette.muted, fontSize: 8, fontWeight: "800" as const, letterSpacing: 0.3 },
+  knowledgeValue: { color: palette.text, fontSize: 9, fontWeight: "900" as const },
+  knowledgeMore: { color: palette.cyan, fontSize: 9, fontWeight: "800" as const, marginLeft: 2 },
   teamText: { color: palette.gold, fontSize: 10, fontWeight: "900", marginTop: 2 },
   metricGrid: { gap: 1, marginTop: 4 },
   metricRow: { flexDirection: "row", alignItems: "center", gap: 4 },
@@ -2857,7 +2997,7 @@ const styles = StyleSheet.create({
   myListingImagePlaceholder: { alignItems: "center", justifyContent: "center", flex: 1 },
   myListingInfo: { flex: 1, gap: 4 },
   myListingTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  myListingName: { color: palette.text, fontSize: 16, fontWeight: "900", flex: 1 },
+  myListingName: { color: palette.text, fontSize: 16, fontWeight: "900", flex: 1, flexShrink: 1 },
   myListingMinPrice: { color: palette.gold, fontSize: 12, fontWeight: "900" },
   activeDot: { width: 10, height: 10, borderRadius: 5, flexShrink: 0, marginLeft: 8 },
   activeDotOn: { backgroundColor: palette.success },

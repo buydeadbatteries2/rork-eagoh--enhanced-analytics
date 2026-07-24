@@ -3,14 +3,13 @@ module.exports = function (api) {
   return {
     presets: [["babel-preset-expo", { unstable_transformImportMeta: true }]],
     plugins: [
-      // ── Transform dynamic import() to Promise.resolve(require()) ──────
-      // Hermes (React Native's JS engine) does not support dynamic import().
-      // babel-preset-expo should handle this, but @supabase/supabase-js's .mjs
-      // bundle contains import() with inline bundler-ignore comments:
-      //   import(/* webpackIgnore: true */ /* turbopackIgnore: true */ /* @vite-ignore */ OTEL_PKG)
-      // These comments can prevent the preset's transform from recognizing the
-      // expression. This plugin explicitly catches any import() survivors and
-      // converts them to Promise.resolve(require()) for Hermes compatibility.
+      // ── REQUIRED FOR iOS HERMES RELEASE COMPILATION ───────────────────────
+      // Do NOT remove this plugin. It catches dynamic import() expressions that
+      // survive babel-preset-expo's own transform (notably @supabase/supabase-js
+      // import() calls with inline webpackIgnore/turbopackIgnore/@vite-ignore
+      // comments) and converts them to Promise.resolve(require()), which Hermes
+      // can compile. Removing this plugin causes the App Store release build to
+      // fail with "Invalid expression encountered" on the dynamic import syntax.
       function transformDynamicImportForHermes({ types: t }) {
         return {
           visitor: {

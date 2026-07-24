@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform } from "react-native";
 import { useAuth } from "@/providers/AuthProvider";
+import { startupLog } from "@/utils/startupLogger";
 import {
   addCustomerInfoListener,
   configureRevenueCat,
@@ -54,6 +55,7 @@ const customerInfoKey = ["revenuecat", "customerInfo"] as const;
 // ── Provider ──────────────────────────────────────────────────────────────
 
 export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
+  startupLog("RevenueCatProvider", "start");
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
@@ -474,4 +476,5 @@ export const [RevenueCatProvider, useRevenueCat] = createContextHook(() => {
     /** Dev-only diagnostics object. */
     diagnostics,
   };
+  startupLog("RevenueCatProvider", "success");
 });

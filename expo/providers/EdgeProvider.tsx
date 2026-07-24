@@ -21,6 +21,7 @@ import {
   type EdgeTransaction,
 } from "@/services/edge";
 import type { UserProfile } from "@/services/profile";
+import { startupLog } from "@/utils/startupLogger";
 
 /**
  * EdgeProvider — dedicated wallet hook over Supabase.
@@ -36,6 +37,7 @@ const txKey = (userId: string | null | undefined): readonly unknown[] =>
   ["edge", "transactions", userId ?? "anon"] as const;
 
 export const [EdgeProvider, useEdge] = createContextHook(() => {
+  startupLog("EdgeProvider", "start");
   const { user } = useAuth();
   const { profile, effectiveSubscriptionTier } = useProfile();
   const userId = user?.id ?? null;
@@ -177,4 +179,5 @@ export const [EdgeProvider, useEdge] = createContextHook(() => {
       grantMutation.isPending ||
       rolloverMutation.isPending,
   };
+  startupLog("EdgeProvider", "success");
 });

@@ -29,6 +29,7 @@ import {
   setTestSubscriptionTier as setTestTierAsync,
   clearTestSubscriptionTier as clearTestTierAsync,
 } from "@/services/testSubscription";
+import { startupLog } from "@/utils/startupLogger";
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -52,6 +53,7 @@ function needsMonthlyAllocation(lastRolloverAt: string | null | undefined): bool
 const profileKey = (userId: string | null | undefined): readonly unknown[] => ["profile", userId ?? "anon"] as const;
 
 export const [ProfileProvider, useProfile] = createContextHook(() => {
+  startupLog("ProfileProvider", "start");
   const { user } = useAuth();
   const userId = user?.id ?? null;
   const username = (user?.user_metadata as { username?: string } | undefined)?.username ?? null;
@@ -285,4 +287,5 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     applyMonthlyRollover: (capPct?: number) => rolloverMutation.mutateAsync(capPct ?? 0.1),
     _edgeReason: undefined as EdgeReason | undefined,
   };
+  startupLog("ProfileProvider", "success");
 });

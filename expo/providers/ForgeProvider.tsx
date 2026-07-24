@@ -9,6 +9,7 @@ import { runForge, type RunForgeMode, type RunForgeResult } from "@/services/for
 import { buildForgePrompt, buildForgeSummary, type ForgePromptOptions } from "@/services/imagePrompt";
 import { getForgeCost, type EdgeReason } from "@/services/edge";
 import type { EagohDraft } from "@/services/eagohs";
+import { startupLog } from "@/utils/startupLogger";
 
 /**
  * ForgeProvider — orchestrates the EAGOH image generation flow.
@@ -52,6 +53,7 @@ const edgeReasonFor = (mode: ForgeMode): EdgeReason => {
 };
 
 export const [ForgeProvider, useForge] = createContextHook(() => {
+  startupLog("ForgeProvider", "start");
   const { user } = useAuth();
   const { profile, effectiveSubscriptionTier } = useProfile();
   const { total: edgeTotal, isMutating: isEdgeMutating } = useEdge();
@@ -213,5 +215,6 @@ export const [ForgeProvider, useForge] = createContextHook(() => {
     [pending, lastResult, prepareForge, cancelForge, confirmForge, confirmMutation.isPending, isEdgeMutating, edgeTotal, stage],
   );
 
+  startupLog("ForgeProvider", "success");
   return value;
 });

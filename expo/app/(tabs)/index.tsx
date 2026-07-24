@@ -58,6 +58,7 @@ import type { ReputationRow } from "@/services/reputation";
 import { getLeaderboard, type LeaderboardEntry } from "@/services/leaderboards";
 import { listUserFactions, getFactionFull, describeActivity, type FactionActivityRow } from "@/services/factions";
 import { canUseForge, canUseFactions, canUseExchange } from "@/services/permissions";
+import { startupLog } from "@/utils/startupLogger";
 
 type Phase = "loading" | "onboarding" | "auth" | "app";
 type CardTone = "cyan" | "gold" | "violet" | "ember" | "success";
@@ -1103,6 +1104,7 @@ function BannerPurchaseModal({
 }
 
 export default function HomeScreen(): JSX.Element {
+  startupLog("HomeScreen_mount", "start");
   const h = useHaptics();
   const { isReady, isAuthenticated, user } = useAuth();
   const { profile, effectiveSubscriptionTier } = useProfile();
@@ -1112,6 +1114,7 @@ export default function HomeScreen(): JSX.Element {
   const [purchaseModal, setPurchaseModal] = useState(false);
   const width = Dimensions.get("window").width;
   const compact = useMemo<boolean>(() => width < 380, [width]);
+  startupLog("HomeScreen_mount", "success");
 
   const isPaid = canTransact(effectiveSubscriptionTier);
 

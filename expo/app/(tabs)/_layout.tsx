@@ -3,6 +3,7 @@ import { ArrowRightLeft, Hammer, Home, MessageCircle, UserRound } from "lucide-r
 import React from "react";
 import { Platform } from "react-native";
 import { palette } from "@/constants/colors";
+import { startupLog } from "@/utils/startupLogger";
 
 /**
  * Standard native mobile tab bar anchored to the bottom of the screen.
@@ -11,6 +12,8 @@ import { palette } from "@/constants/colors";
  * Labels always display fully.
  */
 export default function TabLayout(): JSX.Element {
+  startupLog("TabLayout_render", "start");
+  startupLog("TabLayout_render", "success");
 
   return (
     <Tabs

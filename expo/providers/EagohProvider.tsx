@@ -14,6 +14,7 @@ import {
   type EagohFull,
   type EagohRecord,
 } from "@/services/eagohs";
+import { startupLog } from "@/utils/startupLogger";
 
 const eagohsKey = (userId: string | null | undefined): readonly unknown[] => ["eagohs", userId ?? "anon"] as const;
 const eagohFullKey = (eagohId: string): readonly unknown[] => ["eagoh", eagohId] as const;
@@ -24,6 +25,7 @@ const eagohFullKey = (eagohId: string): readonly unknown[] => ["eagoh", eagohId]
  * (customization, teams, labs) is fetched lazily via `useEagohFull(id)`.
  */
 export const [EagohProvider, useEagohs] = createContextHook(() => {
+  startupLog("EagohProvider", "start");
   const { user } = useAuth();
   const { profile } = useProfile();
   const userId = user?.id ?? null;
@@ -81,6 +83,7 @@ export const [EagohProvider, useEagohs] = createContextHook(() => {
     deleteEagoh: (eagohId: string) => deleteMutation.mutateAsync(eagohId),
     isDeleting: deleteMutation.isPending,
   };
+  startupLog("EagohProvider", "success");
 });
 
 /** Lazy hook – fetches a single EAGOH's full payload (customization + teams + labs). */

@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { Platform } from "react-native";
+import { startupLog } from "@/utils/startupLogger";
 
 /**
  * Shared Supabase client for the EAGOH app.
@@ -48,13 +49,23 @@ if (!isSupabaseConfigured) {
 const effectiveUrl = supabaseUrl || "https://placeholder.supabase.co";
 const effectiveKey = supabaseAnonKey || "placeholder-anon-key";
 
-export const supabase: SupabaseClient = createClient(effectiveUrl, effectiveKey, {
-  auth: {
-    storage: Platform.OS === "web" ? undefined : (AsyncStorage as unknown as Storage),
-    autoRefreshToken: isSupabaseConfigured,
-    persistSession: isSupabaseConfigured,
-    detectSessionInUrl: Platform.OS === "web",
-  },
-});
+startupLog("SupabaseInit", "start");
+let supabaseClient: SupabaseClient;
+try {
+  supabaseClient = createClient(effectiveUrl, effectiveKey, {
+    auth: {
+      storage: Platform.OS === "web" ? undefined : (AsyncStorage as unknown as Storage),
+      autoRefreshToken: isSupabaseConfigured,
+      persistSession: isSupabaseConfigured,
+      detectSessionInUrl: Platform.OS === "web",
+    },
+  });
+  startupLog("SupabaseInit", "success");
+} catch (err) {
+  startupLog("SupabaseInit", "failed", err);
+  throw err;
+}
+
+export const supabase: SupabaseClient = supabaseClient;
 
 export default supabase;

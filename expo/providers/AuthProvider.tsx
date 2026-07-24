@@ -13,6 +13,7 @@ import {
   type AuthCredentials,
   type AuthSignupInput,
 } from "@/services/auth";
+import { startupLog } from "@/utils/startupLogger";
 
 /**
  * AuthProvider – exposes the current Supabase session and auth actions.
@@ -21,19 +22,25 @@ import {
  */
 
 export const [AuthProvider, useAuth] = createContextHook(() => {
+  startupLog("AuthProvider", "start");
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [isReady, setIsReady] = useState<boolean>(false);
 
   useEffect(() => {
     let mounted = true;
+    startupLog("SessionRestoration", "start");
     getCurrentSession()
       .then((s) => {
         if (!mounted) return;
         setSession(s);
         setUser(s?.user ?? null);
+        startupLog("SessionRestoration", "success");
       })
-      .catch((e) => console.warn("[auth] getCurrentSession failed", e))
+      .catch((e) => {
+        console.warn("[auth] getCurrentSession failed", e);
+        startupLog("SessionRestoration", "failed", e);
+      })
       .finally(() => {
         if (mounted) setIsReady(true);
       });
@@ -46,6 +53,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       sub.unsubscribe();
     };
   }, []);
+  startupLog("AuthProvider", "success");
 
   const signUpMutation = useMutation({
     mutationFn: (input: AuthSignupInput) => signUpWithEmail(input),

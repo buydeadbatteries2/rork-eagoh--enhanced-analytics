@@ -12,13 +12,21 @@ import { EdgeProvider } from "@/providers/EdgeProvider";
 import { ForgeProvider } from "@/providers/ForgeProvider";
 import { RevenueCatProvider } from "@/providers/RevenueCatProvider";
 import { palette } from "@/constants/colors";
+import { startupLog } from "@/utils/startupLogger";
 
+startupLog("AppEntry_imports_loaded", "success");
+
+startupLog("SplashScreen_preventAutoHideAsync", "start");
 SplashScreen.preventAutoHideAsync();
+startupLog("SplashScreen_preventAutoHideAsync", "success");
 
+startupLog("QueryClient_creation", "start");
 const queryClient = new QueryClient();
+startupLog("QueryClient_creation", "success");
 
 /** Auth guard — redirects based on auth state. Must live inside providers to access useAuth. */
 function AuthGate(): JSX.Element {
+  startupLog("AuthGate_render", "start");
   const { isAuthenticated, isReady } = useAuth();
   const segments = useSegments();
   const router = useRouter();
@@ -30,18 +38,23 @@ function AuthGate(): JSX.Element {
 
     if (!isAuthenticated && !inAuthGroup) {
       // Not signed in and not already on an auth screen → go to login
+      startupLog("AuthGate_redirect_login", "success");
       router.replace("/(auth)/login");
     } else if (isAuthenticated && inAuthGroup) {
       // Signed in but on an auth screen → go to home
+      startupLog("AuthGate_redirect_home", "success");
       router.replace("/(tabs)");
     }
   }, [isReady, isAuthenticated, segments, router]);
 
   useEffect(() => {
     if (isReady) {
+      startupLog("SplashScreen_hideAsync", "start");
       SplashScreen.hideAsync();
+      startupLog("SplashScreen_hideAsync", "success");
     }
   }, [isReady]);
+  startupLog("AuthGate_render", "success");
 
   // Show nothing while auth is loading — prevents flash of wrong screen
   if (!isReady) {
@@ -162,6 +175,8 @@ const authStyles = StyleSheet.create({
 });
 
 export default function RootLayout(): JSX.Element {
+  startupLog("RootLayout_render", "start");
+  startupLog("RootLayout_render", "success");
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>

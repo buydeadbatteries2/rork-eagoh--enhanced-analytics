@@ -11,11 +11,10 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import {
   ChevronRight,
-  Hexagon,
 } from "lucide-react-native";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
-  Animated,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -31,9 +30,12 @@ import { SafeAreaView } from "react-native-safe-area-context";
 function LogoMark({ size = 72 }: { size?: number }): JSX.Element {
   return (
     <View style={[styles.logo, { width: size, height: size, borderRadius: size / 2 }]}>
-      <LinearGradient colors={["rgba(54,245,255,0.28)", "rgba(255,184,77,0.08)"]} style={StyleSheet.absoluteFill} />
-      <Hexagon color={palette.cyan} size={size * 0.54} strokeWidth={1.6} />
-      <Text style={[styles.logoText, { fontSize: size * 0.18 }]}>E</Text>
+      <Image
+        source={require("@/assets/images/brain-logo.png")}
+        style={{ width: size, height: size, borderRadius: size / 2 }}
+        resizeMode="cover"
+        accessibilityLabel="EAGOH brain logo"
+      />
     </View>
   );
 }
@@ -65,11 +67,12 @@ const styles = StyleSheet.create({
     borderColor: "rgba(54,245,255,0.30)",
     backgroundColor: "rgba(3,6,11,0.72)",
     marginBottom: 24,
-  },
-  logoText: {
-    color: palette.cyan,
-    fontWeight: "900" as const,
-    letterSpacing: 3,
+    overflow: "hidden" as const,
+    shadowColor: palette.cyan,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 8,
   },
   authTitle: {
     color: palette.text,
